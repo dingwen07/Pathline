@@ -13,27 +13,27 @@ import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
 
-/** Re-arms the Activity Recognition heartbeat and persisted geofences after a reboot. */
+/** Re-arms recording, Activity Recognition and persisted geofences after system restart events. */
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
 
     @Inject lateinit var controller: RecordingController
-    @Inject lateinit var geofenceManager: GeofenceManager
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var workScheduler: WorkScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
-            intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+            intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
+            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED &&
+            intent.action != Intent.ACTION_USER_UNLOCKED
         ) return
 
-        net.extrawdw.apps.locationhistory.core.AppLog.i("BootReceiver", "boot completed")
+        net.extrawdw.apps.locationhistory.core.AppLog.i("BootReceiver", "startup event ${intent.action}")
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
                 if (settingsRepository.settings.first().trackingEnabled) {
-                    controller.enableTracking()
-                    geofenceManager.restore()
+                    controller.resumeIfPreviouslyEnabled()
                     workScheduler.schedulePeriodicTimelineMaintenance()
                 }
             } finally {

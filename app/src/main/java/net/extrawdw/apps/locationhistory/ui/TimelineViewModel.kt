@@ -23,8 +23,11 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -50,6 +53,7 @@ data class MapVisitMarker(val center: LatLng, val radiusMeters: Double, val conf
 data class MapPlaceRing(val center: LatLng, val radiusMeters: Double)
 
 data class MapState(
+    val dayEpoch: Long? = null,
     val rawPath: List<LatLng> = emptyList(),
     val segments: List<MapSegment> = emptyList(),
     val visits: List<MapVisitMarker> = emptyList(),
@@ -72,6 +76,7 @@ class TimelineViewModel @Inject constructor(
 
     val refreshing = MutableStateFlow(false)
     private var lastRefreshMs = 0L
+    private var refreshJob: Job? = null
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -97,25 +102,37 @@ class TimelineViewModel @Inject constructor(
         timelineRepository.observeDay(day)
 
     /** Manual pull-to-refresh: enqueue authoritative maintenance and wait for WorkManager result. */
-    fun refresh() = viewModelScope.launch {
-        refreshing.value = true
-        val start = System.currentTimeMillis()
-        runCatching {
-            val id = workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "pull_refresh")
-            workManager.getWorkInfoByIdFlow(id)
-                .filterNotNull()
-                .first { it.state.isFinished }
-                .also { if (it.state == WorkInfo.State.FAILED) error("Timeline maintenance failed") }
+    fun refresh() {
+        if (refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch {
+            refreshing.value = true
+            val start = System.currentTimeMillis()
+            try {
+                runCatching {
+                    val id = workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "pull_refresh")
+                    val finished = withTimeoutOrNull(6_000) {
+                        workManager.getWorkInfoByIdFlow(id)
+                            .filterNotNull()
+                            .first { it.state.isFinished }
+                    }
+                    if (finished?.state == WorkInfo.State.FAILED) error("Timeline maintenance failed")
+                }
+                val elapsed = System.currentTimeMillis() - start
+                if (elapsed < 450) delay(450 - elapsed)
+                lastRefreshMs = System.currentTimeMillis()
+            } finally {
+                refreshing.value = false
+            }
         }
-        val elapsed = System.currentTimeMillis() - start
-        if (elapsed < 450) kotlinx.coroutines.delay(450 - elapsed)
-        lastRefreshMs = System.currentTimeMillis()
-        refreshing.value = false
     }
 
-    /** Auto-refresh when the view is shown, but no more than once per [STALE_MS]. */
+    /** Auto-reconcile when the view is shown, without tying app launch to the pull spinner. */
     fun refreshIfStale() {
-        if (System.currentTimeMillis() - lastRefreshMs > STALE_MS) refresh()
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshMs > STALE_MS) {
+            lastRefreshMs = now
+            workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "timeline_visible")
+        }
     }
 
     fun updatePlace(place: net.extrawdw.apps.locationhistory.data.db.PlaceEntity) = viewModelScope.launch {
@@ -190,7 +207,13 @@ class TimelineViewModel @Inject constructor(
             }
         }
         val raw = segments.flatMap { it.points }
-        return MapState(rawPath = raw, segments = segments, visits = visits, placeRings = placeRings.values.toList())
+        return MapState(
+            dayEpoch = timeline.dayEpoch,
+            rawPath = raw,
+            segments = segments,
+            visits = visits,
+            placeRings = placeRings.values.toList(),
+        )
     }
 
     private companion object {

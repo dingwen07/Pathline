@@ -8,6 +8,7 @@ import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.exp
 import kotlin.math.sqrt
 
 /**
@@ -22,11 +23,26 @@ class HeuristicClassifier @Inject constructor() {
         val speed = input.speedMps ?: input.speedMeanMps
         val arStrong = (input.arConfidence ?: 0) >= 70
         val ar = input.arActivity?.uppercase()
+        val accuracyTrust = accuracyTrust(input.horizontalAccuracyMeters)
 
-        // Trust a strong Activity Recognition signal first.
+        if (speed >= 1.0f || input.speedMaxMps >= 1.4f) {
+            return when {
+                speed < 2.8f -> StateClassification(DevicePhysicalState.WALKING, 0.72f)
+                speed < 6.0f && input.motionVariance > 3f ->
+                    StateClassification(DevicePhysicalState.RUNNING, 0.62f)
+                speed < 8.5f -> StateClassification(DevicePhysicalState.CYCLING, 0.56f)
+                else -> StateClassification(DevicePhysicalState.IN_VEHICLE, 0.68f)
+            }
+        }
+
+        // Trust a strong Activity Recognition signal first, but don't let a poor location radius
+        // turn an uncertain walking fix into a confident stationary sample.
         if (arStrong) {
             when (ar) {
-                "STILL" -> return StateClassification(DevicePhysicalState.STATIONARY, 0.8f)
+                "STILL" -> return StateClassification(
+                    DevicePhysicalState.STATIONARY,
+                    0.8f * accuracyTrust,
+                )
                 "WALKING", "ON_FOOT" -> return StateClassification(DevicePhysicalState.WALKING, 0.72f)
                 "RUNNING" -> return StateClassification(DevicePhysicalState.RUNNING, 0.72f)
                 "ON_BICYCLE" -> return StateClassification(DevicePhysicalState.CYCLING, 0.7f)
@@ -37,13 +53,20 @@ class HeuristicClassifier @Inject constructor() {
         // Otherwise fall back to speed + motion energy.
         return when {
             speed < 0.5f && input.motionVariance < 1.5f ->
-                StateClassification(DevicePhysicalState.STATIONARY, 0.7f)
+                StateClassification(DevicePhysicalState.STATIONARY, 0.7f * accuracyTrust)
             speed < 2.5f -> StateClassification(DevicePhysicalState.WALKING, 0.55f)
             speed < 6.0f && input.motionVariance > 4f ->
                 StateClassification(DevicePhysicalState.RUNNING, 0.5f)
             speed < 8.0f -> StateClassification(DevicePhysicalState.CYCLING, 0.45f)
             else -> StateClassification(DevicePhysicalState.IN_VEHICLE, 0.6f)
         }
+    }
+
+    private fun accuracyTrust(accuracyMeters: Float?): Float {
+        val acc = accuracyMeters ?: return 0.75f
+        return exp(-((acc.coerceAtLeast(5f) - 5f) / 35f).toDouble())
+            .coerceIn(0.15, 1.0)
+            .toFloat()
     }
 
     fun classifyTransport(samples: List<LocationSampleEntity>): TransportClassification {

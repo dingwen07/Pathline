@@ -55,7 +55,14 @@ class RecordingController @Inject constructor(
     private val speedLock = Any()
 
     /** Recent fixes used to detect "became stationary" from the classifier when AR is silent. */
-    private data class Fix(val t: Long, val lat: Double, val lon: Double, val stationary: Boolean)
+    private data class Fix(
+        val t: Long,
+        val lat: Double,
+        val lon: Double,
+        val accuracyMeters: Float?,
+        val speedMps: Float?,
+        val stationary: Boolean,
+    )
     private val recentFixes = ArrayDeque<Fix>()
     private val fixLock = Any()
     @Volatile private var stationaryAnchor: Pair<Double, Double>? = null
@@ -156,6 +163,14 @@ class RecordingController @Inject constructor(
         becameMoving(DevicePhysicalState.UNKNOWN, force = true)
     }
 
+    /** Network changes are recorded as context on the next fix and may be a movement cue. */
+    suspend fun handleNetworkChanged() {
+        val day = locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
+            ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
+        workScheduler.enqueueTimelineMaintenance(day, "network_changed")
+        refreshServiceState()
+    }
+
     /** Persist + classify a batch of delivered fixes. */
     suspend fun handleLocations(locations: List<Location>) {
         if (locations.isEmpty()) return
@@ -176,6 +191,7 @@ class RecordingController @Inject constructor(
                     speedMaxMps = max,
                     speedVariance = variance,
                     motionVariance = motionVariance,
+                    horizontalAccuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
                     arActivity = lastArActivity,
                     arConfidence = lastArConfidence,
                     networkTransport = context.networkTransport,
@@ -183,14 +199,16 @@ class RecordingController @Inject constructor(
                     cellSignalDbm = context.cellSignalDbm,
                 ),
             )
-            if (classification.isConfident &&
-                classification.state != DevicePhysicalState.STATIONARY &&
-                currentState != DevicePhysicalState.STATIONARY
+            if (classification.state != DevicePhysicalState.STATIONARY &&
+                (classification.isConfident || (speed ?: 0f) >= 1.0f)
             ) {
-                // Only let the classifier drive non-stationary state here; stationary is handled by
-                // the cluster detector below so we don't flip in/out on a single jittery fix or mark
-                // ourselves stationary before an ongoing visit exists.
-                currentState = classification.state
+                // Stationary exits should not wait solely for AR/geofence when the fixes themselves
+                // show real motion; the drift guard still blocks jitter inside the dwell radius.
+                if (currentState == DevicePhysicalState.STATIONARY) {
+                    if (!isLikelyDrift(location)) becameMoving(classification.state)
+                } else {
+                    currentState = classification.state
+                }
             }
             pushFix(location, classification.state == DevicePhysicalState.STATIONARY)
             val sample = buildSample(location, context, classification.state, classification.confidence)
@@ -221,7 +239,16 @@ class RecordingController @Inject constructor(
     }
 
     private fun pushFix(location: Location, stationary: Boolean) = synchronized(fixLock) {
-        recentFixes.addLast(Fix(location.time, location.latitude, location.longitude, stationary))
+        recentFixes.addLast(
+            Fix(
+                t = location.time,
+                lat = location.latitude,
+                lon = location.longitude,
+                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                speedMps = if (location.hasSpeed()) location.speed else null,
+                stationary = stationary,
+            ),
+        )
         val cutoff = location.time - FIX_WINDOW_MS
         while (recentFixes.isNotEmpty() && recentFixes.first().t < cutoff) recentFixes.removeFirst()
     }
@@ -235,13 +262,19 @@ class RecordingController @Inject constructor(
         val window = recentFixes.filter { now - it.t <= minVisitMs }
         if (window.size < 3) return null
         if (now - window.first().t < minVisitMs * 0.8) return null
+        val goodAccuracy = window.count { (it.accuracyMeters ?: 30f) <=
+            net.extrawdw.apps.locationhistory.core.Constants.SAMPLE_ACCURACY_GATE_METERS
+        }
+        if (goodAccuracy < window.size * 0.7) return null
+        val meanSpeed = window.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        if (meanSpeed > 0.6) return null
         val cLat = window.sumOf { it.lat } / window.size
         val cLon = window.sumOf { it.lon } / window.size
         val withinRadius = window.all {
             net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <=
                 net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
         }
-        val mostlyStationary = window.count { it.stationary } >= window.size * 0.6
+        val mostlyStationary = window.count { it.stationary } >= window.size * 0.8
         if (!withinRadius || !mostlyStationary) return null
         VisitCandidate(
             startMs = window.first().t,
@@ -266,6 +299,8 @@ class RecordingController @Inject constructor(
                         t = it.timestampMs,
                         lat = it.latitude,
                         lon = it.longitude,
+                        accuracyMeters = it.accuracy,
+                        speedMps = it.speed,
                         stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
                     ),
                 )
@@ -338,6 +373,16 @@ class RecordingController @Inject constructor(
             anchor.first, anchor.second, last.latitude, last.longitude,
         )
         return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
+    }
+
+    private fun isLikelyDrift(location: Location): Boolean {
+        if (currentState != DevicePhysicalState.STATIONARY) return false
+        val anchor = stationaryAnchor ?: return true
+        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+            anchor.first, anchor.second, location.latitude, location.longitude,
+        )
+        val speed = if (location.hasSpeed()) location.speed else 0f
+        return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS && speed < 1.2f
     }
 
     // --- helpers ------------------------------------------------------------------------------

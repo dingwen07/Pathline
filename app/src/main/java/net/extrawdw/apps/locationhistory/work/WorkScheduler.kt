@@ -33,11 +33,12 @@ class WorkScheduler @Inject constructor(
                     TimelineMaintenanceWorker.KEY_REASON to reason,
                 ),
             )
+            .setInitialDelay(15, TimeUnit.MINUTES)
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniqueWork(
-            "timeline-maintenance-$dayEpoch",
-            ExistingWorkPolicy.KEEP,
+            timelineMaintenanceWorkName(dayEpoch),
+            ExistingWorkPolicy.REPLACE,
             request,
         )
         return request.id
@@ -59,7 +60,7 @@ class WorkScheduler @Inject constructor(
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniqueWork(
-            "timeline-maintenance-now-$dayEpoch",
+            timelineMaintenanceNowWorkName(dayEpoch),
             ExistingWorkPolicy.REPLACE,
             request,
         )
@@ -71,12 +72,12 @@ class WorkScheduler @Inject constructor(
         val constraints = Constraints.Builder()
             .setRequiresBatteryNotLow(true)
             .build()
-        val request = PeriodicWorkRequestBuilder<TimelineMaintenanceWorker>(6, TimeUnit.HOURS)
+        val request = PeriodicWorkRequestBuilder<TimelineMaintenanceWorker>(1, TimeUnit.HOURS)
             .setConstraints(constraints)
             .setInputData(workDataOf(TimelineMaintenanceWorker.KEY_REASON to "periodic"))
             .build()
         workManager.enqueueUniquePeriodicWork(
-            "timeline-maintenance-periodic",
+            WORK_TIMELINE_PERIODIC,
             ExistingPeriodicWorkPolicy.KEEP,
             request,
         )
@@ -103,7 +104,7 @@ class WorkScheduler @Inject constructor(
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.MINUTES)
             .build()
-        workManager.enqueueUniqueWork("model-training", ExistingWorkPolicy.KEEP, request)
+        workManager.enqueueUniqueWork(WORK_MODEL_TRAINING, ExistingWorkPolicy.KEEP, request)
     }
 
     /** Periodic, charging-gated export of monthly sample partitions for efficient backup. */
@@ -116,7 +117,16 @@ class WorkScheduler @Inject constructor(
             .setConstraints(constraints)
             .build()
         workManager.enqueueUniquePeriodicWork(
-            "sample-export", ExistingPeriodicWorkPolicy.KEEP, request,
+            WORK_SAMPLE_EXPORT, ExistingPeriodicWorkPolicy.KEEP, request,
         )
+    }
+
+    companion object {
+        const val WORK_TIMELINE_PERIODIC = "timeline-maintenance-periodic"
+        const val WORK_MODEL_TRAINING = "model-training"
+        const val WORK_SAMPLE_EXPORT = "sample-export"
+
+        fun timelineMaintenanceWorkName(dayEpoch: Long): String = "timeline-maintenance-$dayEpoch"
+        fun timelineMaintenanceNowWorkName(dayEpoch: Long): String = "timeline-maintenance-now-$dayEpoch"
     }
 }

@@ -9,6 +9,7 @@ import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.android.libraries.places.api.net.SearchByTextRequest
 import com.google.android.libraries.places.api.net.SearchNearbyRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.tasks.await
 import net.extrawdw.apps.locationhistory.BuildConfig
 import net.extrawdw.apps.locationhistory.core.Geo
@@ -47,7 +48,7 @@ class PlacesGateway @Inject constructor(
 
     /** The single most likely POI near [lat]/[lon], or null if none / unavailable. */
     suspend fun nearestPlace(lat: Double, lon: Double, radiusMeters: Double = 80.0): PlaceCandidate? =
-        nearbyPlaces(lat, lon, radiusMeters).firstOrNull()
+        withTimeoutOrNull(2_000) { nearbyPlaces(lat, lon, radiusMeters).firstOrNull() }
 
     /** Free-text place search (Maps API), focused near [lat]/[lon] and ranked by distance from it. */
     suspend fun searchText(

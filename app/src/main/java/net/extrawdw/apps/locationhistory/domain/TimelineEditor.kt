@@ -133,7 +133,12 @@ class TimelineEditor @Inject constructor(
                 id
             }
             is SegmentType.Moving -> {
-                val points = usable.map { it.latitude to it.longitude }
+                span.filter { it.exclusionReason == "drift_outside_place" }
+                    .forEach { sampleDao.markIncluded(it.id) }
+                val movementSamples = span.filter {
+                    it.includedInComputation || it.exclusionReason == "drift_outside_place"
+                }
+                val points = movementSamples.map { it.latitude to it.longitude }
                 val distance = Geo.pathLengthMeters(points)
                 val tripId = tripDao.insert(
                     TripEntity(
@@ -149,9 +154,9 @@ class TimelineEditor @Inject constructor(
                         encodedPolyline = Geo.encodePolyline(points), distanceMeters = distance,
                     ),
                 )
-                if (usable.size >= 2 && type.mode in TransportMode.MODEL_CLASSES) {
+                if (movementSamples.size >= 2 && type.mode in TransportMode.MODEL_CLASSES) {
                     trainingRepository.addTransportExample(
-                        features = Features.transportFeatures(usable),
+                        features = Features.transportFeatures(movementSamples),
                         label = TransportMode.MODEL_CLASSES.indexOf(type.mode),
                         fromUserConfirmation = true,
                     )

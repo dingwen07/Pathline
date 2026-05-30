@@ -14,6 +14,7 @@ data class StateFeatureInput(
     val speedMaxMps: Float,
     val speedVariance: Float,
     val motionVariance: Float,
+    val horizontalAccuracyMeters: Float?,
     val arActivity: String?,
     val arConfidence: Int?,
     val networkTransport: NetworkTransport?,
@@ -53,7 +54,7 @@ object Features {
     /** Device-state feature vector for a confirmed stationary stay (used as a training example). */
     fun stationaryFeatures(samples: List<LocationSampleEntity>): FloatArray {
         if (samples.isEmpty()) return stateFeatures(
-            StateFeatureInput(0f, 0f, 0f, 0f, 0f, "STILL", 100, null, null, null),
+            StateFeatureInput(0f, 0f, 0f, 0f, 0f, null, "STILL", 100, null, null, null),
         )
         val speeds = samples.map { (it.speed ?: 0f).coerceAtLeast(0f) }
         val mean = speeds.average().toFloat()
@@ -65,6 +66,7 @@ object Features {
                 speedMaxMps = speeds.max(),
                 speedVariance = speeds.map { (it - mean) * (it - mean) }.average().toFloat(),
                 motionVariance = 0f,
+                horizontalAccuracyMeters = last.accuracy,
                 arActivity = samples.mapNotNull { it.arActivity }.lastOrNull(),
                 arConfidence = last.arConfidence,
                 networkTransport = last.networkTransport,

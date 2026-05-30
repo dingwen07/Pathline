@@ -22,8 +22,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,13 +39,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberUpdatedMarkerState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +57,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
@@ -115,23 +123,33 @@ fun PlaceDetailDialog(
 
     val cameraPositionState = rememberCameraPositionState()
     val listState = rememberLazyListState()
-
-    // Center the map on the place once it loads.
-    LaunchedEffect(place?.id) {
-        place?.let {
-            cameraPositionState.move(CameraUpdateFactory.newCameraPosition(CameraPosition.fromLatLngZoom(LatLng(it.latitude, it.longitude), 16f)))
+    var mapPrimed by remember { mutableStateOf(false) }
+    val visibleVisitIds by remember(visits) {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo
+                .mapNotNull { visits.getOrNull(it.index)?.id }
+                .toSet()
         }
     }
-    // Pan to the visit at the top of the list as the user scrolls.
-    LaunchedEffect(listState, visits, visitMarkers) {
-        androidx.compose.runtime.snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx ->
-                visits.getOrNull(idx)?.let { v ->
-                    val target = visitMarkers.firstOrNull { it.visitId == v.id }?.center
-                        ?: LatLng(v.centroidLatitude, v.centroidLongitude)
-                    cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(target, 17f))
-                }
-            }
+    val visibleMarkers = remember(visitMarkers, visibleVisitIds) {
+        if (visibleVisitIds.isEmpty()) visitMarkers.take(4) else visitMarkers.filter { it.visitId in visibleVisitIds }
+    }
+
+    LaunchedEffect(place, visitMarkers) {
+        if (mapPrimed) return@LaunchedEffect
+        val initial = place?.let { LatLng(it.latitude, it.longitude) } ?: visitMarkers.firstOrNull()?.center
+        if (initial != null) {
+            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(initial, 16f))
+            mapPrimed = true
+        }
+    }
+    LaunchedEffect(mapPrimed, visibleMarkers.map { it.visitId }) {
+        if (!mapPrimed || visibleMarkers.isEmpty()) return@LaunchedEffect
+        val bounds = visibleVisitBounds(visibleMarkers)
+        if (bounds != null) {
+            runCatching { cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 80)) }
+                .onFailure { cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(visibleMarkers.first().center, 16f)) }
+        }
     }
 
     Dialog(
@@ -152,25 +170,33 @@ fun PlaceDetailDialog(
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
                     Box(Modifier.fillMaxWidth().height(280.dp)) {
-                        GoogleMap(
-                            modifier = Modifier.fillMaxSize(),
-                            cameraPositionState = cameraPositionState,
-                            mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
-                            uiSettings = MapUiSettings(zoomControlsEnabled = false),
-                        ) {
-                            // Place: yellow translucent ring (no dot, no edge).
-                            place?.let { p ->
-                                Circle(
-                                    center = LatLng(p.latitude, p.longitude), radius = p.radiusMeters,
-                                    strokeColor = Color.Transparent, strokeWidth = 0f,
-                                    fillColor = Color(0xFFFFD54F).copy(alpha = 0.18f),
-                                )
-                            }
-                            // Each past visit "my location" style: translucent circle + small dot.
-                            visitMarkers.forEach { marker ->
+                        if (mapPrimed) {
+                            GoogleMap(
+                                modifier = Modifier.fillMaxSize(),
+                                cameraPositionState = cameraPositionState,
+                                mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+                                uiSettings = MapUiSettings(zoomControlsEnabled = false),
+                            ) {
+                                // Visible visit rows only: translucent radius circle + fixed center dot.
                                 val blue = Color(0xFF4285F4)
-                                Circle(center = marker.center, radius = marker.radiusMeters, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = blue.copy(alpha = 0.22f))
-                                Circle(center = marker.center, radius = 7.0, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = blue)
+                                visibleMarkers.forEach { marker ->
+                                    Circle(
+                                        center = marker.center,
+                                        radius = marker.radiusMeters,
+                                        strokeColor = Color.Transparent,
+                                        strokeWidth = 0f,
+                                        fillColor = blue.copy(alpha = 0.22f),
+                                    )
+                                    MarkerComposable(
+                                        marker.visitId,
+                                        state = rememberUpdatedMarkerState(position = marker.center),
+                                        anchor = Offset(0.5f, 0.5f),
+                                        flat = true,
+                                        zIndex = 10f,
+                                    ) {
+                                        VisitCenterDot(blue)
+                                    }
+                                }
                             }
                         }
                     }
@@ -202,4 +228,19 @@ fun PlaceDetailDialog(
             }
         }
     }
+}
+
+private fun visibleVisitBounds(markers: List<PlaceVisitMarker>): LatLngBounds? {
+    if (markers.isEmpty()) return null
+    val builder = LatLngBounds.builder()
+    markers.forEach { marker ->
+        val box = Geo.boundingBox(
+            marker.center.latitude,
+            marker.center.longitude,
+            marker.radiusMeters.coerceAtLeast(45.0),
+        )
+        builder.include(LatLng(box[0], box[1]))
+        builder.include(LatLng(box[2], box[3]))
+    }
+    return runCatching { builder.build() }.getOrNull()
 }

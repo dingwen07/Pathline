@@ -8,6 +8,7 @@ import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.exp
 
 /**
  * The unified classification entry point used across the app. It prefers the on-device LiteRT
@@ -27,7 +28,15 @@ class Classifier @Inject constructor(
             val probs = model.infer(Features.stateFeatures(input))
             val result = probs?.let { argmax(it) }
             if (result != null && result.second >= Constants.CONFIRM_CONFIDENCE_THRESHOLD) {
-                return StateClassification(DevicePhysicalState.fromModelIndex(result.first), result.second)
+                val state = DevicePhysicalState.fromModelIndex(result.first)
+                if (state == DevicePhysicalState.STATIONARY) {
+                    val adjusted = result.second * accuracyTrust(input.horizontalAccuracyMeters)
+                    if (input.speedMaxMps >= 1.0f || adjusted < Constants.CONFIRM_CONFIDENCE_THRESHOLD) {
+                        return heuristic.classifyState(input)
+                    }
+                    return StateClassification(state, adjusted)
+                }
+                return StateClassification(state, result.second)
             }
         }
         return heuristic.classifyState(input)
@@ -52,5 +61,12 @@ class Classifier @Inject constructor(
             if (probs[i] > bestVal) { bestVal = probs[i]; bestIdx = i }
         }
         return bestIdx to bestVal
+    }
+
+    private fun accuracyTrust(accuracyMeters: Float?): Float {
+        val acc = accuracyMeters ?: return 0.75f
+        return exp(-((acc.coerceAtLeast(5f) - 5f) / 35f).toDouble())
+            .coerceIn(0.15, 1.0)
+            .toFloat()
     }
 }

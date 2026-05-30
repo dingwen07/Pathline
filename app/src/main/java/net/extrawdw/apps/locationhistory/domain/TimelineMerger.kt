@@ -24,6 +24,7 @@ class TimelineMerger @Inject constructor(
 
     suspend fun mergeDay(dayEpoch: Long) {
         tripDao.byDay(dayEpoch).forEach { mergeSegmentsWithin(it) }
+        removeEmptyTrips(dayEpoch)
         // Drop GPS-drift "trips" that sit between two visits to the same place.
         removeDriftTrips(dayEpoch)
         // Repeat until stable so chains (A=B=C…) collapse fully.
@@ -32,6 +33,16 @@ class TimelineMerger @Inject constructor(
             // keep going
         }
         tripDao.byDay(dayEpoch).forEach { mergeSegmentsWithin(it) }
+    }
+
+    private suspend fun removeEmptyTrips(dayEpoch: Long) {
+        for (trip in tripDao.byDay(dayEpoch)) {
+            if (trip.confirmed) continue
+            if (trip.distanceMeters <= 0.0 || tripDao.segmentsForTrip(trip.id).isEmpty()) {
+                tripDao.deleteSegmentsForTrip(trip.id)
+                tripDao.deleteTrip(trip.id)
+            }
+        }
     }
 
     /** Delete trips whose net displacement is below the drift threshold and that are bounded by two
@@ -44,20 +55,12 @@ class TimelineMerger @Inject constructor(
             val visits = visitDao.byDay(dayEpoch).sortedBy { it.startMs }
             val before = visits.lastOrNull { it.startMs <= trip.startMs }
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
-            if (before?.confirmed == true || after?.confirmed == true) continue
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
             if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
                 tripDao.deleteSegmentsForTrip(trip.id)
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
-                    visitDao.update(
-                        before.copy(
-                            endMs = maxOf(before.endMs, after.endMs),
-                            centroidLatitude = (before.centroidLatitude + after.centroidLatitude) / 2,
-                            centroidLongitude = (before.centroidLongitude + after.centroidLongitude) / 2,
-                            confirmed = before.confirmed || after.confirmed,
-                        ),
-                    )
+                    visitDao.update(mergeVisits(before, after))
                     visitDao.delete(after.id)
                 }
             }
@@ -104,18 +107,10 @@ class TimelineMerger @Inject constructor(
         for (i in 0 until visits.size - 1) {
             val a = visits[i]
             val b = visits[i + 1]
-            if (a.confirmed || b.confirmed) continue
             // Two stays at the same place with no real trip recorded between them are one stay,
             // regardless of the gap (any movement worth showing would have left a trip).
             if (samePlace(a, b) && !tripExistsBetween(dayEpoch, a.endMs, b.startMs)) {
-                visitDao.update(
-                    a.copy(
-                        endMs = maxOf(a.endMs, b.endMs),
-                        centroidLatitude = (a.centroidLatitude + b.centroidLatitude) / 2,
-                        centroidLongitude = (a.centroidLongitude + b.centroidLongitude) / 2,
-                        confirmed = a.confirmed || b.confirmed,
-                    ),
-                )
+                visitDao.update(mergeVisits(a, b))
                 visitDao.delete(b.id)
                 return true
             }
@@ -151,6 +146,26 @@ class TimelineMerger @Inject constructor(
         a.placeId == null && b.placeId == null && a.candidateName != null ->
             a.candidateName == b.candidateName
         else -> false
+    }
+
+    private fun mergeVisits(a: VisitEntity, b: VisitEntity): VisitEntity {
+        val aDuration = (a.endMs - a.startMs).coerceAtLeast(1L).toDouble()
+        val bDuration = (b.endMs - b.startMs).coerceAtLeast(1L).toDouble()
+        val total = aDuration + bDuration
+        return a.copy(
+            placeId = a.placeId ?: b.placeId,
+            candidateName = a.candidateName ?: b.candidateName,
+            candidateGooglePlaceId = a.candidateGooglePlaceId ?: b.candidateGooglePlaceId,
+            candidateLatitude = a.candidateLatitude ?: b.candidateLatitude,
+            candidateLongitude = a.candidateLongitude ?: b.candidateLongitude,
+            endMs = maxOf(a.endMs, b.endMs),
+            centroidLatitude = (a.centroidLatitude * aDuration + b.centroidLatitude * bDuration) / total,
+            centroidLongitude = (a.centroidLongitude * aDuration + b.centroidLongitude * bDuration) / total,
+            radiusMeters = maxOf(a.radiusMeters, b.radiusMeters),
+            confirmed = a.confirmed || b.confirmed,
+            confidence = maxOf(a.confidence, b.confidence),
+            isOngoing = a.isOngoing || b.isOngoing,
+        )
     }
 
     private suspend fun tripExistsBetween(dayEpoch: Long, fromMs: Long, toMs: Long): Boolean =

@@ -1,5 +1,7 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -11,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,7 +23,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -45,6 +50,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberBottomSheetScaffoldState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,23 +68,22 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
-import com.google.maps.android.compose.rememberMarkerState
-import androidx.compose.ui.graphics.toArgb
+import com.google.maps.android.compose.rememberUpdatedMarkerState
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
@@ -116,7 +122,11 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
 
     val editing = editItem != null
     val editPoints = remember(editSamples) { editSamples.map { LatLng(it.latitude, it.longitude) } }
-    val dotIcon = rememberDotIcon(VISIT_BLUE)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val hasFineLocation = remember {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+    }
 
     val editBackProgress by rememberPredictiveBackProgress(enabled = editItem != null) {
         editItem = null
@@ -130,20 +140,24 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
         snapshotFlow { pagerState.currentPage }.collect { viewModel.selectDay(dayForPage(it)) }
     }
 
-    // Fit the camera to the day once (prevents zoom jitter as samples stream in).
-    var fittedDay by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(selectedDay, mapState, editing) {
-        if (editing || fittedDay == selectedDay) return@LaunchedEffect
+    // Fit only map data that belongs to the selected day. Flow switching can briefly expose the
+    // previous day's MapState; fitting that stale state is what made later day switches miss zoom.
+    var fittedMapKey by remember { mutableStateOf<String?>(null) }
+    val mapFitKey = remember(selectedDay, mapState) {
+        if (mapState.dayEpoch == selectedDay) mapState.fitKey() else null
+    }
+    LaunchedEffect(selectedDay, mapFitKey, editing) {
+        if (editing || mapFitKey == null || fittedMapKey == mapFitKey) return@LaunchedEffect
         val bounds = mapState.boundsOrNull()
         if (bounds != null) {
             runCatching { cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120)) }
                 .onFailure { cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(bounds.center, 15f)) }
-            fittedDay = selectedDay
         } else {
             viewModel.currentLatLng()?.let {
                 cameraPositionState.move(CameraUpdateFactory.newCameraPosition(CameraPosition.fromLatLngZoom(it, 15f)))
             }
         }
+        fittedMapKey = mapFitKey
     }
     // While splitting, follow the split point; while reclassifying, fit the whole edited track.
     LaunchedEffect(editing, splitIndex, editPoints) {
@@ -159,10 +173,8 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
         }
     }
 
-    BottomSheetScaffold(
-        scaffoldState = scaffoldState,
-        sheetPeekHeight = SHEET_PEEK,
-        sheetContent = {
+    @Composable
+    fun TimelinePanel(expanded: Boolean) {
             AnimatedContent(
                 targetState = editItem,
                 transitionSpec = {
@@ -189,13 +201,18 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                     )
                 }
             } else {
-                Column(Modifier.fillMaxWidth()) {
+                Column(if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
                     DayHeader(
                         dayEpoch = selectedDay,
                         isToday = selectedDay >= today,
                         onToday = { scope.launch { pagerState.animateScrollToPage(TODAY_PAGE) } },
+                        modifier = if (expanded) Modifier.statusBarsPadding() else Modifier,
+                        compact = expanded,
                     )
-                    HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth().height(520.dp)) { page ->
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(520.dp),
+                    ) { page ->
                         val day = dayForPage(page)
                         val dayTimeline by remember(day) { viewModel.timelineFor(day) }
                             .collectAsStateWithLifecycle(TimelineDay(day, emptyList()))
@@ -240,15 +257,21 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                 }
             }
             }
-        },
-    ) {
+    }
+
+    @Composable
+    fun MapPanel(contentPadding: PaddingValues, recenterBottomPadding: androidx.compose.ui.unit.Dp) {
         Box(Modifier.fillMaxSize()) {
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = cameraPositionState,
                 mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
-                contentPadding = PaddingValues(bottom = SHEET_PEEK),
-                uiSettings = MapUiSettings(zoomControlsEnabled = false),
+                contentPadding = contentPadding,
+                properties = MapProperties(isMyLocationEnabled = hasFineLocation),
+                uiSettings = MapUiSettings(
+                    zoomControlsEnabled = false,
+                    myLocationButtonEnabled = false,
+                ),
             ) {
                 val dim = editing
                 if (mapState.rawPath.size >= 2) {
@@ -265,18 +288,19 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                 mapState.placeRings.forEach { ring ->
                     Circle(center = ring.center, radius = ring.radiusMeters, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = PLACE_RING.copy(alpha = if (dim) 0.06f else 0.18f))
                 }
-                // Visits "my location" style: translucent accuracy circle (meters) + a fixed
-                // screen-size dot marker that never grows/shrinks with zoom.
+                // Visits: translucent radius circle plus a fixed screen-size center dot.
                 mapState.visits.forEach { v ->
                     Circle(center = v.center, radius = v.radiusMeters, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = VISIT_BLUE.copy(alpha = if (dim) 0.10f else 0.22f))
-                    if (dotIcon != null) {
-                        Marker(
-                            state = rememberMarkerState(key = "${v.center.latitude},${v.center.longitude}", position = v.center),
-                            icon = dotIcon,
-                            anchor = Offset(0.5f, 0.5f),
-                            flat = true,
-                            zIndex = 1f,
-                        )
+                    MarkerComposable(
+                        v.center.latitude,
+                        v.center.longitude,
+                        dim,
+                        state = rememberUpdatedMarkerState(position = v.center),
+                        anchor = Offset(0.5f, 0.5f),
+                        flat = true,
+                        zIndex = 10f,
+                    ) {
+                        VisitCenterDot(VISIT_BLUE, alpha = if (dim) 0.55f else 1f)
                     }
                 }
                 // Split/reclassify preview.
@@ -290,10 +314,55 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                     }
                 }
             }
-            FloatingActionButton(
-                onClick = { scope.launch { viewModel.currentLatLng()?.let { cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(it, 16f)) } } },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = SHEET_PEEK + 16.dp),
-            ) { Icon(Icons.Filled.MyLocation, contentDescription = "Recenter on my location") }
+            if (hasFineLocation) {
+                FloatingActionButton(
+                    onClick = {
+                        scope.launch {
+                            viewModel.currentLatLng()?.let {
+                                cameraPositionState.animate(CameraUpdateFactory.newLatLng(it))
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(end = 24.dp, bottom = recenterBottomPadding),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(Icons.Filled.MyLocation, contentDescription = "Recenter on current location")
+                }
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val threePane = maxWidth >= 840.dp && maxWidth > maxHeight
+        if (threePane) {
+            Row(Modifier.fillMaxSize()) {
+                Surface(
+                    modifier = Modifier.width(420.dp).fillMaxHeight(),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                ) {
+                    TimelinePanel(expanded = true)
+                }
+                Surface(
+                    modifier = Modifier.width(1.dp).fillMaxHeight(),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                ) {}
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    MapPanel(contentPadding = PaddingValues(), recenterBottomPadding = 24.dp)
+                }
+            }
+        } else {
+            BottomSheetScaffold(
+                scaffoldState = scaffoldState,
+                sheetPeekHeight = SHEET_PEEK,
+                sheetContent = { TimelinePanel(expanded = false) },
+            ) {
+                MapPanel(contentPadding = PaddingValues(bottom = SHEET_PEEK), recenterBottomPadding = SHEET_PEEK + 24.dp)
+            }
         }
     }
 
@@ -325,9 +394,15 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
 // --- day header -------------------------------------------------------------------------------
 
 @Composable
-private fun DayHeader(dayEpoch: Long, isToday: Boolean, onToday: () -> Unit) {
+private fun DayHeader(
+    dayEpoch: Long,
+    isToday: Boolean,
+    onToday: () -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+        modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compact) 0.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -336,10 +411,11 @@ private fun DayHeader(dayEpoch: Long, isToday: Boolean, onToday: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
         )
-        if (!isToday) {
-            IconButton(onClick = onToday) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Jump to today")
-            }
+        IconButton(
+            onClick = onToday,
+            enabled = !isToday,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Jump to today")
         }
     }
     HorizontalDivider()
@@ -349,23 +425,6 @@ private fun DayHeader(dayEpoch: Long, isToday: Boolean, onToday: () -> Unit) {
 
 private val VISIT_BLUE = Color(0xFF4285F4)
 private val PLACE_RING = Color(0xFFFFD54F)
-
-/** A constant screen-size "my location" dot (white ring + coloured center) as a marker icon. */
-@Composable
-private fun rememberDotIcon(color: Color): BitmapDescriptor? = remember(color) {
-    runCatching {
-        val size = 22
-        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bmp)
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-        val c = size / 2f
-        paint.color = android.graphics.Color.WHITE
-        canvas.drawCircle(c, c, c, paint)
-        paint.color = color.toArgb()
-        canvas.drawCircle(c, c, c - 4f, paint)
-        BitmapDescriptorFactory.fromBitmap(bmp)
-    }.getOrNull()
-}
 
 /** Highlight colour for a reclassify preview, by the chosen target type. */
 private fun typeColor(type: SegmentType?): Color = when (type) {
@@ -387,6 +446,24 @@ private fun MapState.boundsOrNull(): LatLngBounds? {
     points.forEach { b.include(it) }
     return runCatching { b.build() }.getOrNull()
 }
+
+private fun MapState.fitKey(): String {
+    val visitKey = visits.joinToString("|") {
+        "${it.center.latitude.formatFit()},${it.center.longitude.formatFit()},${it.radiusMeters.toInt()}"
+    }
+    val segmentKey = segments.joinToString("|") { segment ->
+        val first = segment.points.firstOrNull()
+        val last = segment.points.lastOrNull()
+        "${segment.mode}:${segment.points.size}:${first?.latitude?.formatFit()},${first?.longitude?.formatFit()}:" +
+            "${last?.latitude?.formatFit()},${last?.longitude?.formatFit()}"
+    }
+    val placeKey = placeRings.joinToString("|") {
+        "${it.center.latitude.formatFit()},${it.center.longitude.formatFit()},${it.radiusMeters.toInt()}"
+    }
+    return "$dayEpoch;$visitKey;$segmentKey;$placeKey"
+}
+
+private fun Double.formatFit(): String = java.lang.String.format(java.util.Locale.US, "%.5f", this)
 
 private fun TimelineItem.currentType(): SegmentType = when (this) {
     is TimelineItem.VisitItem -> SegmentType.Stationary

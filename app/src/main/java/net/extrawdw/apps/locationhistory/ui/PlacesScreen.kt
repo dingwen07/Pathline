@@ -8,10 +8,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -20,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,6 +46,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     val visitCounts by viewModel.visitCounts.collectAsStateWithLifecycle()
 
     var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
+    var deletePlace by remember { mutableStateOf<PlaceEntity?>(null) }
     var assignVisit by remember { mutableStateOf<VisitEntity?>(null) }
     var detailPlaceId by remember { mutableStateOf<Long?>(null) }
 
@@ -99,6 +103,11 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                         }
+                        if (count == 0) {
+                            IconButton(onClick = { deletePlace = place }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Delete place")
+                            }
+                        }
                         IconButton(onClick = { editPlace = place }) {
                             Icon(Icons.Filled.Edit, contentDescription = "Edit place")
                         }
@@ -125,6 +134,25 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 editPlace = null
             },
             onDismiss = { editPlace = null },
+        )
+    }
+
+    deletePlace?.let { place ->
+        AlertDialog(
+            onDismissRequest = { deletePlace = null },
+            title = { Text("Delete place?") },
+            text = { Text("${place.name} has no visits and can be removed from saved places.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteIfUnvisited(place.id)
+                        deletePlace = null
+                    },
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletePlace = null }) { Text("Cancel") }
+            },
         )
     }
 

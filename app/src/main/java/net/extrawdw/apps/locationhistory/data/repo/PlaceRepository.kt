@@ -55,6 +55,9 @@ class PlaceRepository @Inject constructor(
 
     suspend fun update(place: PlaceEntity) = dao.update(place)
 
+    suspend fun deleteIfUnvisited(placeId: Long): Boolean =
+        dao.deleteIfUnvisited(placeId) > 0
+
     /**
      * Recompute a place's center and radius from a newly-assigned visit's [samples] (weighted by
      * GPS accuracy via [VisitGeometry]). The center is a running mean across the place's visits, the

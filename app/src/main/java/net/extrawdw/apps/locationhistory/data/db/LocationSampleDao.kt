@@ -37,6 +37,10 @@ interface LocationSampleDao {
     @Query("UPDATE location_samples SET includedInComputation = 0, exclusionReason = :reason WHERE id = :id")
     suspend fun markExcluded(id: Long, reason: String)
 
+    /** Restore a sample after the user says a previously excluded drift fix was real movement. */
+    @Query("UPDATE location_samples SET includedInComputation = 1, exclusionReason = NULL WHERE id = :id")
+    suspend fun markIncluded(id: Long)
+
     @Query("SELECT COUNT(*) FROM location_samples")
     fun observeCount(): Flow<Long>
 

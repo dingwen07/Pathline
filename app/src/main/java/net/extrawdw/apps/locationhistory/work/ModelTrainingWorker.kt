@@ -32,6 +32,10 @@ class ModelTrainingWorker @AssistedInject constructor(
             val examples = trainingRepository.allStateExamples()
                 .map { TrainingRepository.decode(it.features) to it.label }
                 .filter { it.first.size == model.featureDim }
+            net.extrawdw.apps.locationhistory.core.AppLog.i(
+                "TrainingWorker",
+                "state examples=${examples.size}",
+            )
             if (examples.isNotEmpty()) {
                 trainBatch(model, examples)
                 model.save(models.stateCheckpoint)
@@ -44,6 +48,10 @@ class ModelTrainingWorker @AssistedInject constructor(
             val examples = trainingRepository.allTransportExamples()
                 .map { TrainingRepository.decode(it.features) to it.label }
                 .filter { it.first.size == model.featureDim }
+            net.extrawdw.apps.locationhistory.core.AppLog.i(
+                "TrainingWorker",
+                "transport examples=${examples.size}",
+            )
             if (examples.isNotEmpty()) {
                 trainBatch(model, examples)
                 model.save(models.transportCheckpoint)

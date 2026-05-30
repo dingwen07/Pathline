@@ -64,4 +64,8 @@ class PlacesViewModel @Inject constructor(
             ),
         )
     }
+
+    fun deleteIfUnvisited(placeId: Long) = viewModelScope.launch {
+        placeRepository.deleteIfUnvisited(placeId)
+    }
 }

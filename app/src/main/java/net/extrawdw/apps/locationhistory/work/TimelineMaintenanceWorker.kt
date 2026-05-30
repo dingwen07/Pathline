@@ -76,6 +76,13 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val candidates = visitDetector.detectVisits(samples)
             .filter { it.overlaps(dayStart, dayEnd) }
             .filterNot { candidate -> confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } }
+            .toMutableList()
+
+        ongoingStationaryCandidate(samples, dayStart, dayEnd, latest)?.let { ongoing ->
+            val overlapsDetected = candidates.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
+            val overlapsConfirmed = confirmedVisits.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
+            if (!overlapsDetected && !overlapsConfirmed) candidates.add(ongoing)
+        }
 
         val insertedVisitIds = ArrayList<Long>(candidates.size)
         for (candidate in candidates) {
@@ -147,6 +154,45 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             ),
             match,
         ))
+    }
+
+    private fun ongoingStationaryCandidate(
+        samples: List<LocationSampleEntity>,
+        dayStart: Long,
+        dayEnd: Long,
+        latest: LocationSampleEntity?,
+    ): VisitCandidate? {
+        val latestInDay = samples.lastOrNull { it.timestampMs >= dayStart && it.timestampMs < dayEnd }
+        if (latest == null || latestInDay?.id != latest.id) return null
+        if (!latest.includedInComputation || latest.devicePhysicalState != DevicePhysicalState.STATIONARY) return null
+        val speed = latest.speed ?: 0f
+        if (speed > 0.6f) return null
+        val trustedStationary = latest.devicePhysicalStateConfidence >= 0.45f ||
+            latest.arActivity?.uppercase() == "STILL"
+        if (!trustedStationary) return null
+
+        val tail = ArrayDeque<LocationSampleEntity>()
+        for (sample in samples.asReversed()) {
+            if (sample.timestampMs < dayStart || sample.timestampMs >= dayEnd) continue
+            if (!sample.includedInComputation || sample.devicePhysicalState != DevicePhysicalState.STATIONARY) break
+            if ((sample.speed ?: 0f) > 0.8f) break
+            if ((sample.accuracy ?: Constants.SAMPLE_ACCURACY_GATE_METERS) >
+                Constants.SAMPLE_ACCURACY_GATE_METERS
+            ) {
+                break
+            }
+            tail.addFirst(sample)
+        }
+        if (tail.isEmpty()) tail.add(latest)
+        val good = tail.toList()
+        val geom = VisitGeometry.compute(good, latest.latitude, latest.longitude)
+        return VisitCandidate(
+            startMs = good.first().timestampMs,
+            endMs = maxOf(good.last().timestampMs, System.currentTimeMillis()),
+            centroidLatitude = geom.latitude,
+            centroidLongitude = geom.longitude,
+            sampleCount = good.size,
+        )
     }
 
     private suspend fun rebuildTrips(dayStart: Long, dayEnd: Long) {

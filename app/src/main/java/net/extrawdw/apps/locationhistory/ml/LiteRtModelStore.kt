@@ -2,6 +2,7 @@ package net.extrawdw.apps.locationhistory.ml
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -62,5 +63,17 @@ class LiteRtModelStore @Inject constructor(
         val bytes = context.assets.open(assetPath).use { it.readBytes() }
         TrainableTfliteModel(TrainableTfliteModel.directBuffer(bytes), featureDim, numClasses)
             .also { it.restoreIfPresent(checkpoint) }
+            .also {
+                AppLog.i(
+                    TAG,
+                    "loaded $assetPath training=${it.supportsTraining()} checkpoint=${checkpoint.exists()}",
+                )
+            }
+    }.onFailure {
+        AppLog.w(TAG, "failed to load $assetPath: ${it.message}")
     }.getOrNull()
+
+    private companion object {
+        const val TAG = "ModelStore"
+    }
 }

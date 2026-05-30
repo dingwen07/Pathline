@@ -42,6 +42,9 @@ interface PlaceDao {
     @Query("UPDATE places SET latitude = :lat, longitude = :lon, radiusMeters = :radius WHERE id = :id")
     suspend fun updateCenterRadius(id: Long, lat: Double, lon: Double, radius: Double)
 
+    @Query("DELETE FROM places WHERE id = :id AND NOT EXISTS (SELECT 1 FROM visits WHERE placeId = :id)")
+    suspend fun deleteIfUnvisited(id: Long): Int
+
     @Query("SELECT COUNT(*) FROM places")
     suspend fun count(): Int
 }

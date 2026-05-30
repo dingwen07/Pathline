@@ -33,12 +33,12 @@ object LocationProfiles {
     private fun tune(state: DevicePhysicalState, profile: PowerProfile): Tuning {
         // Base cadence by motion: faster fixes when moving fast, sparse when slow.
         val base = when (state) {
-            DevicePhysicalState.IN_VEHICLE -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 5_000, 2_000, 15_000)
-            DevicePhysicalState.CYCLING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 8_000, 4_000, 20_000)
-            DevicePhysicalState.RUNNING -> Tuning(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 10_000, 5_000, 30_000)
-            DevicePhysicalState.WALKING -> Tuning(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 15_000, 8_000, 45_000)
+            DevicePhysicalState.IN_VEHICLE -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 4_000, 2_000, 12_000)
+            DevicePhysicalState.CYCLING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 4_000, 2_000, 12_000)
+            DevicePhysicalState.RUNNING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 4_000, 2_000, 12_000)
+            DevicePhysicalState.WALKING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 5_000, 2_500, 15_000)
             DevicePhysicalState.STATIONARY -> Tuning(Priority.PRIORITY_LOW_POWER, 60_000, 30_000, 120_000)
-            DevicePhysicalState.UNKNOWN -> Tuning(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 20_000, 10_000, 60_000)
+            DevicePhysicalState.UNKNOWN -> Tuning(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 12_000, 6_000, 30_000)
         }
         return when (profile) {
             PowerProfile.HIGH_ACCURACY -> base.copy(
