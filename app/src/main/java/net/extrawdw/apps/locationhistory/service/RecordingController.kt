@@ -1,0 +1,447 @@
+package net.extrawdw.apps.locationhistory.service
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.DetectedActivity
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.tasks.await
+import net.extrawdw.apps.locationhistory.core.AppLog
+import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.TimeBuckets
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
+import net.extrawdw.apps.locationhistory.data.enrich.DeviceStateCollector
+import net.extrawdw.apps.locationhistory.data.enrich.MotionSensorReader
+import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
+import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
+import net.extrawdw.apps.locationhistory.domain.PlaceMatcher
+import net.extrawdw.apps.locationhistory.domain.VisitCandidate
+import net.extrawdw.apps.locationhistory.ml.Classifier
+import net.extrawdw.apps.locationhistory.ml.StateFeatureInput
+import net.extrawdw.apps.locationhistory.work.WorkScheduler
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * The recording brain. It reacts to the low-power signals (Activity Recognition transitions,
+ * geofence exits) and to batched location deliveries, deciding when to record, when to drop into
+ * the stationary/geofence state, and how to persist + classify each sample. It holds no wakelock —
+ * everything is driven by system-delivered PendingIntents.
+ */
+@Singleton
+class RecordingController @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val locationRepository: LocationRepository,
+    private val recordingRepository: RecordingRepository,
+    private val placeRepository: net.extrawdw.apps.locationhistory.data.repo.PlaceRepository,
+    private val settingsRepository: SettingsRepository,
+    private val deviceStateCollector: DeviceStateCollector,
+    private val motionSensorReader: MotionSensorReader,
+    private val classifier: Classifier,
+    private val placeMatcher: PlaceMatcher,
+    private val recorderService: RecorderServiceController,
+    private val recognitionManager: RecognitionManager,
+    private val geofenceManager: GeofenceManager,
+    private val workScheduler: WorkScheduler,
+) {
+    @Volatile private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
+    @Volatile private var lastArActivity: String? = null
+    @Volatile private var lastArConfidence: Int? = null
+    @Volatile private var serviceState: DevicePhysicalState? = null
+    private val recentSpeeds = ArrayDeque<Float>()
+    private val speedLock = Any()
+
+    /** Recent fixes used to detect "became stationary" from the classifier when AR is silent. */
+    private data class Fix(val t: Long, val lat: Double, val lon: Double, val stationary: Boolean)
+    private val recentFixes = ArrayDeque<Fix>()
+    private val fixLock = Any()
+
+    private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
+
+    /** Begin the always-on, low-power heartbeat (Activity Recognition transitions). */
+    fun enableTracking(): Boolean {
+        val started = recognitionManager.start()
+        AppLog.i(TAG, "enableTracking: AR started=$started perm=${recognitionManager.hasPermission()}")
+        return started
+    }
+
+    /**
+     * Turn tracking on (from the UI). Arms the AR heartbeat, grabs an immediate fix and starts the
+     * foreground recording session. The session then **stays alive** for the whole tracking period
+     * — when the device is still we drop to a low-power location cadence rather than stopping the
+     * service, so it never silently exits.
+     */
+    suspend fun startTracking() {
+        AppLog.i(TAG, "startTracking")
+        enableTracking()
+        val profile = settingsRepository.settings.first().powerProfile
+        recorderService.start(currentState, profile)
+        val fix = getCurrentLocation()
+        if (fix != null) {
+            AppLog.i(TAG, "startTracking: bootstrap fix ${fix.latitude},${fix.longitude}")
+            handleLocations(listOf(fix))
+        } else {
+            AppLog.w(TAG, "startTracking: no bootstrap fix available")
+        }
+    }
+
+    suspend fun disableTracking() {
+        AppLog.i(TAG, "disableTracking")
+        recognitionManager.stop()
+        geofenceManager.clearAll()
+        recorderService.stop()
+    }
+
+    /**
+     * Self-heal when the app is opened: if tracking was enabled, make sure the foreground recorder
+     * is actually running (it may have been killed) and the AR heartbeat + geofences are armed.
+     */
+    suspend fun resumeIfPreviouslyEnabled() {
+        if (!settingsRepository.settings.first().trackingEnabled) {
+            AppLog.i(TAG, "resume: tracking disabled, nothing to do")
+            return
+        }
+        if (!recognitionManager.hasPermission()) {
+            AppLog.w(TAG, "resume: missing activity-recognition permission")
+            return
+        }
+        AppLog.i(TAG, "resume: tracking on, recorderRunning=${recorderService.isRecording}")
+        enableTracking()
+        geofenceManager.restore()
+        if (!recorderService.isRecording) {
+            val profile = settingsRepository.settings.first().powerProfile
+            recorderService.start(currentState, profile)
+        }
+        repairStationaryFromStoredSamples()
+    }
+
+    /** A single current fix, used to bootstrap recording and to anchor a stationary visit. */
+    private suspend fun getCurrentLocation(): Location? {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) return null
+        return runCatching {
+            fusedClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token,
+            ).await()
+        }.getOrNull()
+    }
+
+    /** Handle a batch of Activity Recognition transitions; react to the most recent one. */
+    suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>) {
+        val latest = events.lastOrNull() ?: return
+        val (activityType, transitionType) = latest
+        if (transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) return
+
+        lastArActivity = arName(activityType)
+        lastArConfidence = 90
+        AppLog.i(TAG, "AR transition ENTER ${arName(activityType)}")
+        when (activityType) {
+            DetectedActivity.STILL -> becameStationary()
+            DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> becameMoving(DevicePhysicalState.WALKING)
+            DetectedActivity.RUNNING -> becameMoving(DevicePhysicalState.RUNNING)
+            DetectedActivity.ON_BICYCLE -> becameMoving(DevicePhysicalState.CYCLING)
+            DetectedActivity.IN_VEHICLE -> becameMoving(DevicePhysicalState.IN_VEHICLE)
+        }
+    }
+
+    /** Leaving the dwell geofence means the user is on the move again (a real, forced departure). */
+    suspend fun handleGeofenceExit() {
+        AppLog.i(TAG, "geofence EXIT")
+        geofenceManager.clearAll()
+        becameMoving(DevicePhysicalState.UNKNOWN, force = true)
+    }
+
+    /** Persist + classify a batch of delivered fixes. */
+    suspend fun handleLocations(locations: List<Location>) {
+        if (locations.isEmpty()) return
+        AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=$currentState)")
+        val context = deviceStateCollector.snapshot()
+        val motionVariance = motionSensorReader.motionVariance()
+
+        for (location in locations.sortedBy { it.time }) {
+            val speed = if (location.hasSpeed()) location.speed else null
+            speed?.let { pushSpeed(it) }
+            val (mean, max, variance) = speedStats()
+
+            val classification = classifier.classifyState(
+                StateFeatureInput(
+                    speedMps = speed,
+                    speedMeanMps = mean,
+                    speedMaxMps = max,
+                    speedVariance = variance,
+                    motionVariance = motionVariance,
+                    arActivity = lastArActivity,
+                    arConfidence = lastArConfidence,
+                    networkTransport = context.networkTransport,
+                    hasCellService = context.hasCellService,
+                    cellSignalDbm = context.cellSignalDbm,
+                ),
+            )
+            if (classification.isConfident &&
+                classification.state != DevicePhysicalState.STATIONARY &&
+                currentState != DevicePhysicalState.STATIONARY
+            ) {
+                // Only let the classifier drive non-stationary state here; stationary is handled by
+                // the cluster detector below so we don't flip in/out on a single jittery fix or mark
+                // ourselves stationary before an ongoing visit exists.
+                currentState = classification.state
+            }
+            pushFix(location, classification.state == DevicePhysicalState.STATIONARY)
+            locationRepository.record(buildSample(location, context, classification.state, classification.confidence))
+        }
+
+        // Keep the FGS notification + cadence in sync with the current state (fixes a stale
+        // "Unknown" notification when the state was set by a geofence/AR event long ago).
+        refreshServiceState()
+
+        // AR can be silent — if the recent fixes have settled into one spot and are classified
+        // stationary, finalize a stationary visit ourselves so the timeline doesn't get stuck on
+        // an old "walking" item.
+        val stationaryCandidate = stationaryClusterCandidate()
+        val needsStationaryVisit = stationaryCandidate != null &&
+            (currentState != DevicePhysicalState.STATIONARY || recordingRepository.ongoingVisit() == null)
+        if (needsStationaryVisit) {
+            AppLog.i(TAG, "stationary detected from fixes (AR silent) — finalizing visit")
+            becameStationary(stationaryCandidate, forceOpen = true)
+        }
+
+        // Keep the current stay's duration live on the timeline while stationary.
+        if (currentState == DevicePhysicalState.STATIONARY) {
+            recordingRepository.extendOngoingVisit(locations.maxOf { it.time })
+        }
+    }
+
+    /** Re-tune the foreground service (and its notification) when the state actually changes. */
+    private suspend fun refreshServiceState() {
+        if (!recorderService.isRecording) return
+        if (currentState == serviceState) return
+        serviceState = currentState
+        recorderService.start(currentState, settingsRepository.settings.first().powerProfile)
+    }
+
+    private fun pushFix(location: Location, stationary: Boolean) = synchronized(fixLock) {
+        recentFixes.addLast(Fix(location.time, location.latitude, location.longitude, stationary))
+        val cutoff = location.time - FIX_WINDOW_MS
+        while (recentFixes.isNotEmpty() && recentFixes.first().t < cutoff) recentFixes.removeFirst()
+    }
+
+    /** Returns a visit candidate when recent fixes have settled in one spot long enough, even if
+     *  Activity Recognition never reported STILL. */
+    private fun stationaryClusterCandidate(): VisitCandidate? = synchronized(fixLock) {
+        if (recentFixes.size < 3) return null
+        val minVisitMs = net.extrawdw.apps.locationhistory.core.Constants.MIN_VISIT_DURATION_MS
+        val now = recentFixes.last().t
+        val window = recentFixes.filter { now - it.t <= minVisitMs }
+        if (window.size < 3) return null
+        if (now - window.first().t < minVisitMs * 0.8) return null
+        val cLat = window.sumOf { it.lat } / window.size
+        val cLon = window.sumOf { it.lon } / window.size
+        val withinRadius = window.all {
+            net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <=
+                net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
+        }
+        val mostlyStationary = window.count { it.stationary } >= window.size * 0.6
+        if (!withinRadius || !mostlyStationary) return null
+        VisitCandidate(
+            startMs = window.first().t,
+            endMs = now,
+            centroidLatitude = cLat,
+            centroidLongitude = cLon,
+            sampleCount = window.size,
+        )
+    }
+
+    /** Repair a process-restart/install case where the DB already shows recent stationary fixes
+     *  but the in-memory controller has no ongoing visit to extend. */
+    private suspend fun repairStationaryFromStoredSamples() {
+        if (recordingRepository.ongoingVisit() != null) return
+        val recent = locationRepository.latest(12)
+            .filter { it.includedInComputation }
+            .sortedBy { it.timestampMs }
+        if (recent.size < 3 || recent.last().devicePhysicalState != DevicePhysicalState.STATIONARY) return
+        synchronized(fixLock) {
+            recentFixes.clear()
+            recent.forEach {
+                recentFixes.addLast(
+                    Fix(
+                        t = it.timestampMs,
+                        lat = it.latitude,
+                        lon = it.longitude,
+                        stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
+                    ),
+                )
+            }
+        }
+        stationaryClusterCandidate()?.let {
+            AppLog.i(TAG, "resume repair: opening stationary visit from stored fixes")
+            becameStationary(it, forceOpen = true)
+        }
+    }
+
+    // --- state transitions --------------------------------------------------------------------
+
+    private suspend fun becameStationary(candidateFromFixes: VisitCandidate? = null, forceOpen: Boolean = false) {
+        if (currentState == DevicePhysicalState.STATIONARY && !forceOpen) return
+        if (forceOpen && recordingRepository.ongoingVisit() != null) return
+        currentState = DevicePhysicalState.STATIONARY
+        AppLog.i(TAG, "becameStationary: keeping FGS alive at low-power cadence")
+        // Keep the foreground service alive but drop to the low-power stationary location cadence,
+        // so it never silently exits. (We deliberately do NOT stopSelf here.)
+        if (recorderService.isRecording) {
+            recorderService.start(DevicePhysicalState.STATIONARY, settingsRepository.settings.first().powerProfile)
+            serviceState = DevicePhysicalState.STATIONARY
+        }
+
+        // Make sure we have at least one fix to anchor the visit, even on a cold start.
+        if (locationRepository.mostRecent() == null) {
+            getCurrentLocation()?.let { handleLocations(listOf(it)) }
+        }
+        val anchor = locationRepository.mostRecent()
+        if (anchor != null) {
+            val now = System.currentTimeMillis()
+            val candidate = candidateFromFixes ?: VisitCandidate(
+                startMs = anchor.timestampMs,
+                endMs = now,
+                centroidLatitude = anchor.latitude,
+                centroidLongitude = anchor.longitude,
+                sampleCount = 1,
+            )
+            geofenceManager.armDwellGeofence(candidate.centroidLatitude, candidate.centroidLongitude)
+            val previousVisit = recordingRepository.mostRecentVisit()
+            val match = runCatching {
+                placeMatcher.match(candidate.centroidLatitude, candidate.centroidLongitude)
+            }.getOrNull()
+            val newVisitId = recordingRepository.openVisit(candidate, match)
+            if (match is net.extrawdw.apps.locationhistory.domain.PlaceMatch.Local) {
+                val excluded = locationRepository.excludeDriftOutside(
+                    startMs = candidate.startMs,
+                    endMs = candidate.endMs,
+                    centerLat = match.place.latitude,
+                    centerLon = match.place.longitude,
+                    radiusMeters = match.place.radiusMeters,
+                )
+                if (excluded > 0) AppLog.i(TAG, "excluded $excluded drift fixes outside ${match.place.name}")
+            }
+
+            // Segment the trip from the previous visit to this one.
+            if (previousVisit != null && !previousVisit.isOngoing) {
+                workScheduler.enqueueSegmentation(previousVisit.id, newVisitId)
+            }
+            // Combine any fragmented entries for the day.
+            workScheduler.enqueueMerge(TimeBuckets.dayEpoch(anchor.timestampMs))
+        }
+    }
+
+    private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false) {
+        // Drift guard: if we're still within the current stay's radius, an Activity Recognition
+        // "walking" is almost certainly GPS jitter, not real movement — stay put. A real departure
+        // is caught by the dwell geofence (force = true), which bypasses this.
+        if (!force && isLikelyDrift()) {
+            AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
+            return
+        }
+        currentState = state
+        AppLog.i(TAG, "becameMoving: $state (force=$force)")
+        // Close any ongoing visit at the moment movement resumes.
+        recordingRepository.ongoingVisit()?.let { ongoing ->
+            recordingRepository.closeVisit(ongoing.id, System.currentTimeMillis())
+            // If the just-finished stay matched a saved place, let the model refine that place's
+            // center/radius from this visit's samples (auto-update, reflected live in the UI).
+            ongoing.placeId?.let { placeId ->
+                val samples = locationRepository.rangeForComputation(ongoing.startMs, System.currentTimeMillis() + 1)
+                if (samples.isNotEmpty()) placeRepository.recordVisitToPlace(placeId, samples)
+            }
+        }
+        geofenceManager.clearAll()
+        val profile = settingsRepository.settings.first().powerProfile
+        recorderService.start(state, profile)
+        serviceState = state
+    }
+
+    /** True if there's an ongoing stay and the latest fix is still within its drift radius. */
+    private suspend fun isLikelyDrift(): Boolean {
+        val ongoing = recordingRepository.ongoingVisit() ?: return false
+        val last = locationRepository.mostRecent() ?: return false
+        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+            ongoing.centroidLatitude, ongoing.centroidLongitude, last.latitude, last.longitude,
+        )
+        return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
+    }
+
+    // --- helpers ------------------------------------------------------------------------------
+
+    private fun buildSample(
+        location: Location,
+        context: net.extrawdw.apps.locationhistory.data.enrich.DeviceContext,
+        state: DevicePhysicalState,
+        confidence: Float,
+    ): LocationSampleEntity = LocationSampleEntity(
+        timestampMs = location.time,
+        dayEpoch = TimeBuckets.dayEpoch(location.time),
+        latitude = location.latitude,
+        longitude = location.longitude,
+        altitude = if (location.hasAltitude()) location.altitude else null,
+        accuracy = if (location.hasAccuracy()) location.accuracy else null,
+        verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
+        bearing = if (location.hasBearing()) location.bearing else null,
+        bearingAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees else null,
+        speed = if (location.hasSpeed()) location.speed else null,
+        speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond else null,
+        provider = location.provider,
+        isMock = location.isMock,
+        elapsedRealtimeNanos = location.elapsedRealtimeNanos,
+        satelliteCount = location.extras?.getInt("satellites")?.takeIf { it > 0 },
+        batteryPct = context.batteryPct,
+        isCharging = context.isCharging,
+        networkTransport = context.networkTransport,
+        networkTypeName = context.networkTypeName,
+        cellSignalDbm = context.cellSignalDbm,
+        hasCellService = context.hasCellService,
+        wifiSsid = context.wifiSsid,
+        wifiBssid = context.wifiBssid,
+        screenOn = context.screenOn,
+        arActivity = lastArActivity,
+        arConfidence = lastArConfidence,
+        devicePhysicalState = state,
+        devicePhysicalStateConfidence = confidence,
+    )
+
+    private fun pushSpeed(speed: Float) = synchronized(speedLock) {
+        recentSpeeds.addLast(speed)
+        while (recentSpeeds.size > SPEED_WINDOW) recentSpeeds.removeFirst()
+    }
+
+    private fun speedStats(): Triple<Float, Float, Float> = synchronized(speedLock) {
+        if (recentSpeeds.isEmpty()) return Triple(0f, 0f, 0f)
+        val mean = recentSpeeds.average().toFloat()
+        val max = recentSpeeds.max()
+        val variance = recentSpeeds.map { (it - mean) * (it - mean) }.average().toFloat()
+        Triple(mean, max, variance)
+    }
+
+    private fun arName(activityType: Int): String = when (activityType) {
+        DetectedActivity.STILL -> "STILL"
+        DetectedActivity.WALKING -> "WALKING"
+        DetectedActivity.ON_FOOT -> "ON_FOOT"
+        DetectedActivity.RUNNING -> "RUNNING"
+        DetectedActivity.ON_BICYCLE -> "ON_BICYCLE"
+        DetectedActivity.IN_VEHICLE -> "IN_VEHICLE"
+        DetectedActivity.TILTING -> "TILTING"
+        else -> "UNKNOWN"
+    }
+
+    private companion object {
+        const val SPEED_WINDOW = 10
+        const val TAG = "Recorder"
+        const val FIX_WINDOW_MS = 6 * 60_000L
+    }
+}

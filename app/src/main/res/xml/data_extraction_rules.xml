@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   The raw location-sample database grows unbounded over years, so it is excluded from cloud
+   backup. The compact, per-month gzip partitions written by ExportWorker (files/export) are
+   included instead, along with settings and the small model checkpoints — keeping cloud backups
+   efficient. A full device-to-device transfer still copies everything.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="pathline.db" />
+        <exclude domain="database" path="pathline.db-wal" />
+        <exclude domain="database" path="pathline.db-shm" />
+    </cloud-backup>
+    <device-transfer />
+</data-extraction-rules>

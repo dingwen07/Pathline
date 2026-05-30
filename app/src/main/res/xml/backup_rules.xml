@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Legacy auto-backup rules (API < 31). The unbounded raw-sample database is excluded; the compact
+   monthly export partitions, settings and model checkpoints are backed up.
+-->
+<full-backup-content>
+    <exclude domain="database" path="pathline.db" />
+    <exclude domain="database" path="pathline.db-wal" />
+    <exclude domain="database" path="pathline.db-shm" />
+</full-backup-content>

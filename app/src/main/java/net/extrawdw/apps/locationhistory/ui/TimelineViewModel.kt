@@ -1,0 +1,204 @@
+package net.extrawdw.apps.locationhistory.ui
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.tasks.CancellationTokenSource
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import net.extrawdw.apps.locationhistory.core.Constants
+import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.TimeBuckets
+import net.extrawdw.apps.locationhistory.core.TransportMode
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
+import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
+import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
+import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
+import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
+import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
+import net.extrawdw.apps.locationhistory.domain.SegmentType
+import net.extrawdw.apps.locationhistory.domain.TimelineDay
+import net.extrawdw.apps.locationhistory.domain.TimelineEditor
+import net.extrawdw.apps.locationhistory.domain.TimelineItem
+import net.extrawdw.apps.locationhistory.work.WorkScheduler
+import javax.inject.Inject
+
+/** A polyline segment to draw on the map, coloured by its transport mode. */
+data class MapSegment(val points: List<LatLng>, val mode: TransportMode, val confirmed: Boolean)
+
+/** A visit drawn "my-location" style: a small solid dot + a translucent accuracy circle. */
+data class MapVisitMarker(val center: LatLng, val radiusMeters: Double, val confirmed: Boolean)
+
+/** A saved place drawn as a translucent yellow radius ring (no dot, no edge). */
+data class MapPlaceRing(val center: LatLng, val radiusMeters: Double)
+
+data class MapState(
+    val rawPath: List<LatLng> = emptyList(),
+    val segments: List<MapSegment> = emptyList(),
+    val visits: List<MapVisitMarker> = emptyList(),
+    val placeRings: List<MapPlaceRing> = emptyList(),
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@HiltViewModel
+class TimelineViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val timelineRepository: TimelineRepository,
+    private val placeRepository: PlaceRepository,
+    private val locationRepository: LocationRepository,
+    private val timelineEditor: TimelineEditor,
+    private val workScheduler: WorkScheduler,
+) : ViewModel() {
+
+    val today: Long get() = TimeBuckets.dayEpoch(System.currentTimeMillis())
+    val selectedDay = MutableStateFlow(today)
+
+    val refreshing = MutableStateFlow(false)
+    private var lastRefreshMs = 0L
+
+    private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
+
+    val recordedDays: StateFlow<List<Long>> = timelineRepository.observeRecordedDays()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), listOf(today))
+
+    val timeline: StateFlow<TimelineDay> = selectedDay
+        .flatMapLatest { timelineRepository.observeDay(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimelineDay(today, emptyList()))
+
+    val mapState: StateFlow<MapState> = selectedDay
+        .flatMapLatest { day -> timelineRepository.observeDay(day).map { buildMapState(day, it) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapState())
+
+    val places = placeRepository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Never navigate into the future. */
+    fun selectDay(dayEpoch: Long) { selectedDay.value = dayEpoch.coerceAtMost(today) }
+
+    /** Reactive timeline for an arbitrary day (used by the day pager's pages). */
+    fun timelineFor(day: Long): kotlinx.coroutines.flow.Flow<TimelineDay> =
+        timelineRepository.observeDay(day)
+
+    /** Manual pull-to-refresh. Re-runs merge + nudges the ongoing visit so the reactive query
+     *  re-emits; a small floor keeps the spinner visible so the action feels real. */
+    fun refresh() = viewModelScope.launch {
+        refreshing.value = true
+        val start = System.currentTimeMillis()
+        runCatching {
+            timelineRepository.refreshDay(selectedDay.value)
+            workScheduler.enqueueMerge(selectedDay.value)
+        }
+        val elapsed = System.currentTimeMillis() - start
+        if (elapsed < 450) kotlinx.coroutines.delay(450 - elapsed)
+        lastRefreshMs = System.currentTimeMillis()
+        refreshing.value = false
+    }
+
+    /** Auto-refresh when the view is shown, but no more than once per [STALE_MS]. */
+    fun refreshIfStale() {
+        if (System.currentTimeMillis() - lastRefreshMs > STALE_MS) refresh()
+    }
+
+    fun updatePlace(place: net.extrawdw.apps.locationhistory.data.db.PlaceEntity) = viewModelScope.launch {
+        placeRepository.update(place)
+    }
+
+    // --- confirmations -------------------------------------------------------------------------
+
+    fun confirmVisit(visitId: Long, choice: PlaceChoice) = viewModelScope.launch {
+        timelineRepository.confirmVisitPlace(visitId, choice)
+        workScheduler.maybeScheduleTraining()
+    }
+
+    fun confirmSegmentMode(segmentId: Long, mode: TransportMode) = viewModelScope.launch {
+        timelineRepository.confirmSegmentMode(segmentId, mode)
+        workScheduler.maybeScheduleTraining()
+    }
+
+    suspend fun nearbySuggestions(lat: Double, lon: Double): List<PlaceCandidate> =
+        timelineRepository.nearbyPlaceSuggestions(lat, lon)
+
+    suspend fun searchPlaces(query: String, lat: Double, lon: Double): List<PlaceCandidate> =
+        timelineRepository.searchPlaces(query, lat, lon)
+
+    // --- editing -------------------------------------------------------------------------------
+
+    suspend fun samplesFor(item: TimelineItem): List<LocationSampleEntity> =
+        timelineEditor.samplesFor(item)
+
+    fun splitItem(item: TimelineItem, index: Int, left: SegmentType, right: SegmentType) =
+        viewModelScope.launch {
+            timelineEditor.splitItem(item, index, left, right)
+            workScheduler.maybeScheduleTraining()
+        }
+
+    fun convertItem(item: TimelineItem, type: SegmentType) = viewModelScope.launch {
+        timelineEditor.convertItemType(item, type)
+        workScheduler.maybeScheduleTraining()
+    }
+
+    // --- map ----------------------------------------------------------------------------------
+
+    /** Current device location for initial camera / the GPS recenter button. */
+    suspend fun currentLatLng(): LatLng? {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) return null
+        return runCatching {
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                .await()?.let { LatLng(it.latitude, it.longitude) }
+        }.getOrNull()
+    }
+
+    private suspend fun buildMapState(dayEpoch: Long, timeline: TimelineDay): MapState {
+        val range = TimeBuckets.dayRangeMillis(dayEpoch)
+        val daySamples = locationRepository.range(range.first, range.last + 1)
+            .filter { it.includedInComputation }
+
+        val segments = ArrayList<MapSegment>()
+        val visits = ArrayList<MapVisitMarker>()
+        val placeRings = LinkedHashMap<Long, MapPlaceRing>() // distinct by place id
+        for (item in timeline.items) {
+            when (item) {
+                is TimelineItem.TripItem -> item.segments.forEach { seg ->
+                    val pts = Geo.decodePolyline(seg.encodedPolyline).map { LatLng(it.first, it.second) }
+                    if (pts.isNotEmpty()) segments.add(MapSegment(pts, seg.mode, seg.confirmed))
+                }
+                is TimelineItem.VisitItem -> {
+                    // Visit marker: center + radius from the visit's own samples (accuracy-weighted).
+                    val v = item.visit
+                    val visitSamples = daySamples.filter { it.timestampMs in v.startMs..v.endMs }
+                    val geom = net.extrawdw.apps.locationhistory.domain.VisitGeometry.compute(
+                        visitSamples, v.centroidLatitude, v.centroidLongitude,
+                    )
+                    visits.add(MapVisitMarker(LatLng(geom.latitude, geom.longitude), geom.radiusMeters, v.confirmed))
+                    // Yellow ring for the place this visit belongs to (one per place).
+                    item.place?.let { p ->
+                        placeRings[p.id] = MapPlaceRing(LatLng(p.latitude, p.longitude), p.radiusMeters)
+                    }
+                }
+            }
+        }
+        val raw = daySamples.map { LatLng(it.latitude, it.longitude) }
+        return MapState(rawPath = raw, segments = segments, visits = visits, placeRings = placeRings.values.toList())
+    }
+
+    private companion object {
+        const val STALE_MS = 30_000L
+    }
+}

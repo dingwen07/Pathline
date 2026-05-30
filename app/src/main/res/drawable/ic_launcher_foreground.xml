@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Route line sweeping up to the destination pin -->
+    <path
+        android:pathData="M32,80 C44,81 48,72 59,67"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Start waypoint -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M27.5,80 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0 z" />
+
+    <!-- Location pin (Material location_on, scaled into the safe zone) -->
+    <group
+        android:scaleX="1.85"
+        android:scaleY="1.85"
+        android:translateX="37.8"
+        android:translateY="27.35">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13c0,-3.87 -3.13,-7 -7,-7zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z" />
+    </group>
+</vector>
