@@ -146,8 +146,8 @@ class TimelineViewModel @Inject constructor(
         workScheduler.maybeScheduleTraining()
     }
 
-    fun confirmSegmentMode(segmentId: Long, mode: TransportMode) = viewModelScope.launch {
-        timelineRepository.confirmSegmentMode(segmentId, mode)
+    fun confirmTripMode(tripId: Long, mode: TransportMode) = viewModelScope.launch {
+        timelineRepository.confirmTripMode(tripId, mode)
         workScheduler.maybeScheduleTraining()
     }
 
@@ -192,9 +192,10 @@ class TimelineViewModel @Inject constructor(
         val placeRings = LinkedHashMap<Long, MapPlaceRing>() // distinct by place id
         for (item in timeline.items) {
             when (item) {
-                is TimelineItem.TripItem -> item.segments.forEach { seg ->
-                    val pts = Geo.decodePolyline(seg.encodedPolyline).map { LatLng(it.first, it.second) }
-                    if (pts.isNotEmpty()) segments.add(MapSegment(pts, seg.mode, seg.confirmed))
+                is TimelineItem.TripItem -> {
+                    val t = item.trip
+                    val pts = Geo.decodePolyline(t.encodedPolyline).map { LatLng(it.first, it.second) }
+                    if (pts.isNotEmpty()) segments.add(MapSegment(pts, t.mode, t.confirmed))
                 }
                 is TimelineItem.VisitItem -> {
                     val v = item.visit

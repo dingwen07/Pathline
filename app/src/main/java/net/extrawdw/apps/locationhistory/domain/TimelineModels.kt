@@ -2,7 +2,6 @@ package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
-import net.extrawdw.apps.locationhistory.data.db.TripSegmentEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 
 /** A single day's timeline: an ordered list of visits and trips. */
@@ -34,7 +33,6 @@ sealed interface TimelineItem {
 
     data class TripItem(
         val trip: TripEntity,
-        val segments: List<TripSegmentEntity>,
     ) : TimelineItem {
         override val startMs get() = trip.startMs
         override val endMs get() = trip.endMs

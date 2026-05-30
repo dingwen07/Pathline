@@ -4,6 +4,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.temporal.IsoFields
 
 /**
  * Helpers that bucket epoch-millis timestamps into local-day and local-month keys.
@@ -40,4 +41,29 @@ object TimeBuckets {
         val ym = YearMonth.from(Instant.ofEpochMilli(timestampMs).atZone(zone))
         return "%04d-%02d".format(ym.year, ym.monthValue)
     }
+
+    /**
+     * Monday-aligned week bucket as a `dayEpoch` (the Monday's epoch-day). The Unix epoch day 0
+     * (1970-01-01) is a Thursday, so adding 3 before the divide aligns week starts to Monday.
+     *
+     * This MUST stay in lock-step with the SQL the dirty-week triggers use:
+     * `((dayEpoch + 3) / 7) * 7 - 3`. SQLite integer division truncates toward zero, which matches
+     * Kotlin's `Long` division for the non-negative epoch-days we deal with (dates ≥ 1970).
+     */
+    fun weekStartDayEpoch(dayEpoch: Long): Long = ((dayEpoch + 3) / 7) * 7 - 3
+
+    /** [weekStartDayEpoch] for the week containing [timestampMs]. */
+    fun weekStart(timestampMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
+        weekStartDayEpoch(dayEpoch(timestampMs, zone))
+
+    /** ISO-style "YYYY-Www" label naming a week partition, derived from its Monday. */
+    fun weekKey(weekStartDayEpoch: Long): String {
+        val monday = LocalDate.ofEpochDay(weekStartDayEpoch)
+        val week = monday.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR)
+        val year = monday.get(IsoFields.WEEK_BASED_YEAR)
+        return "%04d-W%02d".format(year, week)
+    }
+
+    /** Inclusive-start / exclusive-end `dayEpoch` range covered by a week bucket. */
+    fun weekDayRange(weekStartDayEpoch: Long): LongRange = weekStartDayEpoch until (weekStartDayEpoch + 7)
 }

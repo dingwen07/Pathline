@@ -175,7 +175,7 @@ class DiagnosticsViewModel @Inject constructor(
             "Timeline now" to WorkScheduler.timelineMaintenanceNowWorkName(today),
             "Timeline periodic" to WorkScheduler.WORK_TIMELINE_PERIODIC,
             "Model training" to WorkScheduler.WORK_MODEL_TRAINING,
-            "Sample export" to WorkScheduler.WORK_SAMPLE_EXPORT,
+            "Backup" to WorkScheduler.WORK_BACKUP,
         )
         names.map { (label, name) ->
             val infos = runCatching { workManager.getWorkInfosForUniqueWork(name).get() }

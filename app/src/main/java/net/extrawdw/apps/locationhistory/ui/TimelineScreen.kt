@@ -245,7 +245,7 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                                         )
                                         is TimelineItem.TripItem -> TripRow(
                                             item = item,
-                                            onConfirmSegment = { id, mode -> viewModel.confirmSegmentMode(id, mode) },
+                                            onConfirmTripMode = { id, mode -> viewModel.confirmTripMode(id, mode) },
                                             onMarkStationary = { viewModel.convertItem(item, SegmentType.Stationary) },
                                             onEdit = { editItem = item; scope.launch { editSamples = viewModel.samplesFor(item) } },
                                         )
@@ -467,7 +467,7 @@ private fun Double.formatFit(): String = java.lang.String.format(java.util.Local
 
 private fun TimelineItem.currentType(): SegmentType = when (this) {
     is TimelineItem.VisitItem -> SegmentType.Stationary
-    is TimelineItem.TripItem -> SegmentType.Moving(segments.firstOrNull()?.mode ?: TransportMode.WALKING)
+    is TimelineItem.TripItem -> SegmentType.Moving(trip.mode)
 }
 
 private fun TimelineItem.itemKey(): String = when (this) {
@@ -571,43 +571,29 @@ private fun VisitRow(
 @Composable
 private fun TripRow(
     item: TimelineItem.TripItem,
-    onConfirmSegment: (Long, TransportMode) -> Unit,
+    onConfirmTripMode: (Long, TransportMode) -> Unit,
     onMarkStationary: () -> Unit,
     onEdit: () -> Unit,
 ) {
+    val trip = item.trip
+    var menuOpen by remember(trip.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 16.dp)) {
-        Box(Modifier.width(GUTTER_WIDTH).fillMaxHeight()) { DashedTripLine(item, Modifier.fillMaxSize()) }
+        Box(Modifier.width(GUTTER_WIDTH).fillMaxHeight()) { TripLine(item, Modifier.fillMaxSize()) }
         Column(Modifier.weight(1f).padding(top = 6.dp, bottom = 6.dp)) {
-            val segments = item.segments
-            if (segments.isEmpty()) {
+            Box {
                 CompactTripLine(
-                    icon = { Icon(Format.transportIcon(TransportMode.UNKNOWN), null, tint = modeColor(TransportMode.UNKNOWN)) },
-                    text = "Moving · ${Format.distance(item.trip.distanceMeters)} · ${Format.duration(item.startMs, item.endMs)}",
-                    confirmed = item.trip.confirmed,
-                    onConfirm = { onEdit() },
+                    icon = { Icon(Format.transportIcon(trip.mode), trip.mode.label, tint = modeColor(trip.mode)) },
+                    text = "${trip.mode.label} · ${Format.distance(trip.distanceMeters)} · ${Format.duration(trip.startMs, trip.endMs)}",
+                    confirmed = trip.confirmed,
+                    onConfirm = { menuOpen = true },
                     showEdit = true,
                     onEdit = onEdit,
                 )
-            } else {
-                segments.forEachIndexed { index, segment ->
-                    var menuOpen by remember(segment.id) { mutableStateOf(false) }
-                    Box {
-                        CompactTripLine(
-                            icon = { Icon(Format.transportIcon(segment.mode), segment.mode.label, tint = modeColor(segment.mode)) },
-                            text = "${segment.mode.label} · ${Format.distance(segment.distanceMeters)} · ${Format.duration(segment.startMs, segment.endMs)}",
-                            confirmed = segment.confirmed,
-                            onConfirm = { menuOpen = true },
-                            showEdit = index == 0,
-                            onEdit = onEdit,
-                            topPadding = if (index == 0) 0.dp else 4.dp,
-                        )
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("Stationary (a place)") }, onClick = { menuOpen = false; onMarkStationary() })
-                            HorizontalDivider()
-                            TransportMode.MODEL_CLASSES.forEach { mode ->
-                                DropdownMenuItem(text = { Text(mode.label) }, onClick = { menuOpen = false; onConfirmSegment(segment.id, mode) })
-                            }
-                        }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Stationary (a place)") }, onClick = { menuOpen = false; onMarkStationary() })
+                    HorizontalDivider()
+                    TransportMode.MODEL_CLASSES.forEach { mode ->
+                        DropdownMenuItem(text = { Text(mode.label) }, onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })
                     }
                 }
             }
@@ -643,30 +629,18 @@ private fun CompactTripLine(
 }
 
 @Composable
-private fun DashedTripLine(item: TimelineItem.TripItem, modifier: Modifier) {
-    val fallback = MaterialTheme.colorScheme.outline
+private fun TripLine(item: TimelineItem.TripItem, modifier: Modifier) {
+    val color = modeColor(item.trip.mode)
     Canvas(modifier) {
         val cx = size.width / 2
         val stroke = 6.dp.toPx()
-        val segs = item.segments
-        if (segs.isEmpty()) {
-            drawLine(fallback, Offset(cx, 0f), Offset(cx, size.height), stroke, StrokeCap.Round)
-            return@Canvas
-        }
-        val total = segs.sumOf { (it.endMs - it.startMs).coerceAtLeast(1L) }.toFloat()
-        var y = 0f
-        for (seg in segs.asReversed()) {
-            val h = size.height * ((seg.endMs - seg.startMs).coerceAtLeast(1L) / total)
-            drawLine(modeColor(seg.mode), Offset(cx, y), Offset(cx, y + h), stroke, StrokeCap.Round)
-            y += h
-        }
+        drawLine(color, Offset(cx, 0f), Offset(cx, size.height), stroke, StrokeCap.Round)
     }
 }
 
 private fun tripJoinColor(item: TimelineItem?, first: Boolean): Color? {
-    val trip = item as? TimelineItem.TripItem ?: return null
-    val seg = if (first) trip.segments.firstOrNull() else trip.segments.lastOrNull()
-    return seg?.let { modeColor(it.mode) }
+    val trip = (item as? TimelineItem.TripItem)?.trip ?: return null
+    return modeColor(trip.mode)
 }
 
 @Composable

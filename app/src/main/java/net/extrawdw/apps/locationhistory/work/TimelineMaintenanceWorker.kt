@@ -45,6 +45,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private val tripDao: TripDao,
     private val locationRepository: LocationRepository,
     private val recordingRepository: RecordingRepository,
+    private val placeRepository: net.extrawdw.apps.locationhistory.data.repo.PlaceRepository,
     private val visitDetector: VisitDetector,
     private val placeMatcher: PlaceMatcher,
     private val tripSegmenter: TripSegmenter,
@@ -64,7 +65,6 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val samples = sampleDao.range(computeStart, computeEnd)
 
         db.withTransaction {
-            tripDao.deleteSegmentsForUnconfirmedTripsOverlapping(dayStart, dayEnd)
             tripDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
             visitDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
         }
@@ -90,8 +90,24 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             if (inserted != null) insertedVisitIds.add(inserted)
         }
 
+        // Confirming a visit locks its *place*, not its *clock*: a confirmed visit that is still
+        // ongoing must keep extending while the user is there, and finalize once they move on.
+        // (Maintenance otherwise leaves confirmed visits untouched, which froze the end time.)
+        extendConfirmedOngoingVisits(confirmedVisits, latest, System.currentTimeMillis())
+
         rebuildTrips(dayStart, dayEnd)
+        // Show the trip that is *currently in progress* (you've left a place but not arrived yet).
+        // rebuildTrips needs both endpoints, so the tail after the last visit is otherwise invisible
+        // until you become stationary.
+        buildOngoingTrip(dayStart, dayEnd, latest)
         merger.mergeDay(day)
+
+        // Let matched places drift toward where the user actually goes. recordVisitToPlace weights
+        // confirmed visits 4x and decays old ones, so auto-detected visits nudge the center/radius
+        // while confirmations anchor it. Fixed places are skipped inside recordVisitToPlace.
+        visitDao.byDay(day).mapNotNull { it.placeId }.distinct()
+            .forEach { placeRepository.recordVisitToPlace(it) }
+
         AppLog.i(TAG, "maintenance complete day=$day visits=${insertedVisitIds.size}")
         return Result.success()
     }
@@ -156,6 +172,33 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         ))
     }
 
+    /**
+     * Keep a confirmed, still-ongoing visit's end time tracking the present while the device remains
+     * stationary near it; finalize it (clear [VisitEntity.isOngoing]) once the latest fix shows the
+     * user has moved on or away. Confirmed visits are otherwise preserved verbatim by maintenance.
+     */
+    private suspend fun extendConfirmedOngoingVisits(
+        confirmedVisits: List<VisitEntity>,
+        latest: LocationSampleEntity?,
+        now: Long,
+    ) {
+        if (latest == null) return
+        for (cv in confirmedVisits) {
+            if (!cv.isOngoing || latest.timestampMs < cv.startMs) continue
+            val nearby = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+                cv.centroidLatitude, cv.centroidLongitude, latest.latitude, latest.longitude,
+            ) <= maxOf(cv.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
+            val stillThere = latest.includedInComputation &&
+                latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
+                (latest.speed ?: 0f) <= 0.8f && nearby
+            if (stillThere) {
+                visitDao.update(cv.copy(endMs = maxOf(cv.endMs, now)))
+            } else if (latest.timestampMs > cv.endMs) {
+                visitDao.update(cv.copy(isOngoing = false))
+            }
+        }
+    }
+
     private fun ongoingStationaryCandidate(
         samples: List<LocationSampleEntity>,
         dayStart: Long,
@@ -195,6 +238,25 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         )
     }
 
+    /**
+     * Materialize the in-progress trip: when the latest fix shows the user is moving, segment the
+     * movement from the most recent visit's end up to now and persist it with no destination
+     * (`toVisitId = null`). Rebuilt each pass so it extends as movement continues; once the user
+     * arrives and a destination visit forms, [rebuildTrips] replaces it with the bounded trip.
+     */
+    private suspend fun buildOngoingTrip(dayStart: Long, dayEnd: Long, latest: LocationSampleEntity?) {
+        if (latest == null || latest.devicePhysicalState == DevicePhysicalState.STATIONARY) return
+        val visits = visitDao.overlapping(dayStart, dayEnd).sortedBy { it.startMs }
+        val origin = visits.lastOrNull { it.endMs <= latest.timestampMs } ?: return
+        val startMs = origin.endMs
+        val endMs = latest.timestampMs
+        if (endMs <= startMs) return
+        if (tripDao.confirmedOverlapping(startMs, endMs + 1).isNotEmpty()) return
+        val movingSamples = sampleDao.rangeForComputation(startMs, endMs + 1)
+        val runs = tripSegmenter.segment(movingSamples)
+        if (runs.isNotEmpty()) recordingRepository.saveTrips(origin.id, null, runs)
+    }
+
     private suspend fun rebuildTrips(dayStart: Long, dayEnd: Long) {
         val visits = visitDao.overlapping(dayStart, dayEnd).sortedBy { it.startMs }
         if (visits.size < 2) return
@@ -207,9 +269,9 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             if (endMs <= startMs || endMs <= dayStart || startMs >= dayEnd) continue
             if (confirmedTrips.any { it.overlaps(startMs, endMs + 1) }) continue
             val movingSamples = sampleDao.rangeForComputation(startMs, endMs + 1)
-            val segments = tripSegmenter.segment(movingSamples)
-            if (segments.isNotEmpty()) {
-                recordingRepository.saveTripWithSegments(from.id, to.id, startMs, endMs, segments)
+            val runs = tripSegmenter.segment(movingSamples)
+            if (runs.isNotEmpty()) {
+                recordingRepository.saveTrips(from.id, to.id, runs)
             }
         }
     }

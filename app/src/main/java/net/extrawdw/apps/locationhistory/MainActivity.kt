@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             recordingController.resumeIfPreviouslyEnabled()
             workScheduler.schedulePeriodicTimelineMaintenance()
+            workScheduler.schedulePeriodicBackup()
             workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(System.currentTimeMillis()), "app_open")
         }
         setContent {
@@ -80,6 +81,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
             OnboardingScreen(
                 permissions = permissions,
                 onFinish = { startTracking -> onboardingViewModel.finish(startTracking) },
+                viewModel = onboardingViewModel,
             )
             return
         }

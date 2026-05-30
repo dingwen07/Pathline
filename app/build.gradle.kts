@@ -88,6 +88,14 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
 
+    // Encrypted database + SAF backup destinations
+    implementation(libs.sqlcipher.android)
+    implementation(libs.androidx.documentfile)
+
+    // Passkey-based backup encryption (WebAuthn PRF via Credential Manager)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+
     // Background work
     implementation(libs.androidx.work.runtime.ktx)
 

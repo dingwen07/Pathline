@@ -59,20 +59,14 @@ class TimelineRepository @Inject constructor(
         return combine(
             visitDao.observeOverlapping(startMs, endMs),
             tripDao.observeOverlapping(startMs, endMs),
-            tripDao.observeSegmentsOverlapping(startMs, endMs),
-        ) { visits, trips, segments ->
-        Triple(visits, trips, segments)
-    }.map { (visits, trips, segments) ->
-        val items = ArrayList<TimelineItem>(visits.size + trips.size)
-        for (v in visits) {
-            val place = v.placeId?.let { placeDao.byId(it) }
-            items.add(TimelineItem.VisitItem(v, place))
-        }
-        val byTrip = segments.groupBy { it.tripId }
-        for (t in trips) {
-            items.add(TimelineItem.TripItem(t, byTrip[t.id].orEmpty().sortedBy { it.startMs }))
-        }
-        items.sortByDescending { it.startMs } // newest first
+        ) { visits, trips ->
+            val items = ArrayList<TimelineItem>(visits.size + trips.size)
+            for (v in visits) {
+                val place = v.placeId?.let { placeDao.byId(it) }
+                items.add(TimelineItem.VisitItem(v, place))
+            }
+            for (t in trips) items.add(TimelineItem.TripItem(t))
+            items.sortByDescending { it.startMs } // newest first
             TimelineDay(dayEpoch, items)
         }
     }
@@ -123,13 +117,14 @@ class TimelineRepository @Inject constructor(
                 source = if (visit.candidateGooglePlaceId != null) PlaceSource.MAPS else PlaceSource.USER,
             )
         }
-        val samples = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)
-        placeRepository.recordVisitToPlace(placeId, samples)
-        // Mark fixes outside the place's circle as GPS drift (bogus).
+        // Link + confirm the visit first so the place recompute counts it as a (weighted) ground-truth
+        // visit, then recompute the place center/radius as a recency/confirmation-weighted mean.
+        visitDao.update(visit.copy(placeId = placeId, confirmed = true, confidence = 1f))
+        placeRepository.recordVisitToPlace(placeId)
+        // Mark fixes outside the (updated) place circle as GPS drift (bogus).
         placeRepository.byId(placeId)?.let { p ->
             locationRepository.excludeDriftOutside(visit.startMs, visit.endMs, p.latitude, p.longitude, p.radiusMeters)
         }
-        visitDao.update(visit.copy(placeId = placeId, confirmed = true, confidence = 1f))
         // Re-fetch the now-filtered samples so the training example reflects only good fixes.
         val included = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)
         if (included.size >= 2) {
@@ -142,15 +137,15 @@ class TimelineRepository @Inject constructor(
     }
 
     /**
-     * Confirm a trip segment's transport mode. This is treated as ground truth and recorded as a
-     * user-confirmed training example so the transport model improves on the next (charging-gated)
-     * retrain.
+     * Confirm a trip's transport mode. Treated as ground truth: the trip is marked confirmed (so
+     * maintenance leaves it alone) and a user-confirmed training example is recorded so the
+     * transport model improves on the next (charging-gated) retrain.
      */
-    suspend fun confirmSegmentMode(segmentId: Long, mode: TransportMode) {
-        val segment = tripDao.segmentById(segmentId) ?: return
-        tripDao.updateSegment(segment.copy(mode = mode, modeConfidence = 1f, confirmed = true))
+    suspend fun confirmTripMode(tripId: Long, mode: TransportMode) {
+        val trip = tripDao.byId(tripId) ?: return
+        tripDao.update(trip.copy(mode = mode, modeConfidence = 1f, confirmed = true))
 
-        val samples = sampleDao.rangeForComputation(segment.startMs, segment.endMs + 1)
+        val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
         if (samples.size >= 2 && mode in TransportMode.MODEL_CLASSES) {
             trainingRepository.addTransportExample(
                 features = Features.transportFeatures(samples),

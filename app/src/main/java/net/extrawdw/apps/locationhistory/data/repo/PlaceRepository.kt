@@ -3,14 +3,13 @@ package net.extrawdw.apps.locationhistory.data.repo
 import kotlinx.coroutines.flow.Flow
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.PlaceSource
-import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceVisitCount
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
-import net.extrawdw.apps.locationhistory.domain.VisitGeometry
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.pow
 
 @Singleton
 class PlaceRepository @Inject constructor(
@@ -59,23 +58,41 @@ class PlaceRepository @Inject constructor(
         dao.deleteIfUnvisited(placeId) > 0
 
     /**
-     * Recompute a place's center and radius from a newly-assigned visit's [samples] (weighted by
-     * GPS accuracy via [VisitGeometry]). The center is a running mean across the place's visits, the
-     * radius an EMA so it adapts and can shrink. Fixed places are left untouched. The visit count is
-     * NOT stored here — it is derived live from the visits table to avoid drift.
+     * Recompute a place's center and radius as a **weighted mean of all its visits' centroids/radii**,
+     * so it follows where the user recently goes instead of freezing. Each visit is weighted by:
+     *  - **recency** — an exponential decay that halves the weight every
+     *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS], so old visits fade out; and
+     *  - **confirmation** — confirmed (ground-truth) visits count [Constants.PLACE_CONFIRMED_VISIT_WEIGHT]×
+     *    an unconfirmed one.
+     *
+     * Recomputing from scratch (rather than nudging incrementally) is what lets old visits lose
+     * influence over time. Call this *after* the triggering visit is persisted/linked so it's
+     * included. Fixed places are left untouched; the visit count is derived live from the visits
+     * table, not stored.
      */
-    suspend fun recordVisitToPlace(placeId: Long, samples: List<LocationSampleEntity>) {
+    suspend fun recordVisitToPlace(placeId: Long, nowMs: Long = System.currentTimeMillis()) {
         val place = dao.byId(placeId) ?: return
         if (place.fixed) return
-        val geom = VisitGeometry.compute(samples, place.latitude, place.longitude)
+        val visits = visitDao.listForPlace(placeId).ifEmpty { return }
 
-        // Visits already assigned to this place (this new one isn't linked yet) + 1.
-        val n = (visitDao.countForPlace(placeId) + 1).coerceAtLeast(1)
-        val newLat = place.latitude + (geom.latitude - place.latitude) / n
-        val newLon = place.longitude + (geom.longitude - place.longitude) / n
-        val newRadius = (place.radiusMeters * 0.6 + geom.radiusMeters * 0.4)
+        var sumW = 0.0
+        var sumLat = 0.0
+        var sumLon = 0.0
+        var sumRadius = 0.0
+        for (v in visits) {
+            val ageDays = (nowMs - v.startMs).coerceAtLeast(0L) / 86_400_000.0
+            val recency = 2.0.pow(-ageDays / Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS)
+            val confirmation = if (v.confirmed) Constants.PLACE_CONFIRMED_VISIT_WEIGHT else 1.0
+            val w = recency * confirmation
+            sumW += w
+            sumLat += w * v.centroidLatitude
+            sumLon += w * v.centroidLongitude
+            sumRadius += w * v.radiusMeters
+        }
+        if (sumW <= 0.0) return
+
+        val newRadius = (sumRadius / sumW)
             .coerceIn(Constants.PLACE_MIN_RADIUS_METERS, Constants.PLACE_MAX_RADIUS_METERS)
-
-        dao.updateCenterRadius(placeId, newLat, newLon, newRadius)
+        dao.updateCenterRadius(placeId, sumLat / sumW, sumLon / sumW, newRadius)
     }
 }

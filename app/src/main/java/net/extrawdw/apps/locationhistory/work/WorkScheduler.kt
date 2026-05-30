@@ -107,24 +107,39 @@ class WorkScheduler @Inject constructor(
         workManager.enqueueUniqueWork(WORK_MODEL_TRAINING, ExistingWorkPolicy.KEEP, request)
     }
 
-    /** Periodic, charging-gated export of monthly sample partitions for efficient backup. */
-    fun schedulePeriodicExport() {
+    /**
+     * Periodic, charging-gated incremental backup to the user's SAF destination. Requires a network
+     * connection because the destination is typically a cloud provider (Drive, Dropbox). No-ops when
+     * no destination is configured, so it's safe to enqueue unconditionally.
+     */
+    fun schedulePeriodicBackup() {
         val constraints = Constraints.Builder()
             .setRequiresCharging(true)
-            .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+            .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
-        val request = PeriodicWorkRequestBuilder<ExportWorker>(1, TimeUnit.DAYS)
+        val request = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.DAYS)
             .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniquePeriodicWork(
-            WORK_SAMPLE_EXPORT, ExistingPeriodicWorkPolicy.KEEP, request,
+            WORK_BACKUP, ExistingPeriodicWorkPolicy.KEEP, request,
         )
+    }
+
+    /** Run an incremental backup as soon as constraints allow (after a manual "Back up now"). */
+    fun enqueueBackupNow() {
+        val request = OneTimeWorkRequestBuilder<BackupWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
+            .build()
+        workManager.enqueueUniqueWork(WORK_BACKUP_NOW, ExistingWorkPolicy.REPLACE, request)
     }
 
     companion object {
         const val WORK_TIMELINE_PERIODIC = "timeline-maintenance-periodic"
         const val WORK_MODEL_TRAINING = "model-training"
-        const val WORK_SAMPLE_EXPORT = "sample-export"
+        const val WORK_BACKUP = "saf-backup"
+        const val WORK_BACKUP_NOW = "saf-backup-now"
 
         fun timelineMaintenanceWorkName(dayEpoch: Long): String = "timeline-maintenance-$dayEpoch"
         fun timelineMaintenanceNowWorkName(dayEpoch: Long): String = "timeline-maintenance-now-$dayEpoch"

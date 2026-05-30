@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -16,6 +17,7 @@ import net.extrawdw.apps.locationhistory.core.TransportMode
  * This table is intentionally excluded from cloud auto-backup (see backup_rules.xml); it is
  * exported in compact monthly partitions instead.
  */
+@Serializable
 @Entity(
     tableName = "location_samples",
     indices = [Index("dayEpoch"), Index("timestampMs")],
@@ -65,6 +67,7 @@ data class LocationSampleEntity(
 )
 
 /** A place in the local database. Confirmed places are treated as ground truth for matching. */
+@Serializable
 @Entity(
     tableName = "places",
     indices = [Index("latitude"), Index("longitude")],
@@ -91,6 +94,7 @@ data class PlaceEntity(
  * the temporary Google Places candidate is stored inline in the `candidate*` fields and the visit
  * stays unconfirmed until the user accepts it (which then promotes the candidate into [places]).
  */
+@Serializable
 @Entity(
     tableName = "visits",
     indices = [Index("startMs"), Index("dayEpoch"), Index("placeId")],
@@ -113,7 +117,14 @@ data class VisitEntity(
     val isOngoing: Boolean,
 )
 
-/** Movement between two consecutive visits. Split into one or more [TripSegmentEntity]. */
+/**
+ * A single-transport-mode movement. A multi-modal journey (walk → bus → walk) is represented as
+ * consecutive trips, each with its own [mode] and polyline — there is no separate segment table.
+ * [fromVisitId]/[toVisitId] reference the visits bounding the journey this movement belongs to
+ * (so a door-to-door journey can be recomputed by grouping consecutive trips that share them);
+ * they are null for editor-created movements.
+ */
+@Serializable
 @Entity(
     tableName = "trips",
     indices = [Index("startMs"), Index("dayEpoch")],
@@ -125,28 +136,15 @@ data class TripEntity(
     val startMs: Long,
     val endMs: Long,
     val dayEpoch: Long,
-    val distanceMeters: Double,
-    val confirmed: Boolean,
-)
-
-/** A single-transport-mode portion of a trip (a trip may chain several modes). */
-@Entity(
-    tableName = "trip_segments",
-    indices = [Index("tripId"), Index("startMs")],
-)
-data class TripSegmentEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val tripId: Long,
-    val startMs: Long,
-    val endMs: Long,
     val mode: TransportMode,
     val modeConfidence: Float,
-    val confirmed: Boolean,
     val encodedPolyline: String,
     val distanceMeters: Double,
+    val confirmed: Boolean,
 )
 
 /** Mirror of a registered geofence so geofences can be re-armed after a reboot. */
+@Serializable
 @Entity(tableName = "geofences")
 data class GeofenceEntity(
     @PrimaryKey val requestId: String,
@@ -160,6 +158,7 @@ data class GeofenceEntity(
  * A training example for the device-state model. The feature vector is stored as a comma-separated
  * float string; [fromUserConfirmation] examples are ground truth and weighted accordingly.
  */
+@Serializable
 @Entity(tableName = "state_training_examples")
 data class StateTrainingExampleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -171,6 +170,7 @@ data class StateTrainingExampleEntity(
 )
 
 /** A training example for the transport-mode model. */
+@Serializable
 @Entity(tableName = "transport_training_examples")
 data class TransportTrainingExampleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -179,4 +179,19 @@ data class TransportTrainingExampleEntity(
     val fromUserConfirmation: Boolean,
     val createdAtMs: Long,
     val consumed: Boolean = false,
+)
+
+/**
+ * One row per (data stream, week) partition that has changed since the last backup. Populated
+ * entirely by SQLite triggers on the four append-mostly tables (see `AppDatabase.DIRTY_TRIGGERS`),
+ * so the recording/maintenance code never has to remember to mark anything — the storage layer
+ * tracks it. The backup engine reads this set, re-emits exactly those partitions, then clears them.
+ *
+ * [weekStart] is the Monday-aligned `dayEpoch` of the week (see [net.extrawdw.apps.locationhistory.core.TimeBuckets.weekStartDayEpoch]).
+ * [stream] is one of `samples`, `visits`, `trips`, `segments`.
+ */
+@Entity(tableName = "backup_dirty_partitions", primaryKeys = ["stream", "weekStart"])
+data class BackupDirtyPartitionEntity(
+    val stream: String,
+    val weekStart: Long,
 )

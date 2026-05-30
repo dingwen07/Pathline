@@ -24,6 +24,9 @@ litert = "2.1.5"
 kotlinxSerialization = "1.11.0"
 kotlinxCoroutines = "1.10.2"
 accompanistPermissions = "0.37.3"
+sqlcipher = "4.6.1"
+documentFile = "1.1.0"
+credentials = "1.5.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -58,6 +61,14 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+# Encrypted database (SQLCipher) — full-database transparent encryption keyed by a
+# Keystore-wrapped passphrase. androidx-sqlite is the Support API SQLCipher plugs into.
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
+# Storage Access Framework tree access for user-chosen backup destinations.
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentFile" }
+# Credential Manager — WebAuthn passkeys + PRF extension for passkey-based backup encryption.
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 
 # Background work
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }

@@ -1,5 +1,7 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,14 +40,23 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import net.extrawdw.apps.locationhistory.backup.BackupOperationController
+import net.extrawdw.apps.locationhistory.backup.ManagedKind
+import net.extrawdw.apps.locationhistory.backup.ManagedState
+import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
+import net.extrawdw.apps.locationhistory.security.BackupEncryption
+import net.extrawdw.apps.locationhistory.security.PasskeyManager
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
@@ -54,11 +66,31 @@ class OnboardingViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val recordingController: RecordingController,
     private val workScheduler: WorkScheduler,
+    private val backupRepository: BackupRepository,
+    private val controller: BackupOperationController,
+    private val passkeyManager: PasskeyManager,
 ) : ViewModel() {
 
     /** null while loading; true once onboarding has been completed or skipped. */
     val onboardingComplete: StateFlow<Boolean?> = settingsRepository.onboardingComplete
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Managed restore progress, rendered by the shared sheet. */
+    val managed: StateFlow<ManagedState?> = controller.state
+
+    val restoreNeedsPassword = MutableStateFlow(false)
+    private var pendingRestoreUri: Uri? = null
+
+    init {
+        // A successful restore completes onboarding and drops the user into the app.
+        viewModelScope.launch {
+            controller.state.collect { s ->
+                if (s?.kind == ManagedKind.RESTORE && s.finished && s.success) {
+                    settingsRepository.setOnboardingComplete(true)
+                }
+            }
+        }
+    }
 
     /**
      * Mark onboarding done. When the recording permissions were granted, turn tracking on so the
@@ -69,10 +101,45 @@ class OnboardingViewModel @Inject constructor(
             settingsRepository.setTrackingEnabled(true)
             recordingController.startTracking()
             workScheduler.schedulePeriodicTimelineMaintenance()
-            workScheduler.schedulePeriodicExport()
+            workScheduler.schedulePeriodicBackup()
         }
         settingsRepository.setOnboardingComplete(true)
     }
+
+    /** Inspect the chosen folder, then restore — prompting for password / running passkey as needed. */
+    fun beginRestore(uri: Uri, activityContext: Context) = viewModelScope.launch {
+        val info = backupRepository.cryptoInfoAt(uri)
+        if (info == null) {
+            controller.fail(ManagedKind.RESTORE, "Restore", "No backup found in that folder")
+            return@launch
+        }
+        when (info.mode) {
+            BackupEncryption.NONE -> controller.startRestore(uri, null, null)
+            BackupEncryption.PASSWORD -> { pendingRestoreUri = uri; restoreNeedsPassword.value = true }
+            BackupEncryption.PASSKEY -> {
+                val salt = info.prfSalt
+                if (salt == null) {
+                    controller.fail(ManagedKind.RESTORE, "Restore", "Backup is missing its passkey salt")
+                    return@launch
+                }
+                runCatching { passkeyManager.obtainForRestore(activityContext, salt, info.credentialId) }
+                    .onSuccess { controller.startRestore(uri, null, it.secret) }
+                    .onFailure { controller.fail(ManagedKind.RESTORE, "Passkey", it.message ?: "Passkey unlock failed") }
+            }
+        }
+    }
+
+    fun submitRestorePassword(password: CharArray) {
+        restoreNeedsPassword.value = false
+        pendingRestoreUri?.let { controller.startRestore(it, password, null) }
+    }
+
+    fun cancelRestore() {
+        restoreNeedsPassword.value = false
+        pendingRestoreUri = null
+    }
+
+    fun dismissManaged() = controller.dismiss()
 }
 
 private enum class OnboardingStep { WELCOME, PERMISSIONS, BACKGROUND }
@@ -87,8 +154,26 @@ private enum class OnboardingStep { WELCOME, PERMISSIONS, BACKGROUND }
 fun OnboardingScreen(
     permissions: PathlinePermissions,
     onFinish: (startTracking: Boolean) -> Unit,
+    viewModel: OnboardingViewModel,
 ) {
     var step by remember { mutableStateOf(OnboardingStep.WELCOME) }
+
+    val activity = androidx.compose.ui.platform.LocalContext.current
+    val restoreNeedsPassword by viewModel.restoreNeedsPassword.collectAsState()
+    val managed by viewModel.managed.collectAsState()
+    val pickRestoreFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> uri?.let { viewModel.beginRestore(it, activity) } }
+
+    if (restoreNeedsPassword) {
+        PasswordDialog(
+            title = "Backup password",
+            confirmLabel = "Restore",
+            onConfirm = { pw -> viewModel.submitRestorePassword(pw) },
+            onDismiss = { viewModel.cancelRestore() },
+        )
+    }
+    managed?.let { ManagedOperationSheet(it, onClose = viewModel::dismissManaged) }
 
     // Advance automatically as each permission phase is granted.
     LaunchedEffect(permissions.granted) {
@@ -150,7 +235,13 @@ fun OnboardingScreen(
 
             // Primary / secondary actions per step.
             when (step) {
-                OnboardingStep.WELCOME -> PrimaryButton("Get started") { step = OnboardingStep.PERMISSIONS }
+                OnboardingStep.WELCOME -> {
+                    PrimaryButton("Get started") { step = OnboardingStep.PERMISSIONS }
+                    TextButton(
+                        onClick = { pickRestoreFolder.launch(null) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Restore from a backup") }
+                }
                 OnboardingStep.PERMISSIONS -> {
                     PrimaryButton(if (permissions.granted) "Continue" else "Allow access") {
                         if (permissions.granted) step = OnboardingStep.BACKGROUND

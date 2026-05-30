@@ -24,6 +24,13 @@ object Constants {
     /** Samples worse than this accuracy (m) are ignored when computing a place's center/radius. */
     const val SAMPLE_ACCURACY_GATE_METERS = 60f
 
+    /** A place's center/radius is a weighted mean of its visits. A visit's weight halves every this
+     *  many days, so the place follows where you recently go and old visits fade out. */
+    const val PLACE_VISIT_RECENCY_HALF_LIFE_DAYS = 30.0
+
+    /** Confirmed visits are ground truth, so they count this many times an unconfirmed visit. */
+    const val PLACE_CONFIRMED_VISIT_WEIGHT = 4.0
+
     /** A "trip" whose net displacement is under this (m) is treated as GPS drift, not real movement. */
     const val DRIFT_DISPLACEMENT_METERS = 80.0
 
@@ -49,5 +56,14 @@ object Constants {
     const val TRANSPORT_MODEL_ASSET = "models/transport_model.tflite"
     const val STATE_CHECKPOINT_FILE = "state_model.ckpt"
     const val TRANSPORT_CHECKPOINT_FILE = "transport_model.ckpt"
+
+    // --- Backup -------------------------------------------------------------------------------
+    /** Subdirectory created inside the chosen SAF tree that holds the structured backup. */
+    const val BACKUP_DIR = "pathline-backup"
+
+    /** Subdirectory (inside the GPX tree) for the optional open-format GPX export. */
     const val EXPORT_DIR = "export"
+
+    /** Bumped whenever the on-disk backup layout/format changes incompatibly. */
+    const val BACKUP_FORMAT_VERSION = 1
 }

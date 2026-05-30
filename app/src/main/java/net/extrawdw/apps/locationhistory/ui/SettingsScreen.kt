@@ -123,6 +123,9 @@ fun SettingsScreen(
                 }
             }
 
+            // Backup
+            BackupCard()
+
             // Diagnostics
             var showDiagnostics by remember { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {

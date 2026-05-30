@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-   The raw location-sample database grows unbounded over years, so it is excluded from cloud
-   backup. The compact, per-month gzip partitions written by ExportWorker (files/export) are
-   included instead, along with settings and the small model checkpoints — keeping cloud backups
-   efficient. A full device-to-device transfer still copies everything.
+   The database is now encrypted by a device-bound Android Keystore key and backed up via the app's
+   own SAF backup (a folder the user chooses). Android cloud auto-backup of the DB is therefore
+   excluded: the ciphertext could never be decrypted on another device, so it would only waste the
+   25 MB quota. The Keystore-wrapped passphrase / backup DEK live in noBackupFilesDir, which Android
+   excludes automatically. A full device-to-device transfer still copies everything (the Keystore
+   keys migrate with it).
 -->
 <data-extraction-rules>
     <cloud-backup>

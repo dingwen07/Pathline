@@ -1,6 +1,8 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
 import kotlinx.coroutines.flow.Flow
+import net.extrawdw.apps.locationhistory.BuildConfig
+import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import javax.inject.Inject
@@ -14,6 +16,7 @@ class LocationRepository @Inject constructor(
     /** Persists a sample. Implausible fixes are still stored but flagged out of computation. */
     suspend fun record(sample: LocationSampleEntity): Long {
         val (included, reason) = computationEligibility(sample)
+        if (!included) AppLog.i(TAG, "sample excluded from computation: $reason")
         return dao.insert(sample.copy(includedInComputation = included, exclusionReason = reason))
     }
 
@@ -53,10 +56,18 @@ class LocationRepository @Inject constructor(
 
     fun observeRecordedDays(): Flow<List<Long>> = dao.observeRecordedDays()
 
-    /** All samples are saved; some are excluded from computation per the spec's rules. */
+    /**
+     * All samples are saved; some are excluded from computation per the spec's rules. Mock locations
+     * are rejected in release builds (anti-spoofing) but ACCEPTED in debug builds — otherwise the
+     * Android emulator (whose fixes are all mock) can never form visits/trips for testing.
+     */
     private fun computationEligibility(s: LocationSampleEntity): Pair<Boolean, String?> = when {
-        s.isMock -> false to "mock_location"
+        s.isMock && !BuildConfig.DEBUG -> false to "mock_location"
         (s.accuracy ?: 0f) > 100f -> false to "low_accuracy"
         else -> true to null
+    }
+
+    private companion object {
+        const val TAG = "LocationRepo"
     }
 }

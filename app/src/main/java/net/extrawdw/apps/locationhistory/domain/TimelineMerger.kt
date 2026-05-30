@@ -4,17 +4,18 @@ import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
-import net.extrawdw.apps.locationhistory.data.db.TripSegmentEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Combines fragmented timeline entries for a day: consecutive same-mode trip segments, adjacent
- * trips that form one journey (no visit between), and consecutive visits to the same place. Runs
- * inside the authoritative timeline-maintenance pipeline.
- * Idempotent — re-running on an already-merged day is a no-op.
+ * Combines fragmented timeline entries for a day: consecutive same-mode trips (one journey split by
+ * brief misclassification), and consecutive visits to the same place. Runs inside the authoritative
+ * timeline-maintenance pipeline. Idempotent — re-running on an already-merged day is a no-op.
+ *
+ * A multi-modal journey stays as several trips (walk → bus → walk); only *same-mode* adjacent trips
+ * are fused.
  */
 @Singleton
 class TimelineMerger @Inject constructor(
@@ -23,7 +24,6 @@ class TimelineMerger @Inject constructor(
 ) {
 
     suspend fun mergeDay(dayEpoch: Long) {
-        tripDao.byDay(dayEpoch).forEach { mergeSegmentsWithin(it) }
         removeEmptyTrips(dayEpoch)
         // Drop GPS-drift "trips" that sit between two visits to the same place.
         removeDriftTrips(dayEpoch)
@@ -32,14 +32,12 @@ class TimelineMerger @Inject constructor(
         while (guard++ < 12 && (mergeAdjacentVisitsOnce(dayEpoch) || mergeAdjacentTripsOnce(dayEpoch))) {
             // keep going
         }
-        tripDao.byDay(dayEpoch).forEach { mergeSegmentsWithin(it) }
     }
 
     private suspend fun removeEmptyTrips(dayEpoch: Long) {
         for (trip in tripDao.byDay(dayEpoch)) {
             if (trip.confirmed) continue
-            if (trip.distanceMeters <= 0.0 || tripDao.segmentsForTrip(trip.id).isEmpty()) {
-                tripDao.deleteSegmentsForTrip(trip.id)
+            if (trip.distanceMeters <= 0.0 || trip.encodedPolyline.isEmpty()) {
                 tripDao.deleteTrip(trip.id)
             }
         }
@@ -57,7 +55,6 @@ class TimelineMerger @Inject constructor(
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
             if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
-                tripDao.deleteSegmentsForTrip(trip.id)
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
                     visitDao.update(mergeVisits(before, after))
@@ -68,37 +65,12 @@ class TimelineMerger @Inject constructor(
     }
 
     /** Straight-line distance between a trip's first and last recorded points. */
-    private suspend fun netDisplacement(trip: TripEntity): Double {
-        val segs = tripDao.segmentsForTrip(trip.id)
-        val first = segs.firstOrNull()?.let { Geo.decodePolyline(it.encodedPolyline).firstOrNull() }
-        val last = segs.lastOrNull()?.let { Geo.decodePolyline(it.encodedPolyline).lastOrNull() }
+    private fun netDisplacement(trip: TripEntity): Double {
+        val pts = Geo.decodePolyline(trip.encodedPolyline)
+        val first = pts.firstOrNull()
+        val last = pts.lastOrNull()
         if (first == null || last == null) return 0.0
         return Geo.distanceMeters(first.first, first.second, last.first, last.second)
-    }
-
-    /** Merge consecutive same-mode segments inside one trip. */
-    private suspend fun mergeSegmentsWithin(trip: TripEntity) {
-        val segments = tripDao.segmentsForTrip(trip.id)
-        if (segments.size < 2) return
-        val merged = ArrayList<TripSegmentEntity>()
-        for (seg in segments) {
-            val last = merged.lastOrNull()
-            if (last != null && last.mode == seg.mode) {
-                val points = Geo.decodePolyline(last.encodedPolyline) + Geo.decodePolyline(seg.encodedPolyline)
-                merged[merged.size - 1] = last.copy(
-                    endMs = seg.endMs,
-                    distanceMeters = last.distanceMeters + seg.distanceMeters,
-                    encodedPolyline = Geo.encodePolyline(points),
-                    confirmed = last.confirmed || seg.confirmed,
-                    modeConfidence = maxOf(last.modeConfidence, seg.modeConfidence),
-                )
-            } else {
-                merged.add(seg.copy(id = 0))
-            }
-        }
-        if (merged.size == segments.size) return // nothing collapsed
-        tripDao.deleteSegmentsForTrip(trip.id)
-        merged.forEach { tripDao.insertSegment(it.copy(tripId = trip.id)) }
     }
 
     /** Merge the first mergeable adjacent same-place visit pair found. Returns true if it merged. */
@@ -124,16 +96,20 @@ class TimelineMerger @Inject constructor(
             val a = trips[i]
             val b = trips[i + 1]
             if (a.confirmed || b.confirmed) continue
-            if (b.startMs - a.endMs in 0..Constants.MERGE_GAP_MS &&
+            // Only fuse *same-mode* adjacent trips — different modes are a real multi-modal journey.
+            if (a.mode == b.mode &&
+                b.startMs - a.endMs in 0..Constants.MERGE_GAP_MS &&
                 !visitExistsBetween(dayEpoch, a.endMs, b.startMs)
             ) {
-                tripDao.segmentsForTrip(b.id).forEach {
-                    tripDao.insertSegment(it.copy(id = 0, tripId = a.id))
-                }
+                val points = Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
                 tripDao.update(
-                    a.copy(endMs = maxOf(a.endMs, b.endMs), distanceMeters = a.distanceMeters + b.distanceMeters),
+                    a.copy(
+                        endMs = maxOf(a.endMs, b.endMs),
+                        distanceMeters = a.distanceMeters + b.distanceMeters,
+                        encodedPolyline = Geo.encodePolyline(points),
+                        modeConfidence = maxOf(a.modeConfidence, b.modeConfidence),
+                    ),
                 )
-                tripDao.deleteSegmentsForTrip(b.id)
                 tripDao.deleteTrip(b.id)
                 return true
             }

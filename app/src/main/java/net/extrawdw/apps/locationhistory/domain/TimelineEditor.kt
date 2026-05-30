@@ -8,7 +8,6 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
-import net.extrawdw.apps.locationhistory.data.db.TripSegmentEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
@@ -76,10 +75,7 @@ class TimelineEditor @Inject constructor(
     private suspend fun deleteItem(item: TimelineItem) {
         when (item) {
             is TimelineItem.VisitItem -> visitDao.delete(item.visit.id)
-            is TimelineItem.TripItem -> {
-                tripDao.deleteSegmentsForTrip(item.trip.id)
-                tripDao.deleteTrip(item.trip.id)
-            }
+            is TimelineItem.TripItem -> tripDao.deleteTrip(item.trip.id)
         }
     }
 
@@ -124,7 +120,7 @@ class TimelineEditor @Inject constructor(
                     match,
                 )
                 val id = visitDao.insert(visit)
-                visit.placeId?.let { placeRepository.recordVisitToPlace(it, cleanUsable) }
+                visit.placeId?.let { placeRepository.recordVisitToPlace(it) }
                 trainingRepository.addStateExample(
                     features = Features.stationaryFeatures(cleanUsable),
                     label = DevicePhysicalState.MODEL_CLASSES.indexOf(DevicePhysicalState.STATIONARY),
@@ -140,18 +136,13 @@ class TimelineEditor @Inject constructor(
                 }
                 val points = movementSamples.map { it.latitude to it.longitude }
                 val distance = Geo.pathLengthMeters(points)
-                val tripId = tripDao.insert(
+                tripDao.insert(
                     TripEntity(
                         fromVisitId = null, toVisitId = null,
                         startMs = startMs, endMs = endMs, dayEpoch = TimeBuckets.dayEpoch(startMs),
-                        distanceMeters = distance, confirmed = true,
-                    ),
-                )
-                tripDao.insertSegment(
-                    TripSegmentEntity(
-                        tripId = tripId, startMs = startMs, endMs = endMs,
-                        mode = type.mode, modeConfidence = 1f, confirmed = true,
+                        mode = type.mode, modeConfidence = 1f,
                         encodedPolyline = Geo.encodePolyline(points), distanceMeters = distance,
+                        confirmed = true,
                     ),
                 )
                 if (movementSamples.size >= 2 && type.mode in TransportMode.MODEL_CLASSES) {

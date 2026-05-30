@@ -40,6 +40,9 @@ interface VisitDao {
     @Query("SELECT COUNT(*) FROM visits WHERE placeId = :placeId")
     suspend fun countForPlace(placeId: Long): Int
 
+    @Query("SELECT * FROM visits WHERE placeId = :placeId")
+    suspend fun listForPlace(placeId: Long): List<VisitEntity>
+
     /** placeId -> number of visits, for the Places list. */
     @Query("SELECT placeId AS placeId, COUNT(*) AS visits FROM visits WHERE placeId IS NOT NULL GROUP BY placeId")
     fun observePlaceVisitCounts(): Flow<List<PlaceVisitCount>>
@@ -88,38 +91,11 @@ interface TripDao {
     @Query("SELECT * FROM trips WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<TripEntity>
 
-    @Query(
-        "DELETE FROM trip_segments WHERE tripId IN " +
-            "(SELECT id FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs)"
-    )
-    suspend fun deleteSegmentsForUnconfirmedTripsOverlapping(startMs: Long, endMs: Long)
-
     @Query("DELETE FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
 
     @Query("DELETE FROM trips WHERE id = :id")
     suspend fun deleteTrip(id: Long)
-
-    @Insert
-    suspend fun insertSegment(segment: TripSegmentEntity): Long
-
-    @Update
-    suspend fun updateSegment(segment: TripSegmentEntity)
-
-    @Query("DELETE FROM trip_segments WHERE tripId = :tripId")
-    suspend fun deleteSegmentsForTrip(tripId: Long)
-
-    @Query("SELECT * FROM trip_segments WHERE tripId = :tripId ORDER BY startMs ASC")
-    suspend fun segmentsForTrip(tripId: Long): List<TripSegmentEntity>
-
-    @Query(
-        "SELECT * FROM trip_segments WHERE tripId IN " +
-            "(SELECT id FROM trips WHERE startMs < :endMs AND endMs > :startMs) ORDER BY startMs ASC"
-    )
-    fun observeSegmentsOverlapping(startMs: Long, endMs: Long): Flow<List<TripSegmentEntity>>
-
-    @Query("SELECT * FROM trip_segments WHERE id = :id")
-    suspend fun segmentById(id: Long): TripSegmentEntity?
 
     @Query("SELECT COUNT(*) FROM trips")
     suspend fun count(): Int
