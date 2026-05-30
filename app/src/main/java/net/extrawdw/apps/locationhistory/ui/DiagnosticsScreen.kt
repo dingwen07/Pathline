@@ -141,6 +141,7 @@ class DiagnosticsViewModel @Inject constructor(
                 "Motion state" to recorder.state.label,
                 "Power profile" to (recorder.profile?.name ?: settings.powerProfile.name),
                 "Recorder updated" to (recorder.updatedAtMs?.let { Format.time(it) } ?: "—"),
+                "Last FGS start error" to (recorder.lastStartError ?: "—"),
             ),
             modelRows = listOf(
                 "State model loaded" to (modelStore.stateModel() != null).toString(),

@@ -22,19 +22,24 @@ class BootReceiver : BroadcastReceiver() {
     @Inject lateinit var workScheduler: WorkScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
-            intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
-            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED &&
-            intent.action != Intent.ACTION_USER_UNLOCKED
+        val action = intent.action
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED &&
+            action != Intent.ACTION_USER_UNLOCKED
         ) return
 
-        net.extrawdw.apps.locationhistory.core.AppLog.i("BootReceiver", "startup event ${intent.action}")
+        net.extrawdw.apps.locationhistory.core.AppLog.i("BootReceiver", "startup event $action")
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
                 if (settingsRepository.settings.first().trackingEnabled) {
-                    controller.resumeIfPreviouslyEnabled()
                     workScheduler.schedulePeriodicTimelineMaintenance()
+                    if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+                        controller.rearmPassiveSignalsIfPreviouslyEnabled()
+                    } else {
+                        controller.resumeIfPreviouslyEnabled()
+                    }
                 }
             } finally {
                 pending.finish()

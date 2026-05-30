@@ -126,6 +126,25 @@ class RecordingController @Inject constructor(
         repairStationaryFromStoredSamples()
     }
 
+    /**
+     * Re-arm passive system triggers from background-only startup events. Package replacement can
+     * arrive while the app is not eligible to start a location FGS, so the foreground recorder is
+     * resumed later from the activity self-heal path.
+     */
+    suspend fun rearmPassiveSignalsIfPreviouslyEnabled() {
+        if (!settingsRepository.settings.first().trackingEnabled) {
+            AppLog.i(TAG, "passive rearm: tracking disabled, nothing to do")
+            return
+        }
+        if (!recognitionManager.hasPermission()) {
+            AppLog.w(TAG, "passive rearm: missing activity-recognition permission")
+            return
+        }
+        AppLog.i(TAG, "passive rearm: restoring AR/geofences without foreground recorder")
+        enableTracking()
+        geofenceManager.restore()
+    }
+
     /** A single current fix, used to bootstrap recording and to anchor a stationary visit. */
     private suspend fun getCurrentLocation(): Location? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)

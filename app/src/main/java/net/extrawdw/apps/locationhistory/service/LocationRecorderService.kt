@@ -33,6 +33,7 @@ import javax.inject.Inject
 class LocationRecorderService : LifecycleService() {
 
     @Inject lateinit var controller: RecordingController
+    @Inject lateinit var serviceController: RecorderServiceController
 
     private val fusedClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(this)
@@ -59,14 +60,14 @@ class LocationRecorderService : LifecycleService() {
                 stopUpdatesAndSelf()
                 return START_NOT_STICKY
             }
-            else -> startRecording(intent)
+            else -> if (!startRecording(intent)) return START_NOT_STICKY
         }
         // The system delivers updates via PendingIntent; if killed, AR/geofence will restart us.
         return START_STICKY
     }
 
     @SuppressLint("MissingPermission")
-    private fun startRecording(intent: Intent?) {
+    private fun startRecording(intent: Intent?): Boolean {
         val state = intent?.getStringExtra(EXTRA_STATE)
             ?.let { runCatching { DevicePhysicalState.valueOf(it) }.getOrNull() }
             ?: DevicePhysicalState.UNKNOWN
@@ -78,13 +79,16 @@ class LocationRecorderService : LifecycleService() {
         if (intent == null) AppLog.startSession("service-restart")
         AppLog.i(TAG, "startRecording state=$state profile=$profile (restart=${intent == null})")
 
-        startForeground(state)
+        if (!startForeground(state)) {
+            stopSelf()
+            return false
+        }
         registerNetworkCallback()
 
         if (!hasLocationPermission()) {
             AppLog.w(TAG, "no location permission — stopping")
             stopUpdatesAndSelf()
-            return
+            return false
         }
         runCatching {
             fusedClient.requestLocationUpdates(
@@ -92,18 +96,27 @@ class LocationRecorderService : LifecycleService() {
                 locationPendingIntent(this),
             )
         }.onFailure { AppLog.e(TAG, "requestLocationUpdates failed", it) }
+        return true
     }
 
-    private fun startForeground(state: DevicePhysicalState) {
+    private fun startForeground(state: DevicePhysicalState): Boolean {
         val notification = Notifications.buildRecordingNotification(this, state)
-        ServiceCompat.startForeground(
-            this,
-            Notifications.RECORDING_NOTIFICATION_ID,
-            notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
-        )
+        try {
+            ServiceCompat.startForeground(
+                this,
+                Notifications.RECORDING_NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+            )
+        } catch (e: SecurityException) {
+            val message = e.message ?: e.javaClass.simpleName
+            AppLog.w(TAG, "location FGS start denied: $message")
+            serviceController.markStopped("FGS denied: $message")
+            return false
+        }
         getSystemService(NotificationManager::class.java)
             ?.notify(Notifications.RECORDING_NOTIFICATION_ID, notification)
+        return true
     }
 
     private fun stopUpdatesAndSelf() {
