@@ -141,11 +141,11 @@ class DiagnosticsViewModel @Inject constructor(
             db = dbStats,
             recorderRows = listOf(
                 "Tracking enabled" to settings.trackingEnabled.toString(),
-                "FGS believed running" to recorder.isRecording.toString(),
+                "Foreground service running" to recorder.isRecording.toString(),
                 "Motion state" to recorder.state.label,
                 "Power profile" to (recorder.profile?.name ?: settings.powerProfile.name),
                 "Recorder updated" to (recorder.updatedAtMs?.let { Format.time(it) } ?: "—"),
-                "Last FGS start error" to (recorder.lastStartError ?: "—"),
+                "Last service start error" to (recorder.lastStartError ?: "—"),
             ),
             modelRows = listOf(
                 "State model loaded" to (modelStore.stateModel() != null).toString(),
@@ -157,7 +157,7 @@ class DiagnosticsViewModel @Inject constructor(
                 "Training worker" to (modelWorker?.let { workSummary(it) } ?: "NONE"),
                 "State examples" to "$pendingStateExamples pending / $totalStateExamples total",
                 "Transport examples" to "$pendingTransportExamples pending / $totalTransportExamples total",
-                "Training note" to if (noTrainingDataNote) "needs confirmations" else "ready",
+                "Training note" to if (noTrainingDataNote) "needs confirmed visits" else "ready",
             ),
             workerRows = workers,
         )
@@ -272,7 +272,7 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                     }
                     item {
                         Text(
-                            "Session logs (newest first) - tap to view",
+                            "Session logs (newest first) — tap to view",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

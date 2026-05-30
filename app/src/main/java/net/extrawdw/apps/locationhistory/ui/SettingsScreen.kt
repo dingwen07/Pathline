@@ -60,7 +60,7 @@ fun SettingsScreen(
                         Column(Modifier.weight(1f)) {
                             Text("Background recording", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Power-efficient: uses motion sensors and geofencing, GPS only while moving.",
+                                "Uses motion sensors and geofencing so GPS only runs while you're moving — easy on the battery.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
@@ -114,7 +114,7 @@ fun SettingsScreen(
                     Button(
                         onClick = viewModel::trainNow,
                         modifier = Modifier.padding(top = 8.dp),
-                    ) { Text("Train when charging") }
+                    ) { Text("Train model") }
                     Text(
                         "Training runs only while charging to save battery.",
                         style = MaterialTheme.typography.bodySmall,
@@ -129,7 +129,7 @@ fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Inspect internal data and session logs (and share them).",
+                        "Inspect and share internal data and session logs.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedButton(

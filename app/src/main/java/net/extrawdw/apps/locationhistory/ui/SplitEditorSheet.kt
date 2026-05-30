@@ -97,14 +97,14 @@ fun SplitEditorPanel(
         LaunchedEffect(split) { onReclassifyType(null); onSplitIndexChange(split) }
 
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { if (split > 1) split-- }) { Icon(Icons.Filled.Remove, contentDescription = "One earlier") }
+            IconButton(onClick = { if (split > 1) split-- }) { Icon(Icons.Filled.Remove, contentDescription = "Move split earlier") }
             Slider(
                 value = split.toFloat(),
                 onValueChange = { split = it.toInt().coerceIn(1, samples.size - 1) },
                 valueRange = 1f..(samples.size - 1).toFloat(),
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = { if (split < samples.size - 1) split++ }) { Icon(Icons.Filled.Add, contentDescription = "One later") }
+            IconButton(onClick = { if (split < samples.size - 1) split++ }) { Icon(Icons.Filled.Add, contentDescription = "Move split later") }
         }
 
         SideCard("Before", samples.subList(0, split), leftType) { leftType = it }

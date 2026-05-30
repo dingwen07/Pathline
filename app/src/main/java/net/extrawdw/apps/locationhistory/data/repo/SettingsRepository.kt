@@ -29,6 +29,16 @@ class SettingsRepository @Inject constructor(
 ) {
     private val keyTracking = booleanPreferencesKey("tracking_enabled")
     private val keyProfile = stringPreferencesKey("power_profile")
+    private val keyOnboarded = booleanPreferencesKey("onboarding_complete")
+
+    /** Whether the first-run onboarding flow has been completed or skipped. */
+    val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[keyOnboarded] ?: false
+    }
+
+    suspend fun setOnboardingComplete(complete: Boolean) {
+        context.dataStore.edit { it[keyOnboarded] = complete }
+    }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(

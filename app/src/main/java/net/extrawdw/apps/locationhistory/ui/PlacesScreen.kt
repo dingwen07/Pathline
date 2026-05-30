@@ -91,7 +91,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 if (place.fixed) {
                                     Icon(
                                         Icons.Filled.Lock,
-                                        contentDescription = "Fixed",
+                                        contentDescription = "Locked",
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }

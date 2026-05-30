@@ -107,8 +107,8 @@ fun PlaceEditDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Fix this place", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                            Text("Stop auto-adjusting center & radius from new visits.", style = MaterialTheme.typography.bodySmall)
+                            Text("Lock this place", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text("Stop adjusting the center and radius from new visits.", style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(checked = fixed, onCheckedChange = { fixed = it })
                     }

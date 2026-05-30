@@ -21,11 +21,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.service.RecordingController
+import net.extrawdw.apps.locationhistory.ui.OnboardingScreen
+import net.extrawdw.apps.locationhistory.ui.OnboardingViewModel
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
 import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
@@ -57,9 +60,26 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun PathlineRoot() {
+fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     var destination by rememberSaveable { mutableStateOf(AppDestinations.TIMELINE) }
     val permissions = rememberPathlinePermissions()
+    val onboardingComplete by onboardingViewModel.onboardingComplete.collectAsStateWithLifecycle()
+
+    // Gate the app behind first-run onboarding. `null` = still loading the flag (avoid flashing).
+    when (onboardingComplete) {
+        null -> {
+            Surface(Modifier.fillMaxSize()) {}
+            return
+        }
+        false -> {
+            OnboardingScreen(
+                permissions = permissions,
+                onFinish = { startTracking -> onboardingViewModel.finish(startTracking) },
+            )
+            return
+        }
+        else -> Unit
+    }
 
     NavigationSuiteScaffold(
         navigationSuiteItems = {

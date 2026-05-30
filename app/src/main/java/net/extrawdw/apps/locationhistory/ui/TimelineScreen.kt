@@ -544,11 +544,10 @@ private fun VisitRow(
                     Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Edit, contentDescription = "Edit") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(text = { Text("Split") }, onClick = { menuOpen = false; onEditSamples() })
                             if (item.place != null) {
-                                DropdownMenuItem(text = { Text("Place details") }, onClick = { menuOpen = false; onOpenPlace() })
                                 DropdownMenuItem(text = { Text("Edit place") }, onClick = { menuOpen = false; onEditPlace() })
                             }
-                            DropdownMenuItem(text = { Text("Edit samples (split)") }, onClick = { menuOpen = false; onEditSamples() })
                         }
                     }
                 }
