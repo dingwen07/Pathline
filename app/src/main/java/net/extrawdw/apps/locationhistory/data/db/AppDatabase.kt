@@ -15,7 +15,7 @@ import androidx.room.TypeConverters
         TransportTrainingExampleEntity::class,
         BackupDirtyPartitionEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -32,7 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
         const val NAME = "pathline.db"
 
         /** Must equal the `version` above; used by the backup engine for restore compatibility. */
-        const val SCHEMA_VERSION = 6
+        const val SCHEMA_VERSION = 7
 
         /**
          * SQL that creates the backup dirty-partition triggers. Run from the migrations (for

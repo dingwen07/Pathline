@@ -173,29 +173,52 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     }
 
     /**
-     * Keep a confirmed, still-ongoing visit's end time tracking the present while the device remains
-     * stationary near it; finalize it (clear [VisitEntity.isOngoing]) once the latest fix shows the
-     * user has moved on or away. Confirmed visits are otherwise preserved verbatim by maintenance.
+     * Keep the *single* current confirmed visit's end time tracking the present while the device is
+     * still stationary near it, and finalize it once the user moves on. **At most one visit may be
+     * ongoing**, so any other confirmed visit still flagged `isOngoing` (stale flags from confirming
+     * while ongoing) is finalized here — otherwise every one of them would be extended to the same
+     * `now`, producing duplicate end times. Confirmed visits are otherwise preserved by maintenance.
      */
     private suspend fun extendConfirmedOngoingVisits(
         confirmedVisits: List<VisitEntity>,
         latest: LocationSampleEntity?,
         now: Long,
     ) {
+        val ongoing = confirmedVisits.filter { it.isOngoing }
+        if (ongoing.isEmpty()) return
+        // Only the most recent stay can be ongoing; finalize the rest so they don't all get extended
+        // to the same `now` (which would produce duplicate end times).
+        val current = ongoing.maxByOrNull { it.startMs }!!
+        ongoing.asSequence().filter { it.id != current.id }
+            .forEach { visitDao.update(it.copy(isOngoing = false)) }
+
         if (latest == null) return
-        for (cv in confirmedVisits) {
-            if (!cv.isOngoing || latest.timestampMs < cv.startMs) continue
-            val nearby = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-                cv.centroidLatitude, cv.centroidLongitude, latest.latitude, latest.longitude,
-            ) <= maxOf(cv.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
-            val stillThere = latest.includedInComputation &&
-                latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
-                (latest.speed ?: 0f) <= 0.8f && nearby
-            if (stillThere) {
-                visitDao.update(cv.copy(endMs = maxOf(cv.endMs, now)))
-            } else if (latest.timestampMs > cv.endMs) {
-                visitDao.update(cv.copy(isOngoing = false))
+        val nearby = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+            current.centroidLatitude, current.centroidLongitude, latest.latitude, latest.longitude,
+        ) <= maxOf(current.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
+        val stillThere = latest.timestampMs >= current.startMs && latest.includedInComputation &&
+            latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
+            (latest.speed ?: 0f) <= 0.8f && nearby
+        if (stillThere) {
+            // Recompute the visit's own center/radius from its (now longer) sample span so the
+            // visit circle stays accurate as the stay grows — this also feeds the place's
+            // recency-weighted radius/center.
+            val span = sampleDao.rangeForComputation(current.startMs, now + 1)
+            val geom = if (span.size >= 2) {
+                VisitGeometry.compute(span, current.centroidLatitude, current.centroidLongitude)
+            } else {
+                null
             }
+            visitDao.update(
+                current.copy(
+                    endMs = maxOf(current.endMs, now),
+                    centroidLatitude = geom?.latitude ?: current.centroidLatitude,
+                    centroidLongitude = geom?.longitude ?: current.centroidLongitude,
+                    radiusMeters = geom?.radiusMeters ?: current.radiusMeters,
+                ),
+            )
+        } else if (latest.timestampMs > current.endMs) {
+            visitDao.update(current.copy(isOngoing = false))
         }
     }
 

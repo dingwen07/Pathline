@@ -48,7 +48,7 @@ object DatabaseModule {
             .openHelperFactory(factory)
             // WAL keeps writes fast and is the right journal mode for an append-heavy fact table.
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .addCallback(TriggerCallback)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
@@ -127,6 +127,23 @@ object DatabaseModule {
             db.execSQL("DROP TABLE IF EXISTS trip_segments")
             db.execSQL("DELETE FROM backup_dirty_partitions WHERE stream = 'segments'")
             AppDatabase.DIRTY_TRIGGERS.forEach(db::execSQL)
+        }
+    }
+
+    /**
+     * Adds the immutable origin-anchor columns to `places` (nullable, so no Room-default conflict).
+     * Existing rows get a NULL anchor and behave as before until they're recreated; backfill the
+     * anchor from the current center/radius so established places keep a sensible origin.
+     */
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE places ADD COLUMN anchorLatitude REAL")
+            db.execSQL("ALTER TABLE places ADD COLUMN anchorLongitude REAL")
+            db.execSQL("ALTER TABLE places ADD COLUMN anchorRadiusMeters REAL")
+            db.execSQL(
+                "UPDATE places SET anchorLatitude = latitude, anchorLongitude = longitude, " +
+                    "anchorRadiusMeters = radiusMeters",
+            )
         }
     }
 

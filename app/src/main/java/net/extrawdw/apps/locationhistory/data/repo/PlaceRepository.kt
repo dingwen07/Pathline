@@ -49,6 +49,11 @@ class PlaceRepository @Inject constructor(
             address = address,
             confirmed = true,
             createdAtMs = System.currentTimeMillis(),
+            // Capture the creation center/radius as the immutable anchor (Google's coordinates for a
+            // MAPS place, else the founding visit centroid). Folded into every later recompute.
+            anchorLatitude = latitude,
+            anchorLongitude = longitude,
+            anchorRadiusMeters = Constants.PLACE_MATCH_RADIUS_METERS,
         ),
     )
 
@@ -58,27 +63,40 @@ class PlaceRepository @Inject constructor(
         dao.deleteIfUnvisited(placeId) > 0
 
     /**
-     * Recompute a place's center and radius as a **weighted mean of all its visits' centroids/radii**,
-     * so it follows where the user recently goes instead of freezing. Each visit is weighted by:
-     *  - **recency** — an exponential decay that halves the weight every
-     *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS], so old visits fade out; and
-     *  - **confirmation** — confirmed (ground-truth) visits count [Constants.PLACE_CONFIRMED_VISIT_WEIGHT]×
-     *    an unconfirmed one.
+     * Recompute a place's center and radius as a **weighted mean of its origin anchor + all its
+     * visits' centroids/radii**, so it follows where the user recently goes without drifting from —
+     * or shrinking below — its authoritative origin. Contributions:
+     *  - **origin anchor** — the immutable creation center/radius (Google's for a MAPS place),
+     *    weighted by a fixed [Constants.PLACE_GOOGLE_ANCHOR_WEIGHT]/[Constants.PLACE_LOCAL_ANCHOR_WEIGHT]
+     *    that does NOT decay; this keeps the radius from collapsing to the per-visit floor.
+     *  - each **visit**, weighted by **recency** (halves every
+     *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS]) × **confirmation**
+     *    ([Constants.PLACE_CONFIRMED_VISIT_WEIGHT]× for confirmed).
      *
-     * Recomputing from scratch (rather than nudging incrementally) is what lets old visits lose
-     * influence over time. Call this *after* the triggering visit is persisted/linked so it's
-     * included. Fixed places are left untouched; the visit count is derived live from the visits
-     * table, not stored.
+     * Recomputing from scratch is what lets old visits fade. Call *after* the triggering visit is
+     * persisted/linked so it's included. Fixed places are left untouched; the visit count is derived
+     * live from the visits table, not stored.
      */
     suspend fun recordVisitToPlace(placeId: Long, nowMs: Long = System.currentTimeMillis()) {
         val place = dao.byId(placeId) ?: return
         if (place.fixed) return
-        val visits = visitDao.listForPlace(placeId).ifEmpty { return }
+        val visits = visitDao.listForPlace(placeId)
 
         var sumW = 0.0
         var sumLat = 0.0
         var sumLon = 0.0
         var sumRadius = 0.0
+
+        // Immutable origin anchor (Google coordinates carry more authority than a local centroid).
+        if (place.anchorLatitude != null && place.anchorLongitude != null) {
+            val aw = if (place.googlePlaceId != null) Constants.PLACE_GOOGLE_ANCHOR_WEIGHT
+            else Constants.PLACE_LOCAL_ANCHOR_WEIGHT
+            sumW += aw
+            sumLat += aw * place.anchorLatitude
+            sumLon += aw * place.anchorLongitude
+            sumRadius += aw * (place.anchorRadiusMeters ?: Constants.PLACE_MATCH_RADIUS_METERS)
+        }
+
         for (v in visits) {
             val ageDays = (nowMs - v.startMs).coerceAtLeast(0L) / 86_400_000.0
             val recency = 2.0.pow(-ageDays / Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS)

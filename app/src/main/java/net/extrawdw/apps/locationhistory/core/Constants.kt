@@ -31,6 +31,14 @@ object Constants {
     /** Confirmed visits are ground truth, so they count this many times an unconfirmed visit. */
     const val PLACE_CONFIRMED_VISIT_WEIGHT = 4.0
 
+    /** Weight of a place's immutable origin anchor in the center/radius recompute. The anchor does
+     *  NOT decay, so it keeps the place near its authoritative origin and stops the radius from
+     *  collapsing to the per-visit floor. A Google (MAPS) anchor is authoritative; a local
+     *  (user/inferred) anchor is only its founding visit, so it pulls more gently. Roughly: a Google
+     *  anchor ≈ this-many recent confirmed visits' worth of pull. */
+    const val PLACE_GOOGLE_ANCHOR_WEIGHT = 10.0
+    const val PLACE_LOCAL_ANCHOR_WEIGHT = 3.0
+
     /** A "trip" whose net displacement is under this (m) is treated as GPS drift, not real movement. */
     const val DRIFT_DISPLACEMENT_METERS = 80.0
 

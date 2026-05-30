@@ -87,6 +87,16 @@ data class PlaceEntity(
     val visitCount: Int = 0,
     /** When true the user has pinned the center/radius — the app must not auto-update them. */
     val fixed: Boolean = false,
+    /**
+     * The place's *original* center at creation (Google's coordinates for a MAPS place, or the
+     * founding visit's centroid otherwise). It never changes, and is folded into the weighted
+     * center/radius recompute as a stable, non-decaying anchor so the place doesn't drift away from
+     * — or shrink below — its authoritative origin as visits accumulate. Null for places created
+     * before anchoring existed.
+     */
+    val anchorLatitude: Double? = null,
+    val anchorLongitude: Double? = null,
+    val anchorRadiusMeters: Double? = null,
 )
 
 /**
