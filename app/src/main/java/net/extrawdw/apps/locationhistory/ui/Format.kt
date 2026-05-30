@@ -1,15 +1,15 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.DirectionsBus
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.DirectionsRun
-import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.DirectionsBoat
 import androidx.compose.material.icons.filled.Train
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.ui.graphics.vector.ImageVector
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import java.time.Instant
@@ -48,14 +48,14 @@ object Format {
     fun confidencePct(confidence: Float): String = "${(confidence * 100).toInt()}%"
 
     fun transportIcon(mode: TransportMode): ImageVector = when (mode) {
-        TransportMode.WALKING -> Icons.Filled.DirectionsWalk
-        TransportMode.RUNNING -> Icons.Filled.DirectionsRun
-        TransportMode.CYCLING -> Icons.Filled.DirectionsBike
+        TransportMode.WALKING -> Icons.AutoMirrored.Filled.DirectionsWalk
+        TransportMode.RUNNING -> Icons.AutoMirrored.Filled.DirectionsRun
+        TransportMode.CYCLING -> Icons.AutoMirrored.Filled.DirectionsBike
         TransportMode.CAR -> Icons.Filled.DirectionsCar
         TransportMode.BUS -> Icons.Filled.DirectionsBus
         TransportMode.RAIL -> Icons.Filled.Train
         TransportMode.FERRY -> Icons.Filled.DirectionsBoat
         TransportMode.FLIGHT -> Icons.Filled.Flight
-        TransportMode.UNKNOWN -> Icons.Filled.HelpOutline
+        TransportMode.UNKNOWN -> Icons.AutoMirrored.Filled.HelpOutline
     }
 }

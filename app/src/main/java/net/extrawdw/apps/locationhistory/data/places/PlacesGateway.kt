@@ -33,7 +33,7 @@ data class PlaceCandidate(
  */
 @Singleton
 class PlacesGateway @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val client: PlacesClient? by lazy { createClient() }
 

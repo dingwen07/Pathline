@@ -69,7 +69,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
@@ -225,7 +225,7 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 24.dp),
+                                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
                             ) {
                                 if (dayTimeline.items.isEmpty()) {
                                     item { EmptyDay(Modifier.fillParentMaxWidth().padding(32.dp)) }

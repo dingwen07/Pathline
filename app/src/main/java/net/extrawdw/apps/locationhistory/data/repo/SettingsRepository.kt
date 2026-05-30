@@ -25,7 +25,7 @@ data class AppSettings(
 
 @Singleton
 class SettingsRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val keyTracking = booleanPreferencesKey("tracking_enabled")
     private val keyProfile = stringPreferencesKey("power_profile")

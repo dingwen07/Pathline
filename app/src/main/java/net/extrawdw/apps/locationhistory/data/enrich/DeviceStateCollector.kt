@@ -25,7 +25,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class DeviceStateCollector @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
 
     fun snapshot(): DeviceContext {
@@ -80,9 +80,7 @@ class DeviceStateCollector @Inject constructor(
         if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return null to null
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null to null
         val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return null to null)
-        val info = caps?.transportInfo as? WifiInfo
-            ?: (context.getSystemService(WifiManager::class.java)?.connectionInfo)
-            ?: return null to null
+        val info = caps?.transportInfo as? WifiInfo ?: return null to null
         val ssid = info.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != WifiManager.UNKNOWN_SSID }
         ssid to info.bssid
     }.getOrDefault(null to null)

@@ -36,7 +36,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecordingController @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val locationRepository: LocationRepository,
     private val settingsRepository: SettingsRepository,
     private val deviceStateCollector: DeviceStateCollector,

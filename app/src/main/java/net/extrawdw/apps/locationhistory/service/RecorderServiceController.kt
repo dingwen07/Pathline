@@ -25,7 +25,7 @@ data class RecorderDebugState(
 /** Starts/stops [LocationRecorderService] and refreshes its location request when state changes. */
 @Singleton
 class RecorderServiceController @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val running = AtomicBoolean(false)
     private val debugMutable = MutableStateFlow(RecorderDebugState())

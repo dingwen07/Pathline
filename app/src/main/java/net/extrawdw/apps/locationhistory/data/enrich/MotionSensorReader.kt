@@ -21,7 +21,7 @@ import kotlin.math.sqrt
  */
 @Singleton
 class MotionSensorReader @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val sensorManager: SensorManager? =
         context.getSystemService(SensorManager::class.java)

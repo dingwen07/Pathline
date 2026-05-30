@@ -22,7 +22,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecognitionManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val tracked = intArrayOf(
         DetectedActivity.STILL,

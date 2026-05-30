@@ -63,7 +63,7 @@ data class MapState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class TimelineViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val timelineRepository: TimelineRepository,
     private val placeRepository: PlaceRepository,
     private val timelineEditor: TimelineEditor,

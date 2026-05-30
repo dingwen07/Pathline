@@ -1,6 +1,7 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import android.content.Context
+import android.view.WindowManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,18 +32,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -316,40 +320,50 @@ private fun LogFileDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
+        DisableDialogDim()
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
         Surface(Modifier.fillMaxSize().predictiveBack(backProgress)) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text(file.name) },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close log")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = onShare) {
-                            Icon(Icons.Filled.Share, contentDescription = "Share this log")
-                        }
-                    },
-                )
-            },
-        ) { padding ->
-            SelectionContainer(Modifier.fillMaxSize().padding(padding)) {
-                Text(
-                    content.ifEmpty { "(empty)" },
-                    modifier = Modifier.fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                        .padding(12.dp),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 12.sp,
-                    softWrap = false,
-                )
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text(file.name) },
+                        navigationIcon = {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Filled.Close, contentDescription = "Close log")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = onShare) {
+                                Icon(Icons.Filled.Share, contentDescription = "Share this log")
+                            }
+                        },
+                    )
+                },
+            ) { padding ->
+                SelectionContainer(Modifier.fillMaxSize().padding(padding)) {
+                    Text(
+                        content.ifEmpty { "(empty)" },
+                        modifier = Modifier.fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .horizontalScroll(rememberScrollState())
+                            .padding(12.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 12.sp,
+                        softWrap = false,
+                    )
+                }
             }
         }
-        }
+    }
+}
+
+@Composable
+private fun DisableDialogDim() {
+    val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+    SideEffect {
+        window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window?.setDimAmount(0f)
     }
 }
 

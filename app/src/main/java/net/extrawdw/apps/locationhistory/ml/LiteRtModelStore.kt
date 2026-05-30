@@ -20,7 +20,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class LiteRtModelStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val lock = Any()
     private var stateModel: TrainableTfliteModel? = null
