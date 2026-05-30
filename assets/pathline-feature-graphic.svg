@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <defs>
+    <filter id="phoneShadow" x="-30%" y="-20%" width="160%" height="150%">
+      <feDropShadow dx="0" dy="24" stdDeviation="22" flood-color="#10241F" flood-opacity="0.18"/>
+    </filter>
+    <filter id="logoShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0F766E" flood-opacity="0.22"/>
+    </filter>
+    <linearGradient id="iconBg" x1="0" y1="0" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14B8A6"/>
+      <stop offset="0.58" stop-color="#0E97C4"/>
+      <stop offset="1" stop-color="#0284C7"/>
+    </linearGradient>
+    <clipPath id="phoneScreen">
+      <rect x="668" y="78" width="198" height="444" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="500" fill="#F7F9F6"/>
+
+  <g transform="translate(124 48)">
+    <rect x="0" y="0" width="66" height="66" rx="15" fill="url(#iconBg)" filter="url(#logoShadow)"/>
+    <path d="M21,48 C30,48 34,41 43,38" fill="none" stroke="#FFFFFF" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="21" cy="48" r="5.2" fill="#FFFFFF"/>
+    <g transform="translate(31 15) scale(1.55)">
+      <path fill="#FFFFFF" d="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13c0,-3.87 -3.13,-7 -7,-7zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z"/>
+    </g>
+    <text x="86" y="44" fill="#17211D" font-family="Inter, Roboto, Arial, sans-serif" font-size="31" font-weight="800">Pathline</text>
+  </g>
+
+  <g transform="translate(124 164)">
+    <text x="0" y="0" fill="#065F55" font-family="Inter, Roboto, Arial, sans-serif" font-size="15" font-weight="900" letter-spacing="0.5">LOCATION HISTORY</text>
+    <text x="0" y="89" fill="#17211D" font-family="Inter, Roboto, Arial, sans-serif" font-size="88" font-weight="900">Pathline</text>
+    <text x="0" y="142" fill="#33433E" font-family="Inter, Roboto, Arial, sans-serif" font-size="26">A private, on-device timeline</text>
+    <text x="0" y="181" fill="#33433E" font-family="Inter, Roboto, Arial, sans-serif" font-size="26">of the places you visit.</text>
+  </g>
+
+  <g transform="translate(124 398)">
+    <circle cx="10" cy="10" r="7" fill="#0F8F7F"/>
+    <text x="30" y="17" fill="#065F55" font-family="Inter, Roboto, Arial, sans-serif" font-size="19" font-weight="800">Battery efficient</text>
+    <circle cx="198" cy="10" r="7" fill="#0F8F7F"/>
+    <text x="218" y="17" fill="#065F55" font-family="Inter, Roboto, Arial, sans-serif" font-size="19" font-weight="800">Learns from edits</text>
+  </g>
+
+  <g filter="url(#phoneShadow)">
+    <rect x="648" y="55" width="238" height="470" rx="42" fill="#111C18"/>
+    <rect x="660" y="68" width="214" height="446" rx="34" fill="#F2F5F3"/>
+    <image
+      href="pathline-app-screenshot.png"
+      x="668"
+      y="78"
+      width="198"
+      height="444"
+      preserveAspectRatio="xMidYMin slice"
+      clip-path="url(#phoneScreen)"/>
+  </g>
+</svg>
