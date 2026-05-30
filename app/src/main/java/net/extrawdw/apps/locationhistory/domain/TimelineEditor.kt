@@ -61,7 +61,7 @@ class TimelineEditor @Inject constructor(
         deleteItem(item)
         materialize(samples.subList(0, k), leftType)
         materialize(samples.subList(k, samples.size), rightType)
-        workScheduler.enqueueMerge(TimeBuckets.dayEpoch(item.startMs))
+        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(item.startMs), "edit_split")
     }
 
     /** Reclassify a whole item to [type] without splitting. */
@@ -70,7 +70,7 @@ class TimelineEditor @Inject constructor(
         if (samples.isEmpty()) return
         deleteItem(item)
         materialize(samples, type)
-        workScheduler.enqueueMerge(TimeBuckets.dayEpoch(item.startMs))
+        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(item.startMs), "edit_convert")
     }
 
     private suspend fun deleteItem(item: TimelineItem) {
@@ -118,6 +118,7 @@ class TimelineEditor @Inject constructor(
                         candidateLatitude = null, candidateLongitude = null,
                         startMs = startMs, endMs = endMs, dayEpoch = TimeBuckets.dayEpoch(startMs),
                         centroidLatitude = geom.latitude, centroidLongitude = geom.longitude,
+                        radiusMeters = geom.radiusMeters,
                         confirmed = true, confidence = 1f, isOngoing = false,
                     ),
                     match,

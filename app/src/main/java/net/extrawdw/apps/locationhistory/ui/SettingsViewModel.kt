@@ -47,6 +47,7 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.setTrackingEnabled(enabled)
         if (enabled) {
             recordingController.startTracking()
+            workScheduler.schedulePeriodicTimelineMaintenance()
             workScheduler.schedulePeriodicExport()
         } else {
             recordingController.disableTracking()

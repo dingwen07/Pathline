@@ -12,7 +12,7 @@ import net.extrawdw.apps.locationhistory.ml.TrainableTfliteModel
 
 /**
  * Retrains the on-device LiteRT models from accumulated (user-confirmed) examples. It is only ever
- * enqueued with charging / battery-not-low / device-idle constraints (see [WorkScheduler]) so the
+ * enqueued with charging / battery-not-low constraints (see [WorkScheduler]) so the
  * model improves without ever costing the user battery during the day. A no-op when the base model
  * assets are absent — the app simply keeps using the heuristic classifier.
  */

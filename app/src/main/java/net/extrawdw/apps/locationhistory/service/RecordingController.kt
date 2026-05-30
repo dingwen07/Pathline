@@ -20,9 +20,7 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.enrich.DeviceStateCollector
 import net.extrawdw.apps.locationhistory.data.enrich.MotionSensorReader
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
-import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
-import net.extrawdw.apps.locationhistory.domain.PlaceMatcher
 import net.extrawdw.apps.locationhistory.domain.VisitCandidate
 import net.extrawdw.apps.locationhistory.ml.Classifier
 import net.extrawdw.apps.locationhistory.ml.StateFeatureInput
@@ -40,13 +38,10 @@ import javax.inject.Singleton
 class RecordingController @Inject constructor(
     @ApplicationContext private val context: Context,
     private val locationRepository: LocationRepository,
-    private val recordingRepository: RecordingRepository,
-    private val placeRepository: net.extrawdw.apps.locationhistory.data.repo.PlaceRepository,
     private val settingsRepository: SettingsRepository,
     private val deviceStateCollector: DeviceStateCollector,
     private val motionSensorReader: MotionSensorReader,
     private val classifier: Classifier,
-    private val placeMatcher: PlaceMatcher,
     private val recorderService: RecorderServiceController,
     private val recognitionManager: RecognitionManager,
     private val geofenceManager: GeofenceManager,
@@ -63,6 +58,7 @@ class RecordingController @Inject constructor(
     private data class Fix(val t: Long, val lat: Double, val lon: Double, val stationary: Boolean)
     private val recentFixes = ArrayDeque<Fix>()
     private val fixLock = Any()
+    @Volatile private var stationaryAnchor: Pair<Double, Double>? = null
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -166,6 +162,7 @@ class RecordingController @Inject constructor(
         AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=$currentState)")
         val context = deviceStateCollector.snapshot()
         val motionVariance = motionSensorReader.motionVariance()
+        val affectedDays = linkedSetOf<Long>()
 
         for (location in locations.sortedBy { it.time }) {
             val speed = if (location.hasSpeed()) location.speed else null
@@ -196,28 +193,23 @@ class RecordingController @Inject constructor(
                 currentState = classification.state
             }
             pushFix(location, classification.state == DevicePhysicalState.STATIONARY)
-            locationRepository.record(buildSample(location, context, classification.state, classification.confidence))
+            val sample = buildSample(location, context, classification.state, classification.confidence)
+            locationRepository.record(sample)
+            affectedDays.add(sample.dayEpoch)
         }
 
         // Keep the FGS notification + cadence in sync with the current state (fixes a stale
         // "Unknown" notification when the state was set by a geofence/AR event long ago).
         refreshServiceState()
 
-        // AR can be silent — if the recent fixes have settled into one spot and are classified
-        // stationary, finalize a stationary visit ourselves so the timeline doesn't get stuck on
-        // an old "walking" item.
+        // AR can be silent — if recent fixes have settled into one spot, switch the recorder to
+        // stationary cadence and ask maintenance to rebuild the derived timeline.
         val stationaryCandidate = stationaryClusterCandidate()
-        val needsStationaryVisit = stationaryCandidate != null &&
-            (currentState != DevicePhysicalState.STATIONARY || recordingRepository.ongoingVisit() == null)
-        if (needsStationaryVisit) {
-            AppLog.i(TAG, "stationary detected from fixes (AR silent) — finalizing visit")
+        if (stationaryCandidate != null && currentState != DevicePhysicalState.STATIONARY) {
+            AppLog.i(TAG, "stationary detected from fixes (AR silent)")
             becameStationary(stationaryCandidate, forceOpen = true)
         }
-
-        // Keep the current stay's duration live on the timeline while stationary.
-        if (currentState == DevicePhysicalState.STATIONARY) {
-            recordingRepository.extendOngoingVisit(locations.maxOf { it.time })
-        }
+        affectedDays.forEach { workScheduler.enqueueTimelineMaintenance(it, "samples") }
     }
 
     /** Re-tune the foreground service (and its notification) when the state actually changes. */
@@ -260,10 +252,8 @@ class RecordingController @Inject constructor(
         )
     }
 
-    /** Repair a process-restart/install case where the DB already shows recent stationary fixes
-     *  but the in-memory controller has no ongoing visit to extend. */
+    /** Repair a process-restart case where recent stored fixes already show a stationary cluster. */
     private suspend fun repairStationaryFromStoredSamples() {
-        if (recordingRepository.ongoingVisit() != null) return
         val recent = locationRepository.latest(12)
             .filter { it.includedInComputation }
             .sortedBy { it.timestampMs }
@@ -282,7 +272,7 @@ class RecordingController @Inject constructor(
             }
         }
         stationaryClusterCandidate()?.let {
-            AppLog.i(TAG, "resume repair: opening stationary visit from stored fixes")
+            AppLog.i(TAG, "resume repair: restoring stationary recorder state from stored fixes")
             becameStationary(it, forceOpen = true)
         }
     }
@@ -291,7 +281,6 @@ class RecordingController @Inject constructor(
 
     private suspend fun becameStationary(candidateFromFixes: VisitCandidate? = null, forceOpen: Boolean = false) {
         if (currentState == DevicePhysicalState.STATIONARY && !forceOpen) return
-        if (forceOpen && recordingRepository.ongoingVisit() != null) return
         currentState = DevicePhysicalState.STATIONARY
         AppLog.i(TAG, "becameStationary: keeping FGS alive at low-power cadence")
         // Keep the foreground service alive but drop to the low-power stationary location cadence,
@@ -316,63 +305,37 @@ class RecordingController @Inject constructor(
                 sampleCount = 1,
             )
             geofenceManager.armDwellGeofence(candidate.centroidLatitude, candidate.centroidLongitude)
-            val previousVisit = recordingRepository.mostRecentVisit()
-            val match = runCatching {
-                placeMatcher.match(candidate.centroidLatitude, candidate.centroidLongitude)
-            }.getOrNull()
-            val newVisitId = recordingRepository.openVisit(candidate, match)
-            if (match is net.extrawdw.apps.locationhistory.domain.PlaceMatch.Local) {
-                val excluded = locationRepository.excludeDriftOutside(
-                    startMs = candidate.startMs,
-                    endMs = candidate.endMs,
-                    centerLat = match.place.latitude,
-                    centerLon = match.place.longitude,
-                    radiusMeters = match.place.radiusMeters,
-                )
-                if (excluded > 0) AppLog.i(TAG, "excluded $excluded drift fixes outside ${match.place.name}")
-            }
-
-            // Segment the trip from the previous visit to this one.
-            if (previousVisit != null && !previousVisit.isOngoing) {
-                workScheduler.enqueueSegmentation(previousVisit.id, newVisitId)
-            }
-            // Combine any fragmented entries for the day.
-            workScheduler.enqueueMerge(TimeBuckets.dayEpoch(anchor.timestampMs))
+            stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
+            workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.timestampMs), "became_stationary")
         }
     }
 
     private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false) {
-        // Drift guard: if we're still within the current stay's radius, an Activity Recognition
-        // "walking" is almost certainly GPS jitter, not real movement — stay put. A real departure
-        // is caught by the dwell geofence (force = true), which bypasses this.
+        // Drift guard: while inside the dwell geofence, an Activity Recognition "walking" is
+        // probably jitter. A real departure is caught by the geofence exit (force = true).
         if (!force && isLikelyDrift()) {
             AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
             return
         }
         currentState = state
         AppLog.i(TAG, "becameMoving: $state (force=$force)")
-        // Close any ongoing visit at the moment movement resumes.
-        recordingRepository.ongoingVisit()?.let { ongoing ->
-            recordingRepository.closeVisit(ongoing.id, System.currentTimeMillis())
-            // If the just-finished stay matched a saved place, let the model refine that place's
-            // center/radius from this visit's samples (auto-update, reflected live in the UI).
-            ongoing.placeId?.let { placeId ->
-                val samples = locationRepository.rangeForComputation(ongoing.startMs, System.currentTimeMillis() + 1)
-                if (samples.isNotEmpty()) placeRepository.recordVisitToPlace(placeId, samples)
-            }
-        }
+        val maintenanceDay = locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
+            ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
+        stationaryAnchor = null
         geofenceManager.clearAll()
+        workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay, "became_moving")
         val profile = settingsRepository.settings.first().powerProfile
         recorderService.start(state, profile)
         serviceState = state
     }
 
-    /** True if there's an ongoing stay and the latest fix is still within its drift radius. */
+    /** True when the latest fix is still near the in-memory stationary anchor. */
     private suspend fun isLikelyDrift(): Boolean {
-        val ongoing = recordingRepository.ongoingVisit() ?: return false
+        if (currentState != DevicePhysicalState.STATIONARY) return false
+        val anchor = stationaryAnchor ?: return true
         val last = locationRepository.mostRecent() ?: return false
         val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-            ongoing.centroidLatitude, ongoing.centroidLongitude, last.latitude, last.longitude,
+            anchor.first, anchor.second, last.latitude, last.longitude,
         )
         return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
     }

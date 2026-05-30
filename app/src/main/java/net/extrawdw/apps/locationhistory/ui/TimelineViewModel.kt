@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.LatLng
@@ -17,17 +19,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
-import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
@@ -60,9 +62,9 @@ class TimelineViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val timelineRepository: TimelineRepository,
     private val placeRepository: PlaceRepository,
-    private val locationRepository: LocationRepository,
     private val timelineEditor: TimelineEditor,
     private val workScheduler: WorkScheduler,
+    private val workManager: WorkManager,
 ) : ViewModel() {
 
     val today: Long get() = TimeBuckets.dayEpoch(System.currentTimeMillis())
@@ -81,7 +83,7 @@ class TimelineViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimelineDay(today, emptyList()))
 
     val mapState: StateFlow<MapState> = selectedDay
-        .flatMapLatest { day -> timelineRepository.observeDay(day).map { buildMapState(day, it) } }
+        .flatMapLatest { day -> timelineRepository.observeDay(day).map { buildMapState(it) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapState())
 
     val places = placeRepository.observeAll()
@@ -94,14 +96,16 @@ class TimelineViewModel @Inject constructor(
     fun timelineFor(day: Long): kotlinx.coroutines.flow.Flow<TimelineDay> =
         timelineRepository.observeDay(day)
 
-    /** Manual pull-to-refresh. Re-runs merge + nudges the ongoing visit so the reactive query
-     *  re-emits; a small floor keeps the spinner visible so the action feels real. */
+    /** Manual pull-to-refresh: enqueue authoritative maintenance and wait for WorkManager result. */
     fun refresh() = viewModelScope.launch {
         refreshing.value = true
         val start = System.currentTimeMillis()
         runCatching {
-            timelineRepository.refreshDay(selectedDay.value)
-            workScheduler.enqueueMerge(selectedDay.value)
+            val id = workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "pull_refresh")
+            workManager.getWorkInfoByIdFlow(id)
+                .filterNotNull()
+                .first { it.state.isFinished }
+                .also { if (it.state == WorkInfo.State.FAILED) error("Timeline maintenance failed") }
         }
         val elapsed = System.currentTimeMillis() - start
         if (elapsed < 450) kotlinx.coroutines.delay(450 - elapsed)
@@ -165,11 +169,7 @@ class TimelineViewModel @Inject constructor(
         }.getOrNull()
     }
 
-    private suspend fun buildMapState(dayEpoch: Long, timeline: TimelineDay): MapState {
-        val range = TimeBuckets.dayRangeMillis(dayEpoch)
-        val daySamples = locationRepository.range(range.first, range.last + 1)
-            .filter { it.includedInComputation }
-
+    private fun buildMapState(timeline: TimelineDay): MapState {
         val segments = ArrayList<MapSegment>()
         val visits = ArrayList<MapVisitMarker>()
         val placeRings = LinkedHashMap<Long, MapPlaceRing>() // distinct by place id
@@ -180,13 +180,8 @@ class TimelineViewModel @Inject constructor(
                     if (pts.isNotEmpty()) segments.add(MapSegment(pts, seg.mode, seg.confirmed))
                 }
                 is TimelineItem.VisitItem -> {
-                    // Visit marker: center + radius from the visit's own samples (accuracy-weighted).
                     val v = item.visit
-                    val visitSamples = daySamples.filter { it.timestampMs in v.startMs..v.endMs }
-                    val geom = net.extrawdw.apps.locationhistory.domain.VisitGeometry.compute(
-                        visitSamples, v.centroidLatitude, v.centroidLongitude,
-                    )
-                    visits.add(MapVisitMarker(LatLng(geom.latitude, geom.longitude), geom.radiusMeters, v.confirmed))
+                    visits.add(MapVisitMarker(LatLng(v.centroidLatitude, v.centroidLongitude), v.radiusMeters, v.confirmed))
                     // Yellow ring for the place this visit belongs to (one per place).
                     item.place?.let { p ->
                         placeRings[p.id] = MapPlaceRing(LatLng(p.latitude, p.longitude), p.radiusMeters)
@@ -194,7 +189,7 @@ class TimelineViewModel @Inject constructor(
                 }
             }
         }
-        val raw = daySamples.map { LatLng(it.latitude, it.longitude) }
+        val raw = segments.flatMap { it.points }
         return MapState(rawPath = raw, segments = segments, visits = visits, placeRings = placeRings.values.toList())
     }
 

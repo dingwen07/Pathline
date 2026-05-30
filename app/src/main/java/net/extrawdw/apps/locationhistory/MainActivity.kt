@@ -24,23 +24,30 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
 import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
 import net.extrawdw.apps.locationhistory.ui.rememberPathlinePermissions
 import net.extrawdw.apps.locationhistory.ui.theme.PathlineTheme
+import net.extrawdw.apps.locationhistory.work.WorkScheduler
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     @javax.inject.Inject lateinit var recordingController: RecordingController
+    @javax.inject.Inject lateinit var workScheduler: WorkScheduler
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Self-heal: if tracking was previously enabled, make sure the heartbeat is armed.
-        lifecycleScope.launch { recordingController.resumeIfPreviouslyEnabled() }
+        lifecycleScope.launch {
+            recordingController.resumeIfPreviouslyEnabled()
+            workScheduler.schedulePeriodicTimelineMaintenance()
+            workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(System.currentTimeMillis()), "app_open")
+        }
         setContent {
             PathlineTheme {
                 PathlineRoot()

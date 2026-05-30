@@ -47,6 +47,15 @@ interface VisitDao {
     @Query("SELECT * FROM visits WHERE dayEpoch = :dayEpoch ORDER BY startMs ASC")
     suspend fun byDay(dayEpoch: Long): List<VisitEntity>
 
+    @Query("SELECT * FROM visits WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun overlapping(startMs: Long, endMs: Long): List<VisitEntity>
+
+    @Query("SELECT * FROM visits WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<VisitEntity>
+
+    @Query("DELETE FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
+
     @Query("DELETE FROM visits WHERE id = :id")
     suspend fun delete(id: Long)
 
@@ -72,6 +81,21 @@ interface TripDao {
 
     @Query("SELECT * FROM trips WHERE dayEpoch = :dayEpoch ORDER BY startMs ASC")
     suspend fun byDay(dayEpoch: Long): List<TripEntity>
+
+    @Query("SELECT * FROM trips WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun overlapping(startMs: Long, endMs: Long): List<TripEntity>
+
+    @Query("SELECT * FROM trips WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<TripEntity>
+
+    @Query(
+        "DELETE FROM trip_segments WHERE tripId IN " +
+            "(SELECT id FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs)"
+    )
+    suspend fun deleteSegmentsForUnconfirmedTripsOverlapping(startMs: Long, endMs: Long)
+
+    @Query("DELETE FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
 
     @Query("DELETE FROM trips WHERE id = :id")
     suspend fun deleteTrip(id: Long)

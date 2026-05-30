@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
+import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
 
 /** Re-arms the Activity Recognition heartbeat and persisted geofences after a reboot. */
@@ -19,6 +20,7 @@ class BootReceiver : BroadcastReceiver() {
     @Inject lateinit var controller: RecordingController
     @Inject lateinit var geofenceManager: GeofenceManager
     @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var workScheduler: WorkScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
@@ -32,6 +34,7 @@ class BootReceiver : BroadcastReceiver() {
                 if (settingsRepository.settings.first().trackingEnabled) {
                     controller.enableTracking()
                     geofenceManager.restore()
+                    workScheduler.schedulePeriodicTimelineMaintenance()
                 }
             } finally {
                 pending.finish()

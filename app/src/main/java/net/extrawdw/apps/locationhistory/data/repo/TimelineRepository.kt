@@ -77,14 +77,6 @@ class TimelineRepository @Inject constructor(
         }
     }
 
-    /** Nudge the day's data so the reactive timeline reflects freshly recorded samples. */
-    suspend fun refreshDay(dayEpoch: Long) {
-        val ongoing = visitDao.ongoing() ?: return
-        if (ongoing.dayEpoch != dayEpoch) return
-        val latest = sampleDao.mostRecent()?.timestampMs ?: return
-        if (latest > ongoing.endMs) visitDao.update(ongoing.copy(endMs = latest))
-    }
-
     fun observeRecordedDays(): Flow<List<Long>> = sampleDao.observeRecordedDays()
 
     fun observeUnconfirmedVisits() = visitDao.observeUnconfirmed()

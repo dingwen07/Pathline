@@ -11,7 +11,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import net.extrawdw.apps.locationhistory.core.Constants
+import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.repo.TrainingRepository
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,32 +25,65 @@ class WorkScheduler @Inject constructor(
     private val trainingRepository: TrainingRepository,
 ) {
 
-    /** Build the trip + segments between two visits, off the recording hot path. */
-    fun enqueueSegmentation(fromVisitId: Long, toVisitId: Long) {
-        val request = OneTimeWorkRequestBuilder<SegmentationWorker>()
+    fun enqueueTimelineMaintenance(dayEpoch: Long, reason: String): UUID {
+        val request = OneTimeWorkRequestBuilder<TimelineMaintenanceWorker>()
             .setInputData(
                 workDataOf(
-                    SegmentationWorker.KEY_FROM to fromVisitId,
-                    SegmentationWorker.KEY_TO to toVisitId,
+                    TimelineMaintenanceWorker.KEY_DAY to dayEpoch,
+                    TimelineMaintenanceWorker.KEY_REASON to reason,
                 ),
             )
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniqueWork(
-            "segmentation-$fromVisitId-$toVisitId", ExistingWorkPolicy.REPLACE, request,
+            "timeline-maintenance-$dayEpoch",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+        return request.id
+    }
+
+    /** Expedited path for user-visible refreshes and app-open reconciliation. */
+    fun enqueueTimelineMaintenanceNow(
+        dayEpoch: Long = TimeBuckets.dayEpoch(System.currentTimeMillis()),
+        reason: String,
+    ): UUID {
+        val request = OneTimeWorkRequestBuilder<TimelineMaintenanceWorker>()
+            .setInputData(
+                workDataOf(
+                    TimelineMaintenanceWorker.KEY_DAY to dayEpoch,
+                    TimelineMaintenanceWorker.KEY_REASON to reason,
+                ),
+            )
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
+            .build()
+        workManager.enqueueUniqueWork(
+            "timeline-maintenance-now-$dayEpoch",
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+        return request.id
+    }
+
+    /** Periodic catch-up for samples delivered while the UI is closed. */
+    fun schedulePeriodicTimelineMaintenance() {
+        val constraints = Constraints.Builder()
+            .setRequiresBatteryNotLow(true)
+            .build()
+        val request = PeriodicWorkRequestBuilder<TimelineMaintenanceWorker>(6, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .setInputData(workDataOf(TimelineMaintenanceWorker.KEY_REASON to "periodic"))
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            "timeline-maintenance-periodic",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
         )
     }
 
-    /** Combine fragmented visits/trips for a day. Expedited so it runs immediately when active. */
-    fun enqueueMerge(dayEpoch: Long) {
-        val request = OneTimeWorkRequestBuilder<MergeWorker>()
-            .setInputData(workDataOf(MergeWorker.KEY_DAY to dayEpoch))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-        workManager.enqueueUniqueWork("merge-$dayEpoch", ExistingWorkPolicy.REPLACE, request)
-    }
-
     /**
-     * Retrain the models — only ever while charging, idle and battery-not-low. Enqueue this after
+     * Retrain the models — only ever while charging and battery-not-low. Enqueue this after
      * enough new user-confirmed examples have accumulated.
      */
     suspend fun maybeScheduleTraining() {

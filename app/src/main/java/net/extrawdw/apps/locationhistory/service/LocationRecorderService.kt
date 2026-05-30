@@ -19,10 +19,9 @@ import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 
 /**
- * Foreground service (type `location`) that runs only while the device is actively moving. It owns
- * the Fused location request and delivers batched fixes to [LocationUpdatesReceiver] via a
- * PendingIntent — so the OS can wake the app in efficient bursts without the service holding a
- * wakelock. When the device becomes stationary the controller stops this service entirely.
+ * Foreground service (type `location`) that owns the Fused location request and delivers batched
+ * fixes to [LocationUpdatesReceiver] via a PendingIntent, so the OS can wake the app in efficient
+ * bursts without the service holding a wakelock. The controller retunes cadence when stationary.
  */
 @AndroidEntryPoint
 class LocationRecorderService : LifecycleService() {

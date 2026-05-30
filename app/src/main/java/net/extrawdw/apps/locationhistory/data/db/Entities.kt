@@ -107,6 +107,7 @@ data class VisitEntity(
     val dayEpoch: Long,
     val centroidLatitude: Double,
     val centroidLongitude: Double,
+    val radiusMeters: Double,
     val confirmed: Boolean,
     val confidence: Float,
     val isOngoing: Boolean,

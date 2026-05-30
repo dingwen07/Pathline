@@ -13,7 +13,7 @@ import javax.inject.Singleton
 /**
  * Combines fragmented timeline entries for a day: consecutive same-mode trip segments, adjacent
  * trips that form one journey (no visit between), and consecutive visits to the same place. Runs
- * after recording finalize and after edits (see [net.extrawdw.apps.locationhistory.work.MergeWorker]).
+ * inside the authoritative timeline-maintenance pipeline.
  * Idempotent — re-running on an already-merged day is a no-op.
  */
 @Singleton
@@ -40,14 +40,16 @@ class TimelineMerger @Inject constructor(
      *  bridge it). */
     private suspend fun removeDriftTrips(dayEpoch: Long) {
         for (trip in tripDao.byDay(dayEpoch)) {
+            if (trip.confirmed) continue
             val visits = visitDao.byDay(dayEpoch).sortedBy { it.startMs }
             val before = visits.lastOrNull { it.startMs <= trip.startMs }
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
+            if (before?.confirmed == true || after?.confirmed == true) continue
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
             if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
                 tripDao.deleteSegmentsForTrip(trip.id)
                 tripDao.deleteTrip(trip.id)
-                if (before != null && after != null && before.id != after.id) {
+                if (before.id != after.id) {
                     visitDao.update(
                         before.copy(
                             endMs = maxOf(before.endMs, after.endMs),
@@ -102,6 +104,7 @@ class TimelineMerger @Inject constructor(
         for (i in 0 until visits.size - 1) {
             val a = visits[i]
             val b = visits[i + 1]
+            if (a.confirmed || b.confirmed) continue
             // Two stays at the same place with no real trip recorded between them are one stay,
             // regardless of the gap (any movement worth showing would have left a trip).
             if (samePlace(a, b) && !tripExistsBetween(dayEpoch, a.endMs, b.startMs)) {
@@ -125,6 +128,7 @@ class TimelineMerger @Inject constructor(
         for (i in 0 until trips.size - 1) {
             val a = trips[i]
             val b = trips[i + 1]
+            if (a.confirmed || b.confirmed) continue
             if (b.startMs - a.endMs in 0..Constants.MERGE_GAP_MS &&
                 !visitExistsBetween(dayEpoch, a.endMs, b.startMs)
             ) {

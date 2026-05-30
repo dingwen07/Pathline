@@ -48,13 +48,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
-import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
-import net.extrawdw.apps.locationhistory.domain.VisitGeometry
 import javax.inject.Inject
 
 data class PlaceVisitMarker(
@@ -67,7 +65,6 @@ data class PlaceVisitMarker(
 @HiltViewModel
 class PlaceDetailViewModel @Inject constructor(
     private val placeRepository: PlaceRepository,
-    private val locationRepository: LocationRepository,
 ) : ViewModel() {
     private val placeId = MutableStateFlow<Long?>(null)
     fun load(id: Long) { placeId.value = id }
@@ -85,19 +82,12 @@ class PlaceDetailViewModel @Inject constructor(
             if (it == null) {
                 flowOf(emptyList())
             } else {
-                placeRepository.observeVisitsForPlace(it).mapLatest { visits ->
+                placeRepository.observeVisitsForPlace(it).map { visits ->
                     visits.map { visit ->
-                        val samples = locationRepository.range(visit.startMs, visit.endMs + 1)
-                            .filter { sample -> sample.includedInComputation }
-                        val geom = VisitGeometry.compute(
-                            samples,
-                            visit.centroidLatitude,
-                            visit.centroidLongitude,
-                        )
                         PlaceVisitMarker(
                             visitId = visit.id,
-                            center = LatLng(geom.latitude, geom.longitude),
-                            radiusMeters = geom.radiusMeters,
+                            center = LatLng(visit.centroidLatitude, visit.centroidLongitude),
+                            radiusMeters = visit.radiusMeters,
                         )
                     }
                 }
