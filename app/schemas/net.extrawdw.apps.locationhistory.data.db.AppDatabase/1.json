@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "14883da0a3e0c989938d977a90099f5e",
+    "identityHash": "32689adb568c5ff14807794671f1df52",
     "entities": [
       {
         "tableName": "location_samples",
@@ -325,7 +325,7 @@
       },
       {
         "tableName": "visits",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER, `candidateName` TEXT, `candidateGooglePlaceId` TEXT, `candidateLatitude` REAL, `candidateLongitude` REAL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `centroidLatitude` REAL NOT NULL, `centroidLongitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `confidence` REAL NOT NULL, `isOngoing` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER, `candidateName` TEXT, `candidateGooglePlaceId` TEXT, `candidateLatitude` REAL, `candidateLongitude` REAL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `centroidLatitude` REAL NOT NULL, `centroidLongitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `sampleCount` INTEGER NOT NULL, `reliability` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `confidence` REAL NOT NULL, `isOngoing` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -391,6 +391,18 @@
           {
             "fieldPath": "radiusMeters",
             "columnName": "radiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reliability",
+            "columnName": "reliability",
             "affinity": "REAL",
             "notNull": true
           },
@@ -711,7 +723,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '14883da0a3e0c989938d977a90099f5e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '32689adb568c5ff14807794671f1df52')"
     ]
   }
 }

@@ -184,6 +184,12 @@ fun PlaceDetailDialog(
                                     "${Format.time(v.startMs)} – ${Format.time(v.endMs)} · ${Format.duration(v.startMs, v.endMs)}",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                Text(
+                                    "r=${v.radiusMeters.toInt()} m · ${v.sampleCount} fixes · " +
+                                        "reliability ${(v.reliability * 100).toInt()}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             HorizontalDivider()
                         }

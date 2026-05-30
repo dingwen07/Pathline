@@ -164,6 +164,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
                 centroidLatitude = geom.latitude,
                 centroidLongitude = geom.longitude,
                 radiusMeters = geom.radiusMeters,
+                sampleCount = clean.size,
+                reliability = geom.reliability.toFloat(),
                 confirmed = false,
                 confidence = 0f,
                 isOngoing = isOngoing,
@@ -215,6 +217,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
                     centroidLatitude = geom?.latitude ?: current.centroidLatitude,
                     centroidLongitude = geom?.longitude ?: current.centroidLongitude,
                     radiusMeters = geom?.radiusMeters ?: current.radiusMeters,
+                    sampleCount = if (geom != null) span.size else current.sampleCount,
+                    reliability = geom?.reliability?.toFloat() ?: current.reliability,
                 ),
             )
         } else if (latest.timestampMs > current.endMs) {

@@ -31,6 +31,14 @@ object Constants {
     /** Confirmed visits are ground truth, so they count this many times an unconfirmed visit. */
     const val PLACE_CONFIRMED_VISIT_WEIGHT = 4.0
 
+    /** Saturation references for the per-visit reliability score (see VisitGeometry.reliabilityOf):
+     *  each sub-score is `ref / (ref + x)` (or `x / (x + ref)` for "more is better"), so the ref is
+     *  the value at which that factor scores 0.5. Reliability is the geometric mean of all four. */
+    const val VISIT_RELIABILITY_COUNT_REF = 8.0           // sample count
+    const val VISIT_RELIABILITY_ACCURACY_REF_M = 20.0     // median GPS accuracy (m)
+    const val VISIT_RELIABILITY_DISPERSION_REF_M = 30.0   // RMS spread of fixes (m)
+    const val VISIT_RELIABILITY_DURATION_REF_MS = 300_000.0 // stay duration (5 min)
+
     /** Weight of a place's immutable origin anchor in the center/radius recompute. The anchor does
      *  NOT decay, so it keeps the place near its authoritative origin and stops the radius from
      *  collapsing to the per-visit floor. A Google (MAPS) anchor is authoritative; a local

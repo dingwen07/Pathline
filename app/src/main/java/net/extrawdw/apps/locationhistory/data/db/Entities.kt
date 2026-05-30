@@ -122,7 +122,17 @@ data class VisitEntity(
     val centroidLatitude: Double,
     val centroidLongitude: Double,
     val radiusMeters: Double,
+    /** Number of usable fixes the visit's geometry was computed from (informational / debug). */
+    val sampleCount: Int = 0,
+    /**
+     * Normalized [0,1] trustworthiness of this visit's **geometry** (center/radius), from sample
+     * count, GPS accuracy, spatial dispersion and duration — see [net.extrawdw.apps.locationhistory.domain.VisitGeometry.reliabilityOf].
+     * This is what weights the visit when a place's center/radius is recomputed. Distinct from
+     * [confidence], which is how sure we are *which place* the visit belongs to.
+     */
+    val reliability: Float = 0f,
     val confirmed: Boolean,
+    /** Place-attribution confidence (match distance / confirmed status), NOT geometric quality. */
     val confidence: Float,
     val isOngoing: Boolean,
 )

@@ -71,7 +71,10 @@ class PlaceRepository @Inject constructor(
      *    that does NOT decay; this keeps the radius from collapsing to the per-visit floor.
      *  - each **visit**, weighted by **recency** (halves every
      *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS]) × **confirmation**
-     *    ([Constants.PLACE_CONFIRMED_VISIT_WEIGHT]× for confirmed).
+     *    ([Constants.PLACE_CONFIRMED_VISIT_WEIGHT]× for confirmed) × the visit's precomputed
+     *    geometric **[net.extrawdw.apps.locationhistory.data.db.VisitEntity.reliability]** in [0,1]
+     *    (count, accuracy, dispersion, duration), so a tight, sample-rich, long stay pulls harder
+     *    than a brief noisy drive-by.
      *
      * Recomputing from scratch is what lets old visits fade. Call *after* the triggering visit is
      * persisted/linked so it's included. Fixed places are left untouched; the visit count is derived
@@ -101,7 +104,8 @@ class PlaceRepository @Inject constructor(
             val ageDays = (nowMs - v.startMs).coerceAtLeast(0L) / 86_400_000.0
             val recency = 2.0.pow(-ageDays / Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS)
             val confirmation = if (v.confirmed) Constants.PLACE_CONFIRMED_VISIT_WEIGHT else 1.0
-            val w = recency * confirmation
+            // Geometric trustworthiness (count, accuracy, dispersion, duration), precomputed in [0,1].
+            val w = recency * confirmation * v.reliability
             sumW += w
             sumLat += w * v.centroidLatitude
             sumLon += w * v.centroidLongitude
