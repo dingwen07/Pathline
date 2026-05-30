@@ -15,7 +15,7 @@ import androidx.room.TypeConverters
         TransportTrainingExampleEntity::class,
         BackupDirtyPartitionEntity::class,
     ],
-    version = 7,
+    version = 1,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -32,12 +32,12 @@ abstract class AppDatabase : RoomDatabase() {
         const val NAME = "pathline.db"
 
         /** Must equal the `version` above; used by the backup engine for restore compatibility. */
-        const val SCHEMA_VERSION = 7
+        const val SCHEMA_VERSION = 1
 
         /**
-         * SQL that creates the backup dirty-partition triggers. Run from the migrations (for
-         * existing installs) and a `RoomDatabase.Callback.onCreate` (for fresh installs, since Room
-         * creates tables from entities but never triggers).
+         * SQL that creates the backup dirty-partition triggers. Run from a
+         * `RoomDatabase.Callback.onCreate` because Room creates tables from entities but never
+         * triggers.
          *
          * Design notes:
          *  - The week bucket is `((dayEpoch + 3) / 7) * 7 - 3` — the Monday-aligned `dayEpoch`,
@@ -73,21 +73,5 @@ abstract class AppDatabase : RoomDatabase() {
             add("CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_au AFTER UPDATE ON trips BEGIN ${mark("trips", "OLD.dayEpoch")} ${mark("trips", "NEW.dayEpoch")} END;")
             add("CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_ad AFTER DELETE ON trips BEGIN ${mark("trips", "OLD.dayEpoch")} END;")
         }
-
-        /** Names of every dirty-tracker trigger, so a migration can drop + recreate them. */
-        val DIRTY_TRIGGER_NAMES: List<String> = listOf(
-            "trg_dirty_samples_ai", "trg_dirty_samples_au", "trg_dirty_samples_ad",
-            "trg_dirty_visits_ai", "trg_dirty_visits_au", "trg_dirty_visits_ad",
-            "trg_dirty_trips_ai", "trg_dirty_trips_au", "trg_dirty_trips_ad",
-            // Legacy segment triggers (pre-v6); kept here so the migration drops them.
-            "trg_dirty_segments_ai", "trg_dirty_segments_au", "trg_dirty_segments_ad",
-        )
-
-        /** Seeds the dirty set with every week that already has data (run once on upgrade). */
-        val DIRTY_SEED: List<String> = listOf(
-            "INSERT OR IGNORE INTO backup_dirty_partitions(stream, weekStart) SELECT 'samples', ((dayEpoch + 3) / 7) * 7 - 3 FROM location_samples;",
-            "INSERT OR IGNORE INTO backup_dirty_partitions(stream, weekStart) SELECT 'visits', ((dayEpoch + 3) / 7) * 7 - 3 FROM visits;",
-            "INSERT OR IGNORE INTO backup_dirty_partitions(stream, weekStart) SELECT 'trips', ((dayEpoch + 3) / 7) * 7 - 3 FROM trips;",
-        )
     }
 }

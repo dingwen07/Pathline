@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "9e353a1af2c427e76f988feafcdf5d37",
+    "identityHash": "14883da0a3e0c989938d977a90099f5e",
     "entities": [
       {
         "tableName": "location_samples",
@@ -203,7 +203,7 @@
       },
       {
         "tableName": "places",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `category` TEXT, `source` TEXT NOT NULL, `googlePlaceId` TEXT, `address` TEXT, `confirmed` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `visitCount` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `category` TEXT, `source` TEXT NOT NULL, `googlePlaceId` TEXT, `address` TEXT, `confirmed` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `visitCount` INTEGER NOT NULL, `fixed` INTEGER NOT NULL, `anchorLatitude` REAL, `anchorLongitude` REAL, `anchorRadiusMeters` REAL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -273,6 +273,27 @@
             "columnName": "visitCount",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "fixed",
+            "columnName": "fixed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorLatitude",
+            "columnName": "anchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "anchorLongitude",
+            "columnName": "anchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "anchorRadiusMeters",
+            "columnName": "anchorRadiusMeters",
+            "affinity": "REAL"
           }
         ],
         "primaryKey": {
@@ -304,7 +325,7 @@
       },
       {
         "tableName": "visits",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER, `candidateName` TEXT, `candidateGooglePlaceId` TEXT, `candidateLatitude` REAL, `candidateLongitude` REAL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `centroidLatitude` REAL NOT NULL, `centroidLongitude` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `confidence` REAL NOT NULL, `isOngoing` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER, `candidateName` TEXT, `candidateGooglePlaceId` TEXT, `candidateLatitude` REAL, `candidateLongitude` REAL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `centroidLatitude` REAL NOT NULL, `centroidLongitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `confidence` REAL NOT NULL, `isOngoing` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -368,6 +389,12 @@
             "notNull": true
           },
           {
+            "fieldPath": "radiusMeters",
+            "columnName": "radiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
             "fieldPath": "confirmed",
             "columnName": "confirmed",
             "affinity": "INTEGER",
@@ -424,7 +451,7 @@
       },
       {
         "tableName": "trips",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fromVisitId` INTEGER, `toVisitId` INTEGER, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `distanceMeters` REAL NOT NULL, `confirmed` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fromVisitId` INTEGER, `toVisitId` INTEGER, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `mode` TEXT NOT NULL, `modeConfidence` REAL NOT NULL, `encodedPolyline` TEXT NOT NULL, `distanceMeters` REAL NOT NULL, `confirmed` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -458,6 +485,24 @@
             "fieldPath": "dayEpoch",
             "columnName": "dayEpoch",
             "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modeConfidence",
+            "columnName": "modeConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encodedPolyline",
+            "columnName": "encodedPolyline",
+            "affinity": "TEXT",
             "notNull": true
           },
           {
@@ -497,92 +542,6 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_trips_dayEpoch` ON `${TABLE_NAME}` (`dayEpoch`)"
-          }
-        ]
-      },
-      {
-        "tableName": "trip_segments",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `mode` TEXT NOT NULL, `modeConfidence` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `encodedPolyline` TEXT NOT NULL, `distanceMeters` REAL NOT NULL)",
-        "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "tripId",
-            "columnName": "tripId",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "startMs",
-            "columnName": "startMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "endMs",
-            "columnName": "endMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "mode",
-            "columnName": "mode",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "modeConfidence",
-            "columnName": "modeConfidence",
-            "affinity": "REAL",
-            "notNull": true
-          },
-          {
-            "fieldPath": "confirmed",
-            "columnName": "confirmed",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "encodedPolyline",
-            "columnName": "encodedPolyline",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "distanceMeters",
-            "columnName": "distanceMeters",
-            "affinity": "REAL",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": true,
-          "columnNames": [
-            "id"
-          ]
-        },
-        "indices": [
-          {
-            "name": "index_trip_segments_tripId",
-            "unique": false,
-            "columnNames": [
-              "tripId"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_segments_tripId` ON `${TABLE_NAME}` (`tripId`)"
-          },
-          {
-            "name": "index_trip_segments_startMs",
-            "unique": false,
-            "columnNames": [
-              "startMs"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_segments_startMs` ON `${TABLE_NAME}` (`startMs`)"
           }
         ]
       },
@@ -723,11 +682,36 @@
             "id"
           ]
         }
+      },
+      {
+        "tableName": "backup_dirty_partitions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`stream` TEXT NOT NULL, `weekStart` INTEGER NOT NULL, PRIMARY KEY(`stream`, `weekStart`))",
+        "fields": [
+          {
+            "fieldPath": "stream",
+            "columnName": "stream",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weekStart",
+            "columnName": "weekStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "stream",
+            "weekStart"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9e353a1af2c427e76f988feafcdf5d37')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '14883da0a3e0c989938d977a90099f5e')"
     ]
   }
 }
