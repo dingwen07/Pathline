@@ -2,6 +2,7 @@ package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
@@ -21,6 +22,7 @@ import javax.inject.Singleton
 class TimelineMerger @Inject constructor(
     private val visitDao: VisitDao,
     private val tripDao: TripDao,
+    private val sampleDao: LocationSampleDao,
 ) {
 
     suspend fun mergeDay(dayEpoch: Long) {
@@ -57,7 +59,7 @@ class TimelineMerger @Inject constructor(
             if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
-                    visitDao.update(mergeVisits(before, after))
+                    visitDao.update(mergedVisit(before, after))
                     visitDao.delete(after.id)
                 }
             }
@@ -82,7 +84,7 @@ class TimelineMerger @Inject constructor(
             // Two stays at the same place with no real trip recorded between them are one stay,
             // regardless of the gap (any movement worth showing would have left a trip).
             if (samePlace(a, b) && !tripExistsBetween(dayEpoch, a.endMs, b.startMs)) {
-                visitDao.update(mergeVisits(a, b))
+                visitDao.update(mergedVisit(a, b))
                 visitDao.delete(b.id)
                 return true
             }
@@ -122,6 +124,26 @@ class TimelineMerger @Inject constructor(
         a.placeId == null && b.placeId == null && a.candidateName != null ->
             a.candidateName == b.candidateName
         else -> false
+    }
+
+    /**
+     * Merge two visits, then **recompute the merged visit's geometry from the actual samples** in
+     * the combined span — so center, radius, sampleCount and reliability reflect everything the stay
+     * now covers (including a reclassified trip's fixes), rather than carrying the first visit's
+     * stale values. Falls back to the metadata merge if the span has too few usable samples.
+     */
+    private suspend fun mergedVisit(a: VisitEntity, b: VisitEntity): VisitEntity {
+        val base = mergeVisits(a, b)
+        val samples = sampleDao.rangeForComputation(base.startMs, base.endMs + 1)
+        if (samples.size < 2) return base
+        val geom = VisitGeometry.compute(samples, base.centroidLatitude, base.centroidLongitude)
+        return base.copy(
+            centroidLatitude = geom.latitude,
+            centroidLongitude = geom.longitude,
+            radiusMeters = geom.radiusMeters,
+            sampleCount = samples.size,
+            reliability = geom.reliability.toFloat(),
+        )
     }
 
     private fun mergeVisits(a: VisitEntity, b: VisitEntity): VisitEntity {
