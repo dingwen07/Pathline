@@ -95,6 +95,8 @@ class LocationRecorderService : LifecycleService() {
                 LocationProfiles.buildRequest(state, profile),
                 locationPendingIntent(this),
             )
+        }.onSuccess {
+            serviceController.markStarted(state, profile)
         }.onFailure { AppLog.e(TAG, "requestLocationUpdates failed", it) }
         return true
     }

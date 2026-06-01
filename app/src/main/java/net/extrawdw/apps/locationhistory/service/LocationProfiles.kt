@@ -37,7 +37,7 @@ object LocationProfiles {
             DevicePhysicalState.CYCLING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 4_000, 2_000, 12_000)
             DevicePhysicalState.RUNNING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 4_000, 2_000, 12_000)
             DevicePhysicalState.WALKING -> Tuning(Priority.PRIORITY_HIGH_ACCURACY, 5_000, 2_500, 15_000)
-            DevicePhysicalState.STATIONARY -> Tuning(Priority.PRIORITY_LOW_POWER, 60_000, 30_000, 120_000)
+            DevicePhysicalState.STATIONARY -> Tuning(Priority.PRIORITY_LOW_POWER, 180_000, 120_000, 300_000)
             DevicePhysicalState.UNKNOWN -> Tuning(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 12_000, 6_000, 30_000)
         }
         return when (profile) {

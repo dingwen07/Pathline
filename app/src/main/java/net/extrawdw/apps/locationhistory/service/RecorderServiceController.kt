@@ -65,6 +65,24 @@ class RecorderServiceController @Inject constructor(
         return true
     }
 
+    /**
+     * Called by [LocationRecorderService] once it has actually started/retuned its location
+     * request. The OS can restart the START_STICKY service on its own (intent == null — e.g. after
+     * a Play Store update or process death) without ever going through [start], which would leave
+     * [running] false and silently freeze the cadence (every [RecordingController] retune is gated
+     * on [isRecording]). This makes the service the source of truth for the running flag.
+     */
+    fun markStarted(state: DevicePhysicalState, profile: PowerProfile) {
+        running.set(true)
+        debugMutable.value = RecorderDebugState(
+            isRecording = true,
+            state = state,
+            profile = profile,
+            updatedAtMs = System.currentTimeMillis(),
+            lastStartError = null,
+        )
+    }
+
     fun stop() {
         if (!running.getAndSet(false)) return
         debugMutable.value = debugMutable.value.copy(
