@@ -14,6 +14,15 @@ object Constants {
     /** Radius (m) within which successive samples are considered the same stationary cluster. */
     const val STATIONARY_RADIUS_METERS = 60.0
 
+    /**
+     * How far on each side of the maintained day to load samples when rebuilding the timeline. The
+     * window must be wider than the day so the visit detector sees a stay's *full* extent rather than
+     * clipping it at midnight — that clipping is what split an overnight stay into two rows. A stay
+     * crossing the boundary becomes one spanning row (shown on both days via the time-overlap query);
+     * margins this wide comfortably contain a normal overnight stay. */
+    const val REBUILD_LOOKBACK_MS = 18 * 60 * 60_000L
+    const val REBUILD_LOOKAHEAD_MS = 18 * 60 * 60_000L
+
     /** Radius (m) used when matching a visit centroid against the local place database. */
     const val PLACE_MATCH_RADIUS_METERS = 80.0
 

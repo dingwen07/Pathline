@@ -11,12 +11,21 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Combines fragmented timeline entries for a day: consecutive same-mode trips (one journey split by
- * brief misclassification), and consecutive visits to the same place. Runs inside the authoritative
- * timeline-maintenance pipeline. Idempotent — re-running on an already-merged day is a no-op.
+ * Normalizes the derived timeline over a **time span** so it satisfies the timeline invariant: at
+ * every instant you are in exactly one thing, same-place stays are a single visit, and a journey is
+ * a sequence of trips that only changes rows where the *transport mode* changes.
  *
- * A multi-modal journey stays as several trips (walk → bus → walk); only *same-mode* adjacent trips
- * are fused.
+ * It fuses:
+ *  - consecutive **same-place** visits that overlap or have no real trip between them — including a
+ *    stay that straddles midnight, which the old per-day merge could never reach because the two
+ *    halves sat in different `dayEpoch` buckets; and
+ *  - consecutive **same-mode** trips with no visit between them, *even when they are confirmed* —
+ *    a hand-split walk that the user never meant to break in two, or a confirmed stub left beside a
+ *    freshly rebuilt run. Different modes are left as separate rows, so a real multi-modal journey
+ *    (walk → bus → walk) is preserved.
+ *
+ * Everything is keyed on time (via the overlap queries), never on the `dayEpoch` bucket. Idempotent:
+ * re-running on an already-normalized span is a no-op.
  */
 @Singleton
 class TimelineMerger @Inject constructor(
@@ -25,19 +34,23 @@ class TimelineMerger @Inject constructor(
     private val sampleDao: LocationSampleDao,
 ) {
 
-    suspend fun mergeDay(dayEpoch: Long) {
-        removeEmptyTrips(dayEpoch)
+    /** Normalize every visit/trip overlapping [spanStartMs, spanEndMs). */
+    suspend fun merge(spanStartMs: Long, spanEndMs: Long) {
+        removeEmptyTrips(spanStartMs, spanEndMs)
         // Drop GPS-drift "trips" that sit between two visits to the same place.
-        removeDriftTrips(dayEpoch)
-        // Repeat until stable so chains (A=B=C…) collapse fully.
+        removeDriftTrips(spanStartMs, spanEndMs)
+        // Repeat until stable so chains (A=B=C…) collapse fully. Each pass fuses one pair, so the cap
+        // is generous enough for a heavily hand-fragmented day; once stable the final pass is a no-op.
         var guard = 0
-        while (guard++ < 12 && (mergeAdjacentVisitsOnce(dayEpoch) || mergeAdjacentTripsOnce(dayEpoch))) {
+        while (guard++ < 200 &&
+            (mergeAdjacentVisitsOnce(spanStartMs, spanEndMs) || mergeAdjacentTripsOnce(spanStartMs, spanEndMs))
+        ) {
             // keep going
         }
     }
 
-    private suspend fun removeEmptyTrips(dayEpoch: Long) {
-        for (trip in tripDao.byDay(dayEpoch)) {
+    private suspend fun removeEmptyTrips(spanStartMs: Long, spanEndMs: Long) {
+        for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
             if (trip.distanceMeters <= 0.0 || trip.encodedPolyline.isEmpty()) {
                 tripDao.deleteTrip(trip.id)
@@ -49,10 +62,10 @@ class TimelineMerger @Inject constructor(
      *  visits to the same place — these are GPS jitter, not real movement — and fuse the two visits
      *  (the gap they leave behind is the drift trip's own duration, so the normal gap rule wouldn't
      *  bridge it). */
-    private suspend fun removeDriftTrips(dayEpoch: Long) {
-        for (trip in tripDao.byDay(dayEpoch)) {
+    private suspend fun removeDriftTrips(spanStartMs: Long, spanEndMs: Long) {
+        for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
-            val visits = visitDao.byDay(dayEpoch).sortedBy { it.startMs }
+            val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }
             val before = visits.lastOrNull { it.startMs <= trip.startMs }
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
@@ -76,14 +89,18 @@ class TimelineMerger @Inject constructor(
     }
 
     /** Merge the first mergeable adjacent same-place visit pair found. Returns true if it merged. */
-    private suspend fun mergeAdjacentVisitsOnce(dayEpoch: Long): Boolean {
-        val visits = visitDao.byDay(dayEpoch).sortedBy { it.startMs }
+    private suspend fun mergeAdjacentVisitsOnce(spanStartMs: Long, spanEndMs: Long): Boolean {
+        val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }
         for (i in 0 until visits.size - 1) {
             val a = visits[i]
             val b = visits[i + 1]
-            // Two stays at the same place with no real trip recorded between them are one stay,
-            // regardless of the gap (any movement worth showing would have left a trip).
-            if (samePlace(a, b) && !tripExistsBetween(dayEpoch, a.endMs, b.startMs)) {
+            if (!samePlace(a, b)) continue
+            // Two stays at the same place are one stay when they overlap/touch (a stay that crossed
+            // a day boundary, or a re-detected duplicate), or when no real trip was recorded between
+            // them (any movement worth showing would have left a trip). Keyed on time, not dayEpoch,
+            // so a midnight-spanning stay finally collapses to a single row.
+            val overlapsOrTouches = b.startMs <= a.endMs
+            if (overlapsOrTouches || !tripExistsBetween(spanStartMs, spanEndMs, a.endMs, b.startMs)) {
                 visitDao.update(mergedVisit(a, b))
                 visitDao.delete(b.id)
                 return true
@@ -92,29 +109,34 @@ class TimelineMerger @Inject constructor(
         return false
     }
 
-    private suspend fun mergeAdjacentTripsOnce(dayEpoch: Long): Boolean {
-        val trips = tripDao.byDay(dayEpoch).sortedBy { it.startMs }
+    private suspend fun mergeAdjacentTripsOnce(spanStartMs: Long, spanEndMs: Long): Boolean {
+        val trips = tripDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }
         for (i in 0 until trips.size - 1) {
             val a = trips[i]
             val b = trips[i + 1]
-            if (a.confirmed || b.confirmed) continue
-            // Only fuse *same-mode* adjacent trips — different modes are a real multi-modal journey.
-            if (a.mode == b.mode &&
-                b.startMs - a.endMs in 0..Constants.MERGE_GAP_MS &&
-                !visitExistsBetween(dayEpoch, a.endMs, b.startMs)
-            ) {
-                val points = Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
-                tripDao.update(
-                    a.copy(
-                        endMs = maxOf(a.endMs, b.endMs),
-                        distanceMeters = a.distanceMeters + b.distanceMeters,
-                        encodedPolyline = Geo.encodePolyline(points),
-                        modeConfidence = maxOf(a.modeConfidence, b.modeConfidence),
-                    ),
-                )
-                tripDao.deleteTrip(b.id)
-                return true
-            }
+            // Only fuse *same-mode* adjacent trips — a mode change is a real multi-modal leg and must
+            // stay its own row. Confirmed trips ARE fused here (unlike same-place visits there is no
+            // ambiguity once the mode matches): a hand-split walk, or a confirmed stub sitting next to
+            // a rebuilt run, is one journey leg.
+            if (a.mode != b.mode) continue
+            if (visitExistsBetween(spanStartMs, spanEndMs, a.endMs, b.startMs)) continue
+            // Overlapping (gap < 0), touching, or within the merge gap all fuse; a wider gap is two
+            // separate legs of the same mode (e.g. two walks with a stop between) and is left alone.
+            if (b.startMs - a.endMs > Constants.MERGE_GAP_MS) continue
+
+            val points = Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
+            tripDao.update(
+                a.copy(
+                    toVisitId = b.toVisitId ?: a.toVisitId,
+                    endMs = maxOf(a.endMs, b.endMs),
+                    distanceMeters = Geo.pathLengthMeters(points),
+                    encodedPolyline = Geo.encodePolyline(points),
+                    modeConfidence = maxOf(a.modeConfidence, b.modeConfidence),
+                    confirmed = a.confirmed || b.confirmed,
+                ),
+            )
+            tripDao.deleteTrip(b.id)
+            return true
         }
         return false
     }
@@ -147,6 +169,10 @@ class TimelineMerger @Inject constructor(
     }
 
     private fun mergeVisits(a: VisitEntity, b: VisitEntity): VisitEntity {
+        // a/b can overlap (a midnight-spanning stay re-detected on both sides), so derive the merged
+        // bounds from the union, not by assuming b starts after a ends.
+        val startMs = minOf(a.startMs, b.startMs)
+        val endMs = maxOf(a.endMs, b.endMs)
         val aDuration = (a.endMs - a.startMs).coerceAtLeast(1L).toDouble()
         val bDuration = (b.endMs - b.startMs).coerceAtLeast(1L).toDouble()
         val total = aDuration + bDuration
@@ -156,7 +182,8 @@ class TimelineMerger @Inject constructor(
             candidateGooglePlaceId = a.candidateGooglePlaceId ?: b.candidateGooglePlaceId,
             candidateLatitude = a.candidateLatitude ?: b.candidateLatitude,
             candidateLongitude = a.candidateLongitude ?: b.candidateLongitude,
-            endMs = maxOf(a.endMs, b.endMs),
+            startMs = startMs,
+            endMs = endMs,
             centroidLatitude = (a.centroidLatitude * aDuration + b.centroidLatitude * bDuration) / total,
             centroidLongitude = (a.centroidLongitude * aDuration + b.centroidLongitude * bDuration) / total,
             radiusMeters = maxOf(a.radiusMeters, b.radiusMeters),
@@ -166,9 +193,17 @@ class TimelineMerger @Inject constructor(
         )
     }
 
-    private suspend fun tripExistsBetween(dayEpoch: Long, fromMs: Long, toMs: Long): Boolean =
-        tripDao.byDay(dayEpoch).any { it.startMs < toMs && it.endMs > fromMs }
+    private suspend fun tripExistsBetween(
+        spanStartMs: Long,
+        spanEndMs: Long,
+        fromMs: Long,
+        toMs: Long,
+    ): Boolean = tripDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
 
-    private suspend fun visitExistsBetween(dayEpoch: Long, fromMs: Long, toMs: Long): Boolean =
-        visitDao.byDay(dayEpoch).any { it.startMs < toMs && it.endMs > fromMs }
+    private suspend fun visitExistsBetween(
+        spanStartMs: Long,
+        spanEndMs: Long,
+        fromMs: Long,
+        toMs: Long,
+    ): Boolean = visitDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
 }

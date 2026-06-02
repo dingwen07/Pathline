@@ -60,9 +60,14 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val range = TimeBuckets.dayRangeMillis(day)
         val dayStart = range.first
         val dayEnd = range.last + 1
-        val computeStart = dayStart - Constants.MIN_VISIT_DURATION_MS
-        val computeEnd = dayEnd + Constants.MIN_VISIT_DURATION_MS
-        val samples = sampleDao.range(computeStart, computeEnd)
+        // Load a window *wider than the day* so the visit detector sees a stay's full extent instead
+        // of clipping it at midnight — a stay that crosses the boundary is then a single spanning row
+        // (shown on both days by the time-overlap display query), which is what stops an overnight
+        // stay from splitting into two. Delete + rebuild stays scoped to rows overlapping the day, so
+        // re-running any day reproduces the same rows.
+        val loadStart = dayStart - Constants.REBUILD_LOOKBACK_MS
+        val loadEnd = dayEnd + Constants.REBUILD_LOOKAHEAD_MS
+        val samples = sampleDao.range(loadStart, loadEnd)
 
         db.withTransaction {
             tripDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
@@ -71,8 +76,10 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
 
         if (samples.isEmpty()) return Result.success()
 
-        val confirmedVisits = visitDao.confirmedOverlapping(dayStart, dayEnd)
+        val confirmedVisits = visitDao.confirmedOverlapping(loadStart, loadEnd)
         val latest = sampleDao.mostRecent()
+        // Detect stays over the full window (true extents), keep those that touch this day, and skip
+        // any already covered by a confirmed (ground-truth) visit.
         val candidates = visitDetector.detectVisits(samples)
             .filter { it.overlaps(dayStart, dayEnd) }
             .filterNot { candidate -> confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } }
@@ -95,17 +102,17 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         // (Maintenance otherwise leaves confirmed visits untouched, which froze the end time.)
         extendConfirmedOngoingVisits(confirmedVisits, latest, System.currentTimeMillis())
 
-        rebuildTrips(dayStart, dayEnd)
+        rebuildTrips(loadStart, loadEnd, dayStart, dayEnd)
         // Show the trip that is *currently in progress* (you've left a place but not arrived yet).
         // rebuildTrips needs both endpoints, so the tail after the last visit is otherwise invisible
         // until you become stationary.
-        buildOngoingTrip(dayStart, dayEnd, latest)
-        merger.mergeDay(day)
+        buildOngoingTrip(loadStart, loadEnd, dayStart, dayEnd, latest)
+        merger.merge(loadStart, loadEnd)
 
         // Let matched places drift toward where the user actually goes. recordVisitToPlace weights
         // confirmed visits 4x and decays old ones, so auto-detected visits nudge the center/radius
         // while confirmations anchor it. Fixed places are skipped inside recordVisitToPlace.
-        visitDao.byDay(day).mapNotNull { it.placeId }.distinct()
+        visitDao.overlapping(loadStart, loadEnd).mapNotNull { it.placeId }.distinct()
             .forEach { placeRepository.recordVisitToPlace(it) }
 
         AppLog.i(TAG, "maintenance complete day=$day visits=${insertedVisitIds.size}")
@@ -271,36 +278,84 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
      * (`toVisitId = null`). Rebuilt each pass so it extends as movement continues; once the user
      * arrives and a destination visit forms, [rebuildTrips] replaces it with the bounded trip.
      */
-    private suspend fun buildOngoingTrip(dayStart: Long, dayEnd: Long, latest: LocationSampleEntity?) {
+    private suspend fun buildOngoingTrip(
+        loadStart: Long,
+        loadEnd: Long,
+        dayStart: Long,
+        dayEnd: Long,
+        latest: LocationSampleEntity?,
+    ) {
         if (latest == null || latest.devicePhysicalState == DevicePhysicalState.STATIONARY) return
-        val visits = visitDao.overlapping(dayStart, dayEnd).sortedBy { it.startMs }
+        val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         val origin = visits.lastOrNull { it.endMs <= latest.timestampMs } ?: return
-        val startMs = origin.endMs
-        val endMs = latest.timestampMs
-        if (endMs <= startMs) return
-        if (tripDao.confirmedOverlapping(startMs, endMs + 1).isNotEmpty()) return
-        val movingSamples = sampleDao.rangeForComputation(startMs, endMs + 1)
-        val runs = tripSegmenter.segment(movingSamples)
-        if (runs.isNotEmpty()) recordingRepository.saveTrips(origin.id, null, runs)
+        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+        fillMovement(origin.endMs, latest.timestampMs, confirmedTrips, dayStart, dayEnd, origin.id, null)
     }
 
-    private suspend fun rebuildTrips(dayStart: Long, dayEnd: Long) {
-        val visits = visitDao.overlapping(dayStart, dayEnd).sortedBy { it.startMs }
+    /**
+     * Rebuild the derived trips between stays. Each inter-stay gap is filled with the movement it
+     * actually contains, **working around any confirmed trips that already cover part of it** — the
+     * uncovered sub-intervals are segmented (so a multi-modal journey becomes several trips) and the
+     * confirmed runs are left in place. A confirmed stub in a gap no longer suppresses the rest of
+     * the journey, which is what made hand-edited days silently lose their moving trips.
+     */
+    private suspend fun rebuildTrips(loadStart: Long, loadEnd: Long, dayStart: Long, dayEnd: Long) {
+        val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         if (visits.size < 2) return
-        val confirmedTrips = tripDao.confirmedOverlapping(dayStart, dayEnd)
+        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
         for (i in 0 until visits.lastIndex) {
             val from = visits[i]
             val to = visits[i + 1]
-            val startMs = from.endMs
-            val endMs = to.startMs
-            if (endMs <= startMs || endMs <= dayStart || startMs >= dayEnd) continue
-            if (confirmedTrips.any { it.overlaps(startMs, endMs + 1) }) continue
-            val movingSamples = sampleDao.rangeForComputation(startMs, endMs + 1)
-            val runs = tripSegmenter.segment(movingSamples)
-            if (runs.isNotEmpty()) {
-                recordingRepository.saveTrips(from.id, to.id, runs)
-            }
+            fillMovement(from.endMs, to.startMs, confirmedTrips, dayStart, dayEnd, from.id, to.id)
         }
+    }
+
+    /**
+     * Segment and persist the movement in [gapStart, gapEnd) that is not already covered by a
+     * confirmed trip, restricted to the sub-intervals that overlap [dayStart, dayEnd) (so this day's
+     * rebuild only touches its own region). Splits the gap around the confirmed runs and lets
+     * [TripSegmenter] break each remaining piece into its own single-mode trips — so a multi-modal
+     * journey (walk → bus → walk), or a stretch left bare beside a hand-confirmed stub, is rebuilt in
+     * full instead of being skipped wholesale.
+     */
+    private suspend fun fillMovement(
+        gapStart: Long,
+        gapEnd: Long,
+        confirmedTripRanges: List<Pair<Long, Long>>,
+        dayStart: Long,
+        dayEnd: Long,
+        fromVisitId: Long,
+        toVisitId: Long?,
+    ) {
+        if (gapEnd <= gapStart) return
+        for ((subStart, subEnd) in subtractRanges(gapStart, gapEnd, confirmedTripRanges)) {
+            if (subEnd <= subStart) continue
+            if (subEnd <= dayStart || subStart >= dayEnd) continue // only the part touching this day
+            val movingSamples = sampleDao.rangeForComputation(subStart, subEnd)
+            val runs = tripSegmenter.segment(movingSamples)
+            if (runs.isNotEmpty()) recordingRepository.saveTrips(fromVisitId, toVisitId, runs)
+        }
+    }
+
+    /** [baseStart, baseEnd) minus every block in [blocks], as an ordered list of leftover gaps. */
+    private fun subtractRanges(
+        baseStart: Long,
+        baseEnd: Long,
+        blocks: List<Pair<Long, Long>>,
+    ): List<Pair<Long, Long>> {
+        val overlapping = blocks
+            .filter { it.second > baseStart && it.first < baseEnd }
+            .sortedBy { it.first }
+        if (overlapping.isEmpty()) return listOf(baseStart to baseEnd)
+        val out = ArrayList<Pair<Long, Long>>()
+        var cursor = baseStart
+        for ((blockStart, blockEnd) in overlapping) {
+            if (blockStart > cursor) out.add(cursor to minOf(blockStart, baseEnd))
+            cursor = maxOf(cursor, blockEnd)
+            if (cursor >= baseEnd) break
+        }
+        if (cursor < baseEnd) out.add(cursor to baseEnd)
+        return out.filter { it.second > it.first }
     }
 
     private fun applyMatch(visit: VisitEntity, match: PlaceMatch?): VisitEntity = when (match) {
@@ -328,11 +383,6 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
 
     private fun VisitEntity.overlaps(startMs: Long, endMs: Long): Boolean =
         this.startMs < endMs && this.endMs > startMs
-
-    private fun net.extrawdw.apps.locationhistory.data.db.TripEntity.overlaps(
-        startMs: Long,
-        endMs: Long,
-    ): Boolean = this.startMs < endMs && this.endMs > startMs
 
     private fun List<LocationSampleEntity>.inRange(startMs: Long, endMs: Long): List<LocationSampleEntity> =
         filter { it.timestampMs >= startMs && it.timestampMs < endMs }
