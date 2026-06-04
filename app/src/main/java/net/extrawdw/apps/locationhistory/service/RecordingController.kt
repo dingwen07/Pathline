@@ -104,12 +104,13 @@ class RecordingController @Inject constructor(
     }
 
     /**
-     * Turn recording on as an explicit user action (UI switch or notification action): persist the
-     * enabled preference, start the foreground recorder and (re)schedule the periodic workers.
-     * Mirrors the Settings toggle so the notification's "turn recording on" action behaves the same.
+     * Turn recording on as an explicit user action (UI switch or notification action): clear any
+     * autostart suppression, persist the enabled preference, start the foreground recorder and
+     * (re)schedule the periodic workers. Mirrors the Settings toggle.
      */
     suspend fun enableTrackingFromUser() {
         AppLog.i(TAG, "enableTrackingFromUser")
+        clearAutostartSuppression()
         settingsRepository.setTrackingEnabled(true)
         startTracking()
         workScheduler.schedulePeriodicTimelineMaintenance()
@@ -118,34 +119,81 @@ class RecordingController @Inject constructor(
 
     /**
      * The user removed the app from Recents while recording. If the stop-on-task-removed feature is
-     * enabled, turn tracking off for good: persist the disabled preference (so it doesn't resume on
-     * next launch) and tear down the passive restart triggers (AR + geofences) that would otherwise
-     * wake the foreground recorder back up. The foreground service stops itself, so we only mark it
-     * stopped here rather than sending it an intent during its own teardown.
+     * enabled, *pause* recording: leave the "Background recording" preference ON, but set a hidden
+     * autostart-suppression flag so the passive triggers (AR transitions / geofence exits) can't
+     * relaunch the foreground service. The pause lasts until the app is next launched into the
+     * foreground ([resumeIfPreviouslyEnabled]) or the user resumes it from the notification. The
+     * foreground service stops itself, so we only mark it stopped here.
      *
-     * Returns true if recording was actually stopped, or false when the feature is disabled and the
+     * Returns true if recording was actually paused, or false when the feature is disabled and the
      * caller should keep recording running.
      */
-    suspend fun disableTrackingFromTaskRemoval(): Boolean {
+    suspend fun pauseRecordingFromTaskRemoval(): Boolean {
         if (!settingsRepository.settings.first().stopOnTaskRemoved) {
             AppLog.i(TAG, "task removed but stop-on-task-removed is off — keeping recording")
             return false
         }
-        AppLog.w(TAG, "disableTrackingFromTaskRemoval — app removed from Recents")
-        settingsRepository.setTrackingEnabled(false)
-        recognitionManager.stop()
-        geofenceManager.clearAll()
+        AppLog.w(TAG, "pauseRecordingFromTaskRemoval — app removed from Recents; suppressing autostart")
+        settingsRepository.setAutostartSuppressed(true)
+        recorderService.suppressAutostart()
         recorderService.markStopped("task removed from Recents")
         return true
     }
 
+    /** Resume after a task-removal pause (notification action). Clears suppression and restarts. */
+    suspend fun resumeRecordingFromUser() {
+        AppLog.i(TAG, "resumeRecordingFromUser")
+        clearAutostartSuppression()
+        if (!settingsRepository.settings.first().trackingEnabled) enableTrackingFromUser()
+        else startTracking()
+    }
+
+    /** Notification action: stop pausing on close (turn the feature off) and resume recording now. */
+    suspend fun disableStopOnCloseAndResume() {
+        AppLog.i(TAG, "disableStopOnCloseAndResume")
+        settingsRepository.setStopOnTaskRemoved(false)
+        resumeRecordingFromUser()
+    }
+
+    /** Lift the autostart-suppression flag (persisted + in-memory). */
+    private suspend fun clearAutostartSuppression() {
+        settingsRepository.setAutostartSuppressed(false)
+        recorderService.clearAutostartSuppression()
+    }
+
     /**
-     * Self-heal when the app is opened: if tracking was enabled, make sure the foreground recorder
-     * is actually running (it may have been killed) and the AR heartbeat + geofences are armed.
+     * True while recording is paused after a task removal. Also restores the in-memory suppression
+     * gate in [RecorderServiceController], which is reset on a fresh process — so a passive trigger
+     * that revived the process can't slip a foreground start past the gate.
+     */
+    private suspend fun isAutostartSuppressed(): Boolean {
+        val suppressed = settingsRepository.autostartSuppressed.first()
+        if (suppressed) recorderService.suppressAutostart()
+        return suppressed
+    }
+
+    /**
+     * The app is in the foreground again: lift any task-removal pause, then run the normal self-heal.
+     * This is the only place the pause is cleared — a background restart (boot, AR, geofence) keeps
+     * it in effect, so recording stays paused "until the app is launched and in foreground".
+     */
+    suspend fun onAppForegrounded() {
+        clearAutostartSuppression()
+        resumeIfPreviouslyEnabled()
+    }
+
+    /**
+     * Self-heal: if tracking was enabled, make sure the foreground recorder is actually running (it
+     * may have been killed) and the AR heartbeat + geofences are armed. Honours an active
+     * task-removal pause — when suppressed, it leaves recording stopped until the app is foregrounded.
      */
     suspend fun resumeIfPreviouslyEnabled() {
         if (!settingsRepository.settings.first().trackingEnabled) {
             AppLog.i(TAG, "resume: tracking disabled, nothing to do")
+            return
+        }
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "resume: autostart suppressed (paused since task removal) — not starting")
             return
         }
         if (!recognitionManager.hasPermission()) {
@@ -172,6 +220,10 @@ class RecordingController @Inject constructor(
             AppLog.i(TAG, "passive rearm: tracking disabled, nothing to do")
             return
         }
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "passive rearm: autostart suppressed (paused since task removal) — skipping")
+            return
+        }
         if (!recognitionManager.hasPermission()) {
             AppLog.w(TAG, "passive rearm: missing activity-recognition permission")
             return
@@ -195,6 +247,10 @@ class RecordingController @Inject constructor(
 
     /** Handle a batch of Activity Recognition transitions; react to the most recent one. */
     suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>) {
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
+            return
+        }
         val latest = events.lastOrNull() ?: return
         val (activityType, transitionType) = latest
         if (transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) return
@@ -213,6 +269,10 @@ class RecordingController @Inject constructor(
 
     /** Leaving the dwell geofence means the user is on the move again (a real, forced departure). */
     suspend fun handleGeofenceExit() {
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "geofence EXIT ignored — recording paused (app removed from Recents)")
+            return
+        }
         AppLog.i(TAG, "geofence EXIT")
         geofenceManager.clearAll()
         becameMoving(DevicePhysicalState.UNKNOWN, force = true)

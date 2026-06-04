@@ -10,19 +10,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.AppLog
-import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import javax.inject.Inject
 
 /**
- * Handles the action buttons on the "recording turned off" alert (see [Notifications]). Lets the
- * user either turn recording back on, or disable the stop-on-task-removed feature (which also
- * resumes recording, so it isn't lost a second time on the next close).
+ * Handles the action buttons on the recording-paused alert (see [Notifications]). Lets the user
+ * resume recording immediately (lifting the task-removal pause without reopening the app), or turn
+ * the stop-on-close feature off entirely (which also resumes recording).
  */
 @AndroidEntryPoint
 class RecordingActionReceiver : BroadcastReceiver() {
 
     @Inject lateinit var controller: RecordingController
-    @Inject lateinit var settingsRepository: SettingsRepository
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
@@ -37,9 +35,10 @@ class RecordingActionReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
                 if (action == ACTION_KEEP_RECORDING_ON_CLOSE) {
-                    settingsRepository.setStopOnTaskRemoved(false)
+                    controller.disableStopOnCloseAndResume()
+                } else {
+                    controller.resumeRecordingFromUser()
                 }
-                controller.enableTrackingFromUser()
             } catch (t: Throwable) {
                 AppLog.e(TAG, "notification action failed", t)
             } finally {

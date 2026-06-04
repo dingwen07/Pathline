@@ -132,17 +132,17 @@ class LocationRecorderService : LifecycleService() {
 
     /**
      * Called only when the user manually removes the app from Recents (a system low-memory kill
-     * does NOT invoke this). When the stop-on-task-removed feature is enabled, treat it as an
-     * explicit "stop recording": persist tracking off, clear the passive restart triggers, then
-     * alert the user on the dedicated (popup, silent) alert channel that recording was turned off.
-     * When the feature is disabled, the START_STICKY service keeps running and we do nothing.
+     * does NOT invoke this). When the stop-on-task-removed feature is enabled, *pause* recording:
+     * stop this foreground service and set a hidden autostart-suppression flag (the "Background
+     * recording" preference stays ON), then post the alert. Recording resumes automatically when the
+     * app is next opened. When the feature is disabled, the START_STICKY service keeps running.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         AppLog.w(TAG, "onTaskRemoved — app removed from Recents")
-        val stopped = runCatching { runBlocking { controller.disableTrackingFromTaskRemoval() } }
-            .onFailure { AppLog.e(TAG, "disableTrackingFromTaskRemoval failed", it) }
+        val paused = runCatching { runBlocking { controller.pauseRecordingFromTaskRemoval() } }
+            .onFailure { AppLog.e(TAG, "pauseRecordingFromTaskRemoval failed", it) }
             .getOrDefault(false)
-        if (stopped) {
+        if (paused) {
             runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
             unregisterNetworkCallback()
             Notifications.notifyRecordingStopped(this)

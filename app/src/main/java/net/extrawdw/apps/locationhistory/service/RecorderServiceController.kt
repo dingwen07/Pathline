@@ -28,13 +28,27 @@ class RecorderServiceController @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     private val running = AtomicBoolean(false)
+    /**
+     * In-memory mirror of the persisted autostart-suppression flag (see [SettingsRepository]). When
+     * set, [start] is a no-op so an AR transition / geofence exit can't relaunch the foreground
+     * service after the app was swiped from Recents. [RecordingController] keeps it in sync with the
+     * persisted value (restoring it on a fresh process and clearing it when the app returns).
+     */
+    private val autostartSuppressed = AtomicBoolean(false)
     private val debugMutable = MutableStateFlow(RecorderDebugState())
 
     val isRecording: Boolean get() = running.get()
     val debugState: StateFlow<RecorderDebugState> = debugMutable.asStateFlow()
 
+    fun suppressAutostart() { autostartSuppressed.set(true) }
+    fun clearAutostartSuppression() { autostartSuppressed.set(false) }
+
     /** Start (or re-tune) the active recording session for the given state/profile. */
     fun start(state: DevicePhysicalState, profile: PowerProfile): Boolean {
+        if (autostartSuppressed.get()) {
+            AppLog.i(TAG, "start ignored — autostart suppressed until app returns to foreground")
+            return false
+        }
         val intent = Intent(context, LocationRecorderService::class.java).apply {
             putExtra(LocationRecorderService.EXTRA_STATE, state.name)
             putExtra(LocationRecorderService.EXTRA_PROFILE, profile.name)

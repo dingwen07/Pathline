@@ -6,10 +6,10 @@
     <string name="recording_channel_desc">在 Pathline 记录您的路线时显示。</string>
     <string name="recording_title">正在记录您的时间线</string>
     <string name="alert_channel_name">记录提醒</string>
-    <string name="alert_channel_desc">记录被中断或关闭时的重要通知。</string>
-    <string name="recording_stopped_title">记录已关闭</string>
-    <string name="recording_stopped_text">将 Pathline 从最近任务中移除会停止记录您的时间线。打开 Pathline 即可重新开启记录。</string>
-    <string name="recording_stopped_action_resume">开启记录</string>
+    <string name="alert_channel_desc">记录被暂停或中断时的重要通知。</string>
+    <string name="recording_stopped_title">记录已暂停</string>
+    <string name="recording_stopped_text">将 Pathline 从最近任务中移除后，记录已停止。下次打开应用时会自动恢复记录。</string>
+    <string name="recording_stopped_action_resume">恢复记录</string>
     <string name="recording_stopped_action_keep_on">关闭后继续记录</string>
 
     <!-- ============================ Common actions ============================ -->
@@ -139,8 +139,8 @@
     <string name="power_saver">省电</string>
     <string name="power_balanced">均衡</string>
     <string name="power_accurate">精确</string>
-    <string name="settings_stop_on_close_title">关闭应用时停止</string>
-    <string name="settings_stop_on_close_desc">当您将 Pathline 从最近任务中划走时，记录会停止并收到通知。关闭此项可在关闭应用后继续记录。</string>
+    <string name="settings_stop_on_close_title">关闭应用时暂停</string>
+    <string name="settings_stop_on_close_desc">当您将 Pathline 从最近任务中划走时，记录会暂停；重新打开应用时会自动恢复。关闭此项可在关闭应用后继续记录。</string>
     <string name="settings_data_model_title">数据与模型</string>
     <string name="settings_state_model">状态模型：%1$s</string>
     <string name="settings_transport_model">交通模型：%1$s</string>

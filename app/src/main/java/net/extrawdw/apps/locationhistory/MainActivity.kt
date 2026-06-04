@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Self-heal: if tracking was previously enabled, make sure the heartbeat is armed.
         lifecycleScope.launch {
-            recordingController.resumeIfPreviouslyEnabled()
+            recordingController.onAppForegrounded()
             workScheduler.schedulePeriodicTimelineMaintenance()
             workScheduler.schedulePeriodicBackup()
             workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(System.currentTimeMillis()), "app_open")

@@ -51,6 +51,7 @@ class SettingsRepository @Inject constructor(
     private val keyProfile = stringPreferencesKey("power_profile")
     private val keyOnboarded = booleanPreferencesKey("onboarding_complete")
     private val keyStopOnTaskRemoved = booleanPreferencesKey("stop_on_task_removed")
+    private val keyAutostartSuppressed = booleanPreferencesKey("autostart_suppressed")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -77,6 +78,20 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setStopOnTaskRemoved(enabled: Boolean) {
         context.dataStore.edit { it[keyStopOnTaskRemoved] = enabled }
+    }
+
+    /**
+     * Hidden (non-user-facing) flag set when the app is removed from Recents: it suppresses the
+     * passive autostart of the recording service until the app is next launched into the foreground.
+     * Persisted so it survives the process death that follows task removal — an in-memory flag would
+     * reset on the next AR/geofence-triggered process restart and let recording silently resume.
+     */
+    val autostartSuppressed: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[keyAutostartSuppressed] ?: false
+    }
+
+    suspend fun setAutostartSuppressed(suppressed: Boolean) {
+        context.dataStore.edit { it[keyAutostartSuppressed] = suppressed }
     }
 
     suspend fun setPowerProfile(profile: PowerProfile) {

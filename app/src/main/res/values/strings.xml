@@ -6,11 +6,11 @@
     <string name="recording_channel_desc">Shows while Pathline is actively recording your route.</string>
     <string name="recording_title">Recording your timeline</string>
     <string name="alert_channel_name">Recording alerts</string>
-    <string name="alert_channel_desc">Important notices when recording is interrupted or turned off.</string>
-    <string name="recording_stopped_title">Recording turned off</string>
-    <string name="recording_stopped_text">Removing Pathline from Recents stopped recording your timeline. Open Pathline to turn recording back on.</string>
-    <string name="recording_stopped_action_resume">Turn recording on</string>
-    <string name="recording_stopped_action_keep_on">Keep recording on close</string>
+    <string name="alert_channel_desc">Important notices when recording is paused or interrupted.</string>
+    <string name="recording_stopped_title">Recording paused</string>
+    <string name="recording_stopped_text">Pathline stopped recording when you removed it from Recents. It resumes automatically the next time you open the app.</string>
+    <string name="recording_stopped_action_resume">Resume</string>
+    <string name="recording_stopped_action_keep_on">Always keep recording</string>
 
     <!-- ============================ Common actions ============================ -->
     <string name="action_save">Save</string>
@@ -150,8 +150,8 @@
     <string name="power_saver">Saver</string>
     <string name="power_balanced">Balanced</string>
     <string name="power_accurate">Accurate</string>
-    <string name="settings_stop_on_close_title">Stop on app close</string>
-    <string name="settings_stop_on_close_desc">When you swipe Pathline away from Recents, recording stops and you\'ll get a notification. Turn this off to keep recording even after closing the app.</string>
+    <string name="settings_stop_on_close_title">Pause recording when app is closed</string>
+    <string name="settings_stop_on_close_desc">When you swipe Pathline away from Recents, recording will be paused; it resumes automatically when you reopen the app. Turn this off to keep recording even after closing the app.</string>
     <string name="settings_data_model_title">Data &amp; model</string>
     <string name="settings_state_model">State model: %1$s</string>
     <string name="settings_transport_model">Transport model: %1$s</string>
