@@ -19,6 +19,7 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
@@ -127,6 +128,28 @@ class LocationRecorderService : LifecycleService() {
         unregisterNetworkCallback()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Called only when the user manually removes the app from Recents (a system low-memory kill
+     * does NOT invoke this). When the stop-on-task-removed feature is enabled, treat it as an
+     * explicit "stop recording": persist tracking off, clear the passive restart triggers, then
+     * alert the user on the dedicated (popup, silent) alert channel that recording was turned off.
+     * When the feature is disabled, the START_STICKY service keeps running and we do nothing.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        AppLog.w(TAG, "onTaskRemoved — app removed from Recents")
+        val stopped = runCatching { runBlocking { controller.disableTrackingFromTaskRemoval() } }
+            .onFailure { AppLog.e(TAG, "disableTrackingFromTaskRemoval failed", it) }
+            .getOrDefault(false)
+        if (stopped) {
+            runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
+            unregisterNetworkCallback()
+            Notifications.notifyRecordingStopped(this)
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

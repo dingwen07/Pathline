@@ -58,5 +58,10 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.setPowerProfile(profile)
     }
 
+    /** Toggle whether removing the app from Recents stops recording. */
+    fun setStopOnTaskRemoved(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setStopOnTaskRemoved(enabled)
+    }
+
     fun trainNow() = workScheduler.scheduleTrainingNow()
 }

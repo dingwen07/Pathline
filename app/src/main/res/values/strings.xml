@@ -3,4 +3,10 @@
     <string name="recording_channel_name">Location recording</string>
     <string name="recording_channel_desc">Shows while Pathline is actively recording your route.</string>
     <string name="recording_title">Recording your timeline</string>
+    <string name="alert_channel_name">Recording alerts</string>
+    <string name="alert_channel_desc">Important notices when recording is interrupted or turned off.</string>
+    <string name="recording_stopped_title">Recording turned off</string>
+    <string name="recording_stopped_text">Removing Pathline from Recents stopped recording your timeline. Open Pathline to turn recording back on.</string>
+    <string name="recording_stopped_action_resume">Turn recording on</string>
+    <string name="recording_stopped_action_keep_on">Keep recording on close</string>
 </resources>

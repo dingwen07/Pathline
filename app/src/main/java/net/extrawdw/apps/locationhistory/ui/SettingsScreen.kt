@@ -98,6 +98,29 @@ fun SettingsScreen(
                 }
             }
 
+            // Stop recording when removed from Recents
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Stop on app close", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "When you swipe Pathline away from Recents, recording stops and you'll get a notification. Turn this off to keep recording even after closing the app.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Switch(
+                            checked = settings.stopOnTaskRemoved,
+                            onCheckedChange = viewModel::setStopOnTaskRemoved,
+                        )
+                    }
+                }
+            }
+
             // Data + model status
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {

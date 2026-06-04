@@ -104,6 +104,42 @@ class RecordingController @Inject constructor(
     }
 
     /**
+     * Turn recording on as an explicit user action (UI switch or notification action): persist the
+     * enabled preference, start the foreground recorder and (re)schedule the periodic workers.
+     * Mirrors the Settings toggle so the notification's "turn recording on" action behaves the same.
+     */
+    suspend fun enableTrackingFromUser() {
+        AppLog.i(TAG, "enableTrackingFromUser")
+        settingsRepository.setTrackingEnabled(true)
+        startTracking()
+        workScheduler.schedulePeriodicTimelineMaintenance()
+        workScheduler.schedulePeriodicBackup()
+    }
+
+    /**
+     * The user removed the app from Recents while recording. If the stop-on-task-removed feature is
+     * enabled, turn tracking off for good: persist the disabled preference (so it doesn't resume on
+     * next launch) and tear down the passive restart triggers (AR + geofences) that would otherwise
+     * wake the foreground recorder back up. The foreground service stops itself, so we only mark it
+     * stopped here rather than sending it an intent during its own teardown.
+     *
+     * Returns true if recording was actually stopped, or false when the feature is disabled and the
+     * caller should keep recording running.
+     */
+    suspend fun disableTrackingFromTaskRemoval(): Boolean {
+        if (!settingsRepository.settings.first().stopOnTaskRemoved) {
+            AppLog.i(TAG, "task removed but stop-on-task-removed is off — keeping recording")
+            return false
+        }
+        AppLog.w(TAG, "disableTrackingFromTaskRemoval — app removed from Recents")
+        settingsRepository.setTrackingEnabled(false)
+        recognitionManager.stop()
+        geofenceManager.clearAll()
+        recorderService.markStopped("task removed from Recents")
+        return true
+    }
+
+    /**
      * Self-heal when the app is opened: if tracking was enabled, make sure the foreground recorder
      * is actually running (it may have been killed) and the AR heartbeat + geofences are armed.
      */

@@ -74,6 +74,11 @@
             android:name=".service.LocationUpdatesReceiver"
             android:exported="false" />
 
+        <!-- Action buttons on the "recording turned off" alert notification -->
+        <receiver
+            android:name=".service.RecordingActionReceiver"
+            android:exported="false" />
+
         <!-- Re-arm AR + geofences after reboot -->
         <receiver
             android:name=".service.BootReceiver"

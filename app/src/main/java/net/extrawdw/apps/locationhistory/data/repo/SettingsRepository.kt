@@ -23,6 +23,8 @@ enum class PowerProfile { BATTERY_SAVER, BALANCED, HIGH_ACCURACY }
 data class AppSettings(
     val trackingEnabled: Boolean,
     val powerProfile: PowerProfile,
+    /** When true, removing the app from Recents stops recording and turns tracking off. */
+    val stopOnTaskRemoved: Boolean = true,
 )
 
 /**
@@ -48,6 +50,7 @@ class SettingsRepository @Inject constructor(
     private val keyTracking = booleanPreferencesKey("tracking_enabled")
     private val keyProfile = stringPreferencesKey("power_profile")
     private val keyOnboarded = booleanPreferencesKey("onboarding_complete")
+    private val keyStopOnTaskRemoved = booleanPreferencesKey("stop_on_task_removed")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -64,11 +67,16 @@ class SettingsRepository @Inject constructor(
             powerProfile = prefs[keyProfile]?.let {
                 runCatching { PowerProfile.valueOf(it) }.getOrNull()
             } ?: PowerProfile.BALANCED,
+            stopOnTaskRemoved = prefs[keyStopOnTaskRemoved] ?: true,
         )
     }
 
     suspend fun setTrackingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[keyTracking] = enabled }
+    }
+
+    suspend fun setStopOnTaskRemoved(enabled: Boolean) {
+        context.dataStore.edit { it[keyStopOnTaskRemoved] = enabled }
     }
 
     suspend fun setPowerProfile(profile: PowerProfile) {

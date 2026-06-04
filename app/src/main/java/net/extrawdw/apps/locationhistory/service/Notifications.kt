@@ -20,6 +20,15 @@ object Notifications {
     const val RECORDING_CHANNEL_ID = "pathline_recording"
     const val RECORDING_NOTIFICATION_ID = 7001
 
+    /**
+     * A separate, higher-importance channel for one-off alerts (e.g. recording was turned off when
+     * the app was swiped from Recents). It is IMPORTANCE_HIGH so it pops up as a heads-up, but with
+     * sound and vibration removed — visible but quiet, deliberately *not* a silent (LOW) channel so
+     * the user actually sees it. Kept distinct from the ongoing recording channel.
+     */
+    const val ALERT_CHANNEL_ID = "pathline_alerts"
+    const val RECORDING_STOPPED_NOTIFICATION_ID = 7002
+
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(RECORDING_CHANNEL_ID) == null) {
@@ -33,6 +42,64 @@ object Notifications {
             }
             manager.createNotificationChannel(channel)
         }
+    }
+
+    fun ensureAlertChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(ALERT_CHANNEL_ID) == null) {
+            val channel = NotificationChannel(
+                ALERT_CHANNEL_ID,
+                context.getString(R.string.alert_channel_name),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = context.getString(R.string.alert_channel_desc)
+                // Heads-up popup, but no sound or vibration.
+                setSound(null, null)
+                enableVibration(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    /** Alert (popup, silent) telling the user recording was turned off after task removal. */
+    fun notifyRecordingStopped(context: Context) {
+        ensureAlertChannel(context)
+        val text = context.getString(R.string.recording_stopped_text)
+        val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
+            .setContentTitle(context.getString(R.string.recording_stopped_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(contentIntent(context))
+            .setSmallIcon(R.drawable.ic_stat_recording)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            // Heads-up on pre-O, while staying silent (no default sound/vibration).
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(0)
+            .setVibrate(longArrayOf(0L))
+            .setAutoCancel(true)
+            .addAction(
+                0,
+                context.getString(R.string.recording_stopped_action_resume),
+                actionIntent(context, RecordingActionReceiver.ACTION_RESUME_RECORDING, 1),
+            )
+            .addAction(
+                0,
+                context.getString(R.string.recording_stopped_action_keep_on),
+                actionIntent(context, RecordingActionReceiver.ACTION_KEEP_RECORDING_ON_CLOSE, 2),
+            )
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            ?.notify(RECORDING_STOPPED_NOTIFICATION_ID, notification)
+    }
+
+    private fun actionIntent(context: Context, action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(context, RecordingActionReceiver::class.java).setAction(action)
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     fun buildRecordingNotification(context: Context, state: DevicePhysicalState): Notification {
