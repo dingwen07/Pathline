@@ -64,6 +64,8 @@
 
     <!-- ============================ Timeline ============================ -->
     <string name="timeline_empty">No activity recorded for this day</string>
+    <string name="timeline_recording_off_title">Recording is off</string>
+    <string name="timeline_recording_off_desc">Your timeline isn\'t being updated. Tap to turn recording on.</string>
     <string name="cd_jump_to_today">Jump to today</string>
     <string name="cd_recenter">Recenter on current location</string>
     <string name="cd_edit">Edit</string>

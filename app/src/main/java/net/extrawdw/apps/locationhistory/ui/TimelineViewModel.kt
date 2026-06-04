@@ -35,6 +35,7 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
 import net.extrawdw.apps.locationhistory.domain.SegmentType
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
@@ -69,10 +70,17 @@ class TimelineViewModel @Inject constructor(
     private val timelineEditor: TimelineEditor,
     private val workScheduler: WorkScheduler,
     private val workManager: WorkManager,
+    settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     val today: Long get() = TimeBuckets.dayEpoch(System.currentTimeMillis())
     val selectedDay = MutableStateFlow(today)
+
+    /** Whether the background-recording master switch is on. Drives the Timeline "recording off"
+     *  banner. Starts `true` so the banner doesn't flash before the stored setting resolves. */
+    val recordingEnabled: StateFlow<Boolean> = settingsRepository.settings
+        .map { it.trackingEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val refreshing = MutableStateFlow(false)
     private var lastRefreshMs = 0L

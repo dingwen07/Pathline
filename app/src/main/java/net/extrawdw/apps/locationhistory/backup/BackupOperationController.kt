@@ -43,7 +43,7 @@ data class ManagedState(
  */
 @Singleton
 class BackupOperationController @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val repo: BackupRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob())

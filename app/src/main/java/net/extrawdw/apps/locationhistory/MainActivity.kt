@@ -118,7 +118,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
             LaunchedEffect(destination) { if (destination == AppDestinations.MAP) mapOpened = true }
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize().zIndex(if (destination == AppDestinations.TIMELINE) 1f else 0f)) {
-                    TimelineScreen()
+                    TimelineScreen(onOpenSettings = { destination = AppDestinations.SETTINGS })
                 }
                 if (mapOpened) {
                     Box(Modifier.fillMaxSize().zIndex(if (destination == AppDestinations.MAP) 1f else 0f)) {

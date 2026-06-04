@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,26 +57,15 @@ fun SettingsScreen(
             // Tracking toggle
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.settings_bg_recording_title), style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                stringResource(R.string.settings_bg_recording_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        Switch(
-                            checked = settings.trackingEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled && !permissionsGranted) onRequestPermissions()
-                                else viewModel.setTracking(enabled)
-                            },
-                        )
-                    }
+                    SettingSwitchRow(
+                        title = stringResource(R.string.settings_bg_recording_title),
+                        description = stringResource(R.string.settings_bg_recording_desc),
+                        checked = settings.trackingEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && !permissionsGranted) onRequestPermissions()
+                            else viewModel.setTracking(enabled)
+                        },
+                    )
                     if (!permissionsGranted) {
                         OutlinedButton(
                             onClick = onRequestPermissions,
@@ -104,23 +95,12 @@ fun SettingsScreen(
             // Stop recording when removed from Recents
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.settings_stop_on_close_title), style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                stringResource(R.string.settings_stop_on_close_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        Switch(
-                            checked = settings.stopOnTaskRemoved,
-                            onCheckedChange = viewModel::setStopOnTaskRemoved,
-                        )
-                    }
+                    SettingSwitchRow(
+                        title = stringResource(R.string.settings_stop_on_close_title),
+                        description = stringResource(R.string.settings_stop_on_close_desc),
+                        checked = settings.stopOnTaskRemoved,
+                        onCheckedChange = viewModel::setStopOnTaskRemoved,
+                    )
                 }
             }
 
@@ -178,6 +158,34 @@ fun SettingsScreen(
             }
             if (showDiagnostics) DiagnosticsDialog(onDismiss = { showDiagnostics = false })
         }
+    }
+}
+
+/**
+ * A settings row whose whole width toggles the switch (not just the thumb), with a clear gap
+ * between the description and the control so long text doesn't crowd the switch.
+ */
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Switch),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(description, style = MaterialTheme.typography.bodySmall)
+        }
+        // onCheckedChange = null: the row's toggleable owns the click + accessibility semantics.
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

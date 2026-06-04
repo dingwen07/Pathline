@@ -62,6 +62,8 @@
 
     <!-- ============================ Timeline ============================ -->
     <string name="timeline_empty">这一天没有记录到任何活动</string>
+    <string name="timeline_recording_off_title">记录已关闭</string>
+    <string name="timeline_recording_off_desc">您的时间线不会更新。点按以开启记录。</string>
     <string name="cd_jump_to_today">跳到今天</string>
     <string name="cd_recenter">回到当前位置</string>
     <string name="cd_edit">编辑</string>

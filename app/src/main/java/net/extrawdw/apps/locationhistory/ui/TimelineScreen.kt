@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.DropdownMenu
@@ -70,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import net.extrawdw.apps.locationhistory.R
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -101,11 +103,15 @@ private const val TODAY_PAGE = 100_000 // anchor; pages below are past days, non
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
+fun TimelineScreen(
+    onOpenSettings: () -> Unit = {},
+    viewModel: TimelineViewModel = hiltViewModel(),
+) {
     val mapState by viewModel.mapState.collectAsStateWithLifecycle()
     val selectedDay by viewModel.selectedDay.collectAsStateWithLifecycle()
     val places by viewModel.places.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val recordingEnabled by viewModel.recordingEnabled.collectAsStateWithLifecycle()
 
     val today = remember { viewModel.today }
     fun dayForPage(p: Int) = today - (TODAY_PAGE - p)
@@ -341,6 +347,17 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val threePane = maxWidth >= 840.dp && maxWidth > maxHeight
+        // When the recording master switch is off, the timeline stops updating — surface a banner.
+        if (!recordingEnabled && !editing) {
+            RecordingOffBanner(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(3f)
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
         if (threePane) {
             Row(Modifier.fillMaxSize()) {
                 Surface(
@@ -392,6 +409,41 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
     }
 
     detailPlaceId?.let { id -> PlaceDetailDialog(placeId = id, onDismiss = { detailPlaceId = null }) }
+}
+
+// --- recording-off banner ---------------------------------------------------------------------
+
+@Composable
+private fun RecordingOffBanner(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 3.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.Warning, contentDescription = null)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.timeline_recording_off_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    stringResource(R.string.timeline_recording_off_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+        }
+    }
 }
 
 // --- day header -------------------------------------------------------------------------------
