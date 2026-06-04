@@ -28,6 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -48,6 +51,7 @@ import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberUpdatedMarkerState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import net.extrawdw.apps.locationhistory.R
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -145,9 +149,9 @@ fun PlaceDetailDialog(
             Scaffold(
                 topBar = {
                     TopAppBar(
-                        title = { Text(place?.name ?: "Place") },
+                        title = { Text(place?.name ?: stringResource(R.string.place_default_name)) },
                         navigationIcon = {
-                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close)) }
                         },
                     )
                 },
@@ -165,9 +169,13 @@ fun PlaceDetailDialog(
                         }
                     }
                     place?.let { p ->
+                        val visitsLabel = pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
                         Text(
-                            "${visits.size} ${if (visits.size == 1) "visit" else "visits"} · r=${p.radiusMeters.toInt()} m" +
-                                (if (p.fixed) " · locked" else ""),
+                            if (p.fixed) {
+                                stringResource(R.string.place_detail_summary_locked, visitsLabel, p.radiusMeters.toInt())
+                            } else {
+                                stringResource(R.string.place_detail_summary, visitsLabel, p.radiusMeters.toInt())
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         )
@@ -178,15 +186,25 @@ fun PlaceDetailDialog(
                     HorizontalDivider()
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         items(visits, key = { it.id }) { v ->
+                            val context = LocalContext.current
                             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                                 Text(Format.date(v.dayEpoch), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "${Format.time(v.startMs)} – ${Format.time(v.endMs)} · ${Format.duration(v.startMs, v.endMs)}",
+                                    stringResource(
+                                        R.string.time_range_duration,
+                                        Format.time(v.startMs),
+                                        Format.time(v.endMs),
+                                        Format.duration(context, v.startMs, v.endMs),
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Text(
-                                    "r=${v.radiusMeters.toInt()} m · ${v.sampleCount} fixes · " +
-                                        "reliability ${(v.reliability * 100).toInt()}%",
+                                    stringResource(
+                                        R.string.visit_detail_stats,
+                                        v.radiusMeters.toInt(),
+                                        pluralStringResource(R.plurals.fixes_count, v.sampleCount, v.sampleCount),
+                                        (v.reliability * 100).toInt(),
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

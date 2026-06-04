@@ -2,6 +2,8 @@ package net.extrawdw.apps.locationhistory
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material.icons.Icons
@@ -90,12 +92,16 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
 
     // The Map tab forces the whole app (nav pane + map) into Dark Mode while it is active.
     PathlineTheme(darkTheme = if (destination == AppDestinations.MAP) true else isSystemInDarkTheme()) {
+        // Resolve labels here in the composable scope; the navigationSuiteItems builder below is not
+        // a @Composable context, so stringResource() can't be called inside it.
+        val destinationLabels = AppDestinations.entries.map { stringResource(it.labelRes) }
         NavigationSuiteScaffold(
             navigationSuiteItems = {
-                AppDestinations.entries.forEach { dest ->
+                AppDestinations.entries.forEachIndexed { index, dest ->
+                    val label = destinationLabels[index]
                     item(
-                        icon = { Icon(dest.icon, contentDescription = dest.label) },
-                        label = { Text(dest.label) },
+                        icon = { Icon(dest.icon, contentDescription = label) },
+                        label = { Text(label) },
                         selected = dest == destination,
                         onClick = { destination = dest },
                     )
@@ -134,9 +140,9 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
     }
 }
 
-enum class AppDestinations(val label: String, val icon: ImageVector) {
-    TIMELINE("Timeline", Icons.AutoMirrored.Filled.List),
-    PLACES("Places", Icons.Filled.Place),
-    MAP("Explorer", Icons.Filled.Map),
-    SETTINGS("Settings", Icons.Filled.Settings),
+enum class AppDestinations(@param:StringRes val labelRes: Int, val icon: ImageVector) {
+    TIMELINE(R.string.nav_timeline, Icons.AutoMirrored.Filled.List),
+    PLACES(R.string.nav_places, Icons.Filled.Place),
+    MAP(R.string.nav_explorer, Icons.Filled.Map),
+    SETTINGS(R.string.nav_settings, Icons.Filled.Settings),
 }

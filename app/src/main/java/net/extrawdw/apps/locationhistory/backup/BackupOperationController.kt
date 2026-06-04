@@ -1,6 +1,9 @@
 package net.extrawdw.apps.locationhistory.backup
 
+import android.content.Context
 import android.net.Uri
+import dagger.hilt.android.qualifiers.ApplicationContext
+import net.extrawdw.apps.locationhistory.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +43,7 @@ data class ManagedState(
  */
 @Singleton
 class BackupOperationController @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repo: BackupRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob())
@@ -48,25 +52,25 @@ class BackupOperationController @Inject constructor(
     private var job: Job? = null
 
     fun startConfigure(uri: Uri, subdir: String?) =
-        launch(ManagedKind.BACKUP, "Setting up backup") { repo.configureDestination(uri, subdir, it) }
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_setup)) { repo.configureDestination(uri, subdir, it) }
 
     fun startBackup() =
-        launch(ManagedKind.BACKUP, "Backing up") { repo.runManagedBackup(it) }
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_backing_up)) { repo.runManagedBackup(it) }
 
     fun startEnablePassword(password: CharArray) =
-        launch(ManagedKind.BACKUP, "Enabling encryption") { repo.enablePasswordEncryption(password, it) }
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_enable_encryption)) { repo.enablePasswordEncryption(password, it) }
 
     fun startEnablePasskey(choice: EncryptionChoice.Passkey) =
-        launch(ManagedKind.BACKUP, "Enabling passkey encryption") { repo.enablePasskeyEncryption(choice, it) }
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_enable_passkey)) { repo.enablePasskeyEncryption(choice, it) }
 
     fun startDisableEncryption() =
-        launch(ManagedKind.BACKUP, "Removing encryption") { repo.disableEncryption(it) }
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_remove_encryption)) { repo.disableEncryption(it) }
 
     fun startDump(uri: Uri, subdir: String?, choice: EncryptionChoice) =
-        launch(ManagedKind.DUMP, "Creating database dump") { repo.oneTimeDump(uri, subdir, choice, it) }
+        launch(ManagedKind.DUMP, context.getString(R.string.backup_op_dump)) { repo.oneTimeDump(uri, subdir, choice, it) }
 
     fun startRestore(uri: Uri, password: CharArray?, prfSecret: ByteArray?) =
-        launch(ManagedKind.RESTORE, "Restoring") { repo.restoreFrom(uri, password, prfSecret, it) }
+        launch(ManagedKind.RESTORE, context.getString(R.string.backup_op_restore)) { repo.restoreFrom(uri, password, prfSecret, it) }
 
     /** Surface a ceremony/setup failure (e.g. passkey cancelled) in the managed sheet. */
     fun fail(kind: ManagedKind, title: String, message: String) {
@@ -103,13 +107,16 @@ class BackupOperationController @Inject constructor(
 
     private fun describe(result: BackupResult): String = when (result) {
         is BackupResult.Backed ->
-            "Done — ${result.report.partitionsWritten} partition(s) written" +
-                if (result.report.partitionsFailed > 0) ", ${result.report.partitionsFailed} failed" else ""
-        is BackupResult.Restored -> "Restored ${result.report.rowsRestored} rows from ${result.report.partitionsRestored} partition(s)"
-        BackupResult.NoDestination -> "Choose a backup folder first"
-        BackupResult.NeedsReclaim -> "Backup folder is no longer accessible — reconnect it"
-        BackupResult.KeyUnavailable -> "Backup key unavailable — re-enter your password/passkey"
-        is BackupResult.Error -> "Failed: ${result.message}"
+            if (result.report.partitionsFailed > 0) {
+                context.getString(R.string.backup_result_backed_failed, result.report.partitionsWritten, result.report.partitionsFailed)
+            } else {
+                context.getString(R.string.backup_result_backed, result.report.partitionsWritten)
+            }
+        is BackupResult.Restored -> context.getString(R.string.backup_result_restored, result.report.rowsRestored, result.report.partitionsRestored)
+        BackupResult.NoDestination -> context.getString(R.string.backup_result_no_destination)
+        BackupResult.NeedsReclaim -> context.getString(R.string.backup_result_needs_reclaim)
+        BackupResult.KeyUnavailable -> context.getString(R.string.backup_result_key_unavailable)
+        is BackupResult.Error -> context.getString(R.string.backup_result_failed, result.message)
     }
 
     private companion object {

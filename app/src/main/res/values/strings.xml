@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">Pathline</string>
+
+    <!-- ============================ Notifications ============================ -->
     <string name="recording_channel_name">Location recording</string>
     <string name="recording_channel_desc">Shows while Pathline is actively recording your route.</string>
     <string name="recording_title">Recording your timeline</string>
@@ -9,4 +11,298 @@
     <string name="recording_stopped_text">Removing Pathline from Recents stopped recording your timeline. Open Pathline to turn recording back on.</string>
     <string name="recording_stopped_action_resume">Turn recording on</string>
     <string name="recording_stopped_action_keep_on">Keep recording on close</string>
+
+    <!-- ============================ Common actions ============================ -->
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_close">Close</string>
+    <string name="action_change">Change</string>
+    <string name="action_continue">Continue</string>
+
+    <!-- ============================ Navigation ============================ -->
+    <string name="nav_timeline">Timeline</string>
+    <string name="nav_places">Places</string>
+    <string name="nav_explorer">Explorer</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- ============================ Device physical state ============================ -->
+    <string name="state_stationary">Stationary</string>
+    <string name="state_walking">Walking</string>
+    <string name="state_running">Running</string>
+    <string name="state_cycling">Cycling</string>
+    <string name="state_in_vehicle">In vehicle</string>
+    <string name="state_unknown">Unknown</string>
+
+    <!-- ============================ Transport mode ============================ -->
+    <string name="transport_walking">Walking</string>
+    <string name="transport_running">Running</string>
+    <string name="transport_cycling">Cycling</string>
+    <string name="transport_car">Car</string>
+    <string name="transport_bus">Bus</string>
+    <string name="transport_rail">Rail</string>
+    <string name="transport_ferry">Ferry</string>
+    <string name="transport_flight">Flight</string>
+    <string name="transport_unknown">Unknown</string>
+
+    <!-- ============================ Place source ============================ -->
+    <string name="place_source_user">user</string>
+    <string name="place_source_maps">maps</string>
+    <string name="place_source_inferred">inferred</string>
+
+    <!-- ============================ Formatting helpers ============================ -->
+    <string name="duration_under_minute">&lt;1 min</string>
+    <string name="duration_minutes">%1$d min</string>
+    <string name="duration_hours_minutes">%1$dh %2$dm</string>
+    <string name="distance_meters">%1$d m</string>
+    <string name="distance_kilometers">%1$.1f km</string>
+    <string name="confidence_percent">%1$d%%</string>
+    <!-- "<start> – <end>" -->
+    <string name="time_range">%1$s – %2$s</string>
+    <!-- "<start> – <end> · <duration>" -->
+    <string name="time_range_duration">%1$s – %2$s · %3$s</string>
+
+    <!-- ============================ Timeline ============================ -->
+    <string name="timeline_empty">No activity recorded for this day</string>
+    <string name="cd_jump_to_today">Jump to today</string>
+    <string name="cd_recenter">Recenter on current location</string>
+    <string name="cd_edit">Edit</string>
+    <string name="cd_edit_trip">Edit trip</string>
+    <string name="menu_split">Split</string>
+    <string name="menu_edit_place">Edit place</string>
+    <string name="menu_change_place">Change place</string>
+    <string name="menu_confirm_place">Confirm place</string>
+    <string name="menu_stationary_place">Stationary (a place)</string>
+    <string name="chip_unconfirmed">Unconfirmed</string>
+    <string name="chip_confirm">Confirm</string>
+    <string name="chip_edit_mode">Edit mode</string>
+    <!-- "<mode> · <distance> · <duration>" -->
+    <string name="trip_summary">%1$s · %2$s · %3$s</string>
+
+    <!-- ============================ Places ============================ -->
+    <string name="places_title">Places</string>
+    <string name="places_pending_header">Pending confirmation</string>
+    <string name="places_saved_header">Saved places</string>
+    <string name="places_assign">Assign place</string>
+    <string name="cd_place_locked">Locked</string>
+    <string name="cd_place_delete">Delete place</string>
+    <string name="cd_place_edit">Edit place</string>
+    <string name="places_empty">Places you visit will appear here once detected.</string>
+    <string name="place_default_name">Place</string>
+    <!-- "<visits> · r=<radius> m · <source>" -->
+    <string name="place_summary">%1$s · r=%2$d m · %3$s</string>
+    <string name="places_delete_title">Delete place?</string>
+    <string name="places_delete_message">%1$s has no visits and can be removed from saved places.</string>
+
+    <!-- ============================ Place editor ============================ -->
+    <string name="place_edit_title">Edit place</string>
+    <string name="field_name">Name</string>
+    <string name="field_address">Address</string>
+    <string name="place_edit_radius_hint">Radius: %1$d m   ·   tap the map to set the center</string>
+    <string name="place_lock_title">Lock this place</string>
+    <string name="place_lock_desc">Stop adjusting the center and radius from new visits.</string>
+
+    <!-- ============================ Confirm / assign place ============================ -->
+    <string name="assign_place_title">Assign place</string>
+    <string name="search_places_label">Search places</string>
+    <string name="search_results_header">Search results (nearest first)</string>
+    <string name="saved_places_nearest_header">Saved places (nearest first)</string>
+    <string name="nearby_header">Nearby (nearest first)</string>
+    <string name="custom_places_header">Custom places</string>
+    <string name="custom_place_name_label">Custom place name</string>
+    <!-- "<distance> away" -->
+    <string name="distance_away">%1$s away</string>
+    <!-- "<distance> away · <detail>" -->
+    <string name="candidate_subtitle">%1$s away · %2$s</string>
+
+    <!-- ============================ Place detail ============================ -->
+    <!-- "<visits> · r=<radius> m" -->
+    <string name="place_detail_summary">%1$s · r=%2$d m</string>
+    <!-- "<visits> · r=<radius> m · locked" -->
+    <string name="place_detail_summary_locked">%1$s · r=%2$d m · locked</string>
+    <!-- "r=<radius> m · <fixes> · reliability <pct>%" -->
+    <string name="visit_detail_stats">r=%1$d m · %2$s · reliability %3$d%%</string>
+
+    <!-- ============================ Split / activity editor ============================ -->
+    <string name="split_edit_title">Edit activity</string>
+    <string name="split_not_enough">Not enough samples to split — reclassify the whole item.</string>
+    <string name="field_type">Type</string>
+    <string name="action_apply">Apply</string>
+    <string name="action_apply_whole">Apply to whole item</string>
+    <string name="split_tab_split">Split</string>
+    <string name="split_tab_reclassify">Reclassify all</string>
+    <string name="action_split_here">Split here</string>
+    <string name="cd_move_split_earlier">Move split earlier</string>
+    <string name="cd_move_split_later">Move split later</string>
+    <string name="split_before">Before</string>
+    <string name="split_after">After</string>
+    <!-- "<label>: <value>" e.g. "Type: Walking" -->
+    <string name="type_picker">%1$s: %2$s</string>
+    <!-- "<start> – <end> · <duration> · <samples>" -->
+    <string name="side_span_summary">%1$s – %2$s · %3$s · %4$s</string>
+
+    <!-- ============================ Settings ============================ -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_bg_recording_title">Background recording</string>
+    <string name="settings_bg_recording_desc">Uses motion sensors and geofencing so GPS only runs while you\'re moving — easy on the battery.</string>
+    <string name="settings_grant_permissions">Grant location &amp; activity permissions</string>
+    <string name="settings_power_profile">Power profile</string>
+    <string name="power_saver">Saver</string>
+    <string name="power_balanced">Balanced</string>
+    <string name="power_accurate">Accurate</string>
+    <string name="settings_stop_on_close_title">Stop on app close</string>
+    <string name="settings_stop_on_close_desc">When you swipe Pathline away from Recents, recording stops and you\'ll get a notification. Turn this off to keep recording even after closing the app.</string>
+    <string name="settings_data_model_title">Data &amp; model</string>
+    <string name="settings_state_model">State model: %1$s</string>
+    <string name="settings_transport_model">Transport model: %1$s</string>
+    <string name="model_litert">LiteRT</string>
+    <string name="model_heuristic">heuristic fallback</string>
+    <string name="settings_train_model">Train model</string>
+    <string name="settings_train_desc">Training runs only while charging to save battery.</string>
+    <string name="settings_diagnostics_title">Diagnostics</string>
+    <string name="settings_diagnostics_desc">Inspect and share internal data and session logs.</string>
+    <string name="settings_open_diagnostics">Open diagnostics</string>
+
+    <!-- ============================ Onboarding ============================ -->
+    <string name="onboarding_welcome_title">Welcome to Pathline</string>
+    <string name="onboarding_welcome_body">Pathline keeps a private, on-device timeline of the places you visit and the trips between them — no account, and your location never leaves your phone.</string>
+    <string name="onboarding_permissions_title">A few permissions</string>
+    <string name="onboarding_permissions_body">Pathline records where you go and how you get there. It needs a few permissions to work correctly.</string>
+    <string name="perm_notifications_title">Notifications</string>
+    <string name="perm_notifications_desc">Shows a status notice while recording is active.</string>
+    <string name="perm_location_title">Location</string>
+    <string name="perm_location_desc">Records where you go so Pathline can build your timeline.</string>
+    <string name="perm_activity_title">Physical activity</string>
+    <string name="perm_activity_desc">Detects when you\'re moving and how you travel, so recording stays light on the battery.</string>
+    <string name="perm_phone_title">Phone (optional)</string>
+    <string name="perm_phone_desc">Reads cell-signal strength to improve location context. Pathline works fine if you deny this.</string>
+    <string name="onboarding_background_title">Keep recording in the background</string>
+    <string name="onboarding_background_body">To build a complete timeline, location access needs to be set to \"Allow all the time\" so Pathline keeps recording when the app is closed. Android asks for this separately on the next screen.</string>
+    <string name="action_get_started">Get started</string>
+    <string name="action_restore_backup">Restore from a backup</string>
+    <string name="action_allow_access">Allow access</string>
+    <string name="action_not_now">Not now</string>
+    <string name="action_finish">Finish</string>
+    <string name="action_allow_all_time">Allow all the time</string>
+    <string name="action_maybe_later">Maybe later</string>
+
+    <!-- ============================ Map explorer ============================ -->
+    <string name="range_today">Today</string>
+    <string name="range_week">Week</string>
+    <string name="range_month">Month</string>
+    <string name="range_year">Year</string>
+    <string name="range_custom">Custom</string>
+    <string name="map_draw_track">Draw track</string>
+    <string name="map_loading">Loading…</string>
+    <string name="map_no_dates">No dates selected</string>
+    <string name="action_plot">Plot</string>
+    <!-- "<start> – <end>" date range -->
+    <string name="date_range">%1$s – %2$s</string>
+
+    <!-- ============================ Backup ============================ -->
+    <string name="backup_title">Backup</string>
+    <string name="backup_intro">Back up your full timeline, places and trained models to a folder you choose (Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.</string>
+    <string name="backup_choose_folder">Choose backup folder</string>
+    <string name="backup_selected_folder">selected folder</string>
+    <string name="backup_dest">Backing up to: %1$s</string>
+    <string name="backup_last">Last backup: %1$s</string>
+    <string name="backup_now">Back up now</string>
+    <string name="backup_change_reconnect">Change / reconnect</string>
+    <string name="backup_gpx_title">Also export GPX</string>
+    <string name="backup_gpx_desc">Open, unencrypted weekly .gpx tracks under an \"export\" folder.</string>
+    <string name="backup_gpx_use_separate">Use a separate GPX folder</string>
+    <string name="backup_gpx_change">Change GPX folder</string>
+    <string name="backup_dump_intro">One-time database dump writes a complete standalone copy to a folder you pick.</string>
+    <string name="backup_dump_action">One-time dump…</string>
+    <string name="encrypt_title">Encrypt backup</string>
+    <string name="encrypt_password_on">Protected with your password.</string>
+    <string name="encrypt_passkey_on">Protected with a passkey.</string>
+    <string name="encrypt_off">Off — files are stored unencrypted.</string>
+    <string name="encrypt_chooser_text">Protect the backup with a password you remember, or a passkey (synced by your password manager — nothing to remember, works on your other devices).</string>
+    <string name="action_use_passkey">Use passkey</string>
+    <string name="action_use_password">Use password</string>
+    <string name="backup_set_password_title">Set a backup password</string>
+    <string name="action_encrypt">Encrypt</string>
+    <string name="dump_password_title">Password for this dump</string>
+    <string name="action_dump">Dump</string>
+    <string name="dump_encrypt_title">Encrypt this dump?</string>
+    <string name="dump_encrypt_text">Choose how to protect this one-time dump.</string>
+    <string name="action_password">Password</string>
+    <string name="action_passkey">Passkey</string>
+    <string name="action_no_encryption">No encryption</string>
+    <string name="backup_location_title">Backup location</string>
+    <string name="backup_files_written">Files will be written to:</string>
+    <string name="backup_subfolder_label">Subfolder (leave empty to use the folder itself)</string>
+    <string name="backup_folder_fallback">folder</string>
+    <string name="backup_default_subdir">Pathline</string>
+    <string name="backup_overwrite_warn">⚠ This location already contains a Pathline backup. Continuing will overwrite it.</string>
+    <string name="action_overwrite">Overwrite</string>
+    <string name="action_use_this">Use this</string>
+    <string name="password_dialog_info">This password protects the backup. On this device it\'s stored securely in the Android Keystore; keep a copy somewhere safe to restore on another device.</string>
+    <string name="field_password">Password</string>
+    <string name="field_retype_password">Retype password</string>
+    <string name="password_mismatch">Passwords don\'t match</string>
+    <string name="cd_hide_password">Hide password</string>
+    <string name="cd_show_password">Show password</string>
+    <string name="backup_password_title">Backup password</string>
+    <string name="action_restore">Restore</string>
+    <string name="managed_close">Close</string>
+    <string name="managed_working">Working…</string>
+
+    <!-- Backup operation titles (shown in the progress sheet) -->
+    <string name="backup_op_setup">Setting up backup</string>
+    <string name="backup_op_backing_up">Backing up</string>
+    <string name="backup_op_enable_encryption">Enabling encryption</string>
+    <string name="backup_op_enable_passkey">Enabling passkey encryption</string>
+    <string name="backup_op_remove_encryption">Removing encryption</string>
+    <string name="backup_op_dump">Creating database dump</string>
+    <string name="backup_op_restore">Restoring</string>
+
+    <!-- Backup outcome / error messages -->
+    <string name="backup_result_backed">Done — %1$d partition(s) written</string>
+    <string name="backup_result_backed_failed">Done — %1$d partition(s) written, %2$d failed</string>
+    <string name="backup_result_restored">Restored %1$d rows from %2$d partition(s)</string>
+    <string name="backup_result_no_destination">Choose a backup folder first</string>
+    <string name="backup_result_needs_reclaim">Backup folder is no longer accessible — reconnect it</string>
+    <string name="backup_result_key_unavailable">Backup key unavailable — re-enter your password/passkey</string>
+    <string name="backup_result_failed">Failed: %1$s</string>
+    <string name="restore_no_backup">No backup found in that folder</string>
+    <string name="restore_missing_salt">Backup is missing its passkey salt</string>
+    <string name="passkey_label">Passkey</string>
+    <string name="passkey_unlock_failed">Passkey unlock failed</string>
+    <string name="passkey_setup_failed">Passkey setup failed</string>
+
+    <!-- ============================ Diagnostics (chrome only) ============================ -->
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="cd_refresh_diagnostics">Refresh diagnostics</string>
+    <string name="cd_share_logs">Share logs</string>
+    <string name="cd_close_log">Close log</string>
+    <string name="cd_share_log">Share this log</string>
+    <string name="diag_session_logs">Session logs (newest first) — tap to view</string>
+    <string name="diag_no_logs">No logs yet.</string>
+    <string name="diag_log_empty">(empty)</string>
+    <string name="share_logs_chooser">Share Pathline logs</string>
+    <string name="share_log_chooser">Share %1$s</string>
+
+    <!-- ============================ Plurals ============================ -->
+    <plurals name="visits_count">
+        <item quantity="one">%d visit</item>
+        <item quantity="other">%d visits</item>
+    </plurals>
+    <plurals name="samples_count">
+        <item quantity="one">%d sample</item>
+        <item quantity="other">%d samples</item>
+    </plurals>
+    <plurals name="samples_recorded">
+        <item quantity="one">%d location sample recorded</item>
+        <item quantity="other">%d location samples recorded</item>
+    </plurals>
+    <plurals name="fixes_count">
+        <item quantity="one">%d fix</item>
+        <item quantity="other">%d fixes</item>
+    </plurals>
+    <plurals name="points_count">
+        <item quantity="one">%d point</item>
+        <item quantity="other">%d points</item>
+    </plurals>
 </resources>

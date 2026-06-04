@@ -37,7 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -56,10 +59,12 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MapsComposeExperimentalApi
 import com.google.maps.android.compose.Polyline
 import kotlinx.coroutines.yield
+import net.extrawdw.apps.locationhistory.R
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import androidx.compose.ui.graphics.Color as ComposeColor
 
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
@@ -211,7 +216,7 @@ private fun ControlBar(
                         selected = r == range,
                         onClick = { if (r == MapRange.CUSTOM) onPickDates() else onSelectRange(r) },
                         shape = SegmentedButtonDefaults.itemShape(index, MapRange.entries.size),
-                        label = { Text(r.label, maxLines = 1) },
+                        label = { Text(stringResource(r.labelRes), maxLines = 1) },
                     )
                 }
             }
@@ -221,18 +226,18 @@ private fun ControlBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        customRangeLabel(customStart, customEnd),
+                        customRangeLabel(LocalContext.current, customStart, customEnd),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = onPickDates) { Text("Change") }
+                    TextButton(onClick = onPickDates) { Text(stringResource(R.string.action_change)) }
                     Spacer(Modifier.width(8.dp))
-                    Text("Draw track", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.map_draw_track), style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = drawTrackCustom, onCheckedChange = onToggleTrack)
                 }
             }
             Text(
-                if (loading) "Loading…" else "$pointCount points",
+                if (loading) stringResource(R.string.map_loading) else pluralStringResource(R.plurals.points_count, pointCount, pointCount),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
@@ -269,7 +274,7 @@ private fun DateRangePickerDialog(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
                     Spacer(Modifier.weight(1f))
                     val start = pickerState.selectedStartDateMillis
                     val end = pickerState.selectedEndDateMillis
@@ -280,7 +285,7 @@ private fun DateRangePickerDialog(
                             }
                         },
                         enabled = start != null && end != null,
-                    ) { Text("Plot") }
+                    ) { Text(stringResource(R.string.action_plot)) }
                 }
                 DateRangePicker(state = pickerState, modifier = Modifier.fillMaxWidth().weight(1f))
             }
@@ -295,13 +300,13 @@ private fun utcMillisToDayEpoch(utcMillis: Long): Long =
 private fun dayEpochToUtcMillis(dayEpoch: Long): Long =
     LocalDate.ofEpochDay(dayEpoch).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 
-private val DAY_FMT = DateTimeFormatter.ofPattern("MMM d, yyyy")
+private val DAY_FMT = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
 
-private fun customRangeLabel(startDay: Long?, endDay: Long?): String {
-    if (startDay == null || endDay == null) return "No dates selected"
+private fun customRangeLabel(context: android.content.Context, startDay: Long?, endDay: Long?): String {
+    if (startDay == null || endDay == null) return context.getString(R.string.map_no_dates)
     val lo = minOf(startDay, endDay)
     val hi = maxOf(startDay, endDay)
     val start = LocalDate.ofEpochDay(lo).format(DAY_FMT)
     val end = LocalDate.ofEpochDay(hi).format(DAY_FMT)
-    return if (lo == hi) start else "$start – $end"
+    return if (lo == hi) start else context.getString(R.string.date_range, start, end)
 }

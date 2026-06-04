@@ -27,11 +27,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.content.Context
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
@@ -68,6 +72,9 @@ fun ConfirmPlaceSheet(
         results = searchPlaces(query, visit.centroidLatitude, visit.centroidLongitude)
     }
 
+    val context = LocalContext.current
+    val defaultPlaceName = stringResource(R.string.place_default_name)
+
     val localNearby = remember(localPlaces) {
         localPlaces
             .map { it to Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, it.latitude, it.longitude) }
@@ -77,12 +84,12 @@ fun ConfirmPlaceSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Text("Assign place", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.assign_place_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
 
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Search places") },
+                label = { Text(stringResource(R.string.search_places_label)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -90,28 +97,28 @@ fun ConfirmPlaceSheet(
 
             LazyColumn(Modifier.heightIn(max = 380.dp).padding(top = 8.dp)) {
                 if (results.isNotEmpty()) {
-                    item { SectionLabel("Search results (nearest first)") }
+                    item { SectionLabel(stringResource(R.string.search_results_header)) }
                     items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(visit, c)) { onConfirm(PlaceChoice.Google(c)) }
+                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) { onConfirm(PlaceChoice.Google(c)) }
                     }
                 }
                 if (query.isBlank() && localNearby.isNotEmpty()) {
-                    item { SectionLabel("Saved places (nearest first)") }
+                    item { SectionLabel(stringResource(R.string.saved_places_nearest_header)) }
                     items(localNearby, key = { "l${it.id}" }) { place ->
                         val dist = Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, place.latitude, place.longitude)
-                        PlaceRow(place.name, "${Format.distance(dist)} away") { onConfirm(PlaceChoice.Existing(place.id)) }
+                        PlaceRow(place.name, stringResource(R.string.distance_away, Format.distance(context, dist))) { onConfirm(PlaceChoice.Existing(place.id)) }
                     }
                 }
                 if (query.isBlank() && nearby.isNotEmpty()) {
-                    item { SectionLabel("Nearby (nearest first)") }
+                    item { SectionLabel(stringResource(R.string.nearby_header)) }
                     items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(visit, c)) { onConfirm(PlaceChoice.Google(c)) }
+                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) { onConfirm(PlaceChoice.Google(c)) }
                     }
                 }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text("Custom places", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.custom_places_header), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Row(
                 Modifier.fillMaxWidth().padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -120,13 +127,13 @@ fun ConfirmPlaceSheet(
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text("Custom place name") },
+                    label = { Text(stringResource(R.string.custom_place_name_label)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
-                Button(onClick = { onConfirm(PlaceChoice.NewNamed(newName.ifBlank { "Place" })) }) {
+                Button(onClick = { onConfirm(PlaceChoice.NewNamed(newName.ifBlank { defaultPlaceName })) }) {
                     Icon(Icons.Filled.Add, contentDescription = null)
-                    Text("Save")
+                    Text(stringResource(R.string.action_save))
                 }
             }
         }
@@ -134,10 +141,10 @@ fun ConfirmPlaceSheet(
 }
 
 /** "<distance> away · <address/type>" relative to the visit location. */
-private fun candidateSubtitle(visit: VisitEntity, c: PlaceCandidate): String {
+private fun candidateSubtitle(context: Context, visit: VisitEntity, c: PlaceCandidate): String {
     val dist = Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, c.latitude, c.longitude)
-    val detail = c.address ?: c.primaryType ?: "Place"
-    return "${Format.distance(dist)} away · $detail"
+    val detail = c.address ?: c.primaryType ?: context.getString(R.string.place_default_name)
+    return context.getString(R.string.candidate_subtitle, Format.distance(context, dist), detail)
 }
 
 @Composable

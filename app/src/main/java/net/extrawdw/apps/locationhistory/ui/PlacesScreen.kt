@@ -31,10 +31,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 
@@ -50,14 +53,14 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     var assignVisit by remember { mutableStateOf<VisitEntity?>(null) }
     var detailPlaceId by remember { mutableStateOf<Long?>(null) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Places") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.places_title)) }) }) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (pending.isNotEmpty()) {
-                item { SectionHeader("Pending confirmation") }
+                item { SectionHeader(stringResource(R.string.places_pending_header)) }
                 items(pending, key = { "pending-${it.id}" }) { visit ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
@@ -66,12 +69,12 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                "${Format.time(visit.startMs)} – ${Format.time(visit.endMs)}",
+                                stringResource(R.string.time_range, Format.time(visit.startMs), Format.time(visit.endMs)),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             AssistChip(
                                 onClick = { assignVisit = visit },
-                                label = { Text("Assign place") },
+                                label = { Text(stringResource(R.string.places_assign)) },
                                 modifier = Modifier.padding(top = 8.dp),
                             )
                         }
@@ -79,7 +82,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 }
             }
 
-            item { SectionHeader("Saved places") }
+            item { SectionHeader(stringResource(R.string.places_saved_header)) }
             items(places, key = { "place-${it.id}" }) { place ->
                 val count = visitCounts[place.id] ?: 0
                 Card(onClick = { detailPlaceId = place.id }, modifier = Modifier.fillMaxWidth()) {
@@ -91,25 +94,30 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 if (place.fixed) {
                                     Icon(
                                         Icons.Filled.Lock,
-                                        contentDescription = "Locked",
+                                        contentDescription = stringResource(R.string.cd_place_locked),
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }
                             }
                             place.address?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                             Text(
-                                "$count ${if (count == 1) "visit" else "visits"} · r=${place.radiusMeters.toInt()} m · ${place.source.name.lowercase()}",
+                                stringResource(
+                                    R.string.place_summary,
+                                    pluralStringResource(R.plurals.visits_count, count, count),
+                                    place.radiusMeters.toInt(),
+                                    stringResource(place.source.labelRes),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                         }
                         if (count == 0) {
                             IconButton(onClick = { deletePlace = place }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Delete place")
+                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.cd_place_delete))
                             }
                         }
                         IconButton(onClick = { editPlace = place }) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Edit place")
+                            Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_place_edit))
                         }
                     }
                 }
@@ -117,7 +125,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             if (places.isEmpty() && pending.isEmpty()) {
                 item {
                     Text(
-                        "Places you visit will appear here once detected.",
+                        stringResource(R.string.places_empty),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(32.dp),
                     )
@@ -140,18 +148,18 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     deletePlace?.let { place ->
         AlertDialog(
             onDismissRequest = { deletePlace = null },
-            title = { Text("Delete place?") },
-            text = { Text("${place.name} has no visits and can be removed from saved places.") },
+            title = { Text(stringResource(R.string.places_delete_title)) },
+            text = { Text(stringResource(R.string.places_delete_message, place.name)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         viewModel.deleteIfUnvisited(place.id)
                         deletePlace = null
                     },
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { deletePlace = null }) { Text("Cancel") }
+                TextButton(onClick = { deletePlace = null }) { Text(stringResource(R.string.action_cancel)) }
             },
         )
     }

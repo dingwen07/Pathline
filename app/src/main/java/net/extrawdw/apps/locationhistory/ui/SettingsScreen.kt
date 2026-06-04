@@ -27,10 +27,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,7 +47,7 @@ fun SettingsScreen(
     val sampleCount by viewModel.sampleCount.collectAsStateWithLifecycle()
     val modelStatus = viewModel.modelStatus
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -58,9 +61,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Background recording", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.settings_bg_recording_title), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Uses motion sensors and geofencing so GPS only runs while you're moving — easy on the battery.",
+                                stringResource(R.string.settings_bg_recording_desc),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
@@ -76,7 +79,7 @@ fun SettingsScreen(
                         OutlinedButton(
                             onClick = onRequestPermissions,
                             modifier = Modifier.padding(top = 8.dp),
-                        ) { Text("Grant location & activity permissions") }
+                        ) { Text(stringResource(R.string.settings_grant_permissions)) }
                     }
                 }
             }
@@ -84,7 +87,7 @@ fun SettingsScreen(
             // Power profile
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Power profile", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_power_profile), style = MaterialTheme.typography.titleMedium)
                     val profiles = PowerProfile.entries
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         profiles.forEachIndexed { index, profile ->
@@ -92,7 +95,7 @@ fun SettingsScreen(
                                 selected = settings.powerProfile == profile,
                                 onClick = { viewModel.setPowerProfile(profile) },
                                 shape = SegmentedButtonDefaults.itemShape(index, profiles.size),
-                            ) { Text(profile.label()) }
+                            ) { Text(stringResource(profile.labelRes())) }
                         }
                     }
                 }
@@ -107,9 +110,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Stop on app close", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.settings_stop_on_close_title), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "When you swipe Pathline away from Recents, recording stops and you'll get a notification. Turn this off to keep recording even after closing the app.",
+                                stringResource(R.string.settings_stop_on_close_desc),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
@@ -124,22 +127,31 @@ fun SettingsScreen(
             // Data + model status
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Data & model", style = MaterialTheme.typography.titleMedium)
-                    Text("$sampleCount location samples recorded", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.settings_data_model_title), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "State model: ${if (modelStatus.stateModelReady) "LiteRT" else "heuristic fallback"}",
+                        pluralStringResource(R.plurals.samples_recorded, sampleCount.toInt(), sampleCount),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "Transport model: ${if (modelStatus.transportModelReady) "LiteRT" else "heuristic fallback"}",
+                        stringResource(
+                            R.string.settings_state_model,
+                            stringResource(if (modelStatus.stateModelReady) R.string.model_litert else R.string.model_heuristic),
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        stringResource(
+                            R.string.settings_transport_model,
+                            stringResource(if (modelStatus.transportModelReady) R.string.model_litert else R.string.model_heuristic),
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Button(
                         onClick = viewModel::trainNow,
                         modifier = Modifier.padding(top = 8.dp),
-                    ) { Text("Train model") }
+                    ) { Text(stringResource(R.string.settings_train_model)) }
                     Text(
-                        "Training runs only while charging to save battery.",
+                        stringResource(R.string.settings_train_desc),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Normal,
                     )
@@ -153,15 +165,15 @@ fun SettingsScreen(
             var showDiagnostics by remember { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_diagnostics_title), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Inspect and share internal data and session logs.",
+                        stringResource(R.string.settings_diagnostics_desc),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedButton(
                         onClick = { showDiagnostics = true },
                         modifier = Modifier.padding(top = 8.dp),
-                    ) { Text("Open diagnostics") }
+                    ) { Text(stringResource(R.string.settings_open_diagnostics)) }
                 }
             }
             if (showDiagnostics) DiagnosticsDialog(onDismiss = { showDiagnostics = false })
@@ -169,8 +181,9 @@ fun SettingsScreen(
     }
 }
 
-private fun PowerProfile.label(): String = when (this) {
-    PowerProfile.BATTERY_SAVER -> "Saver"
-    PowerProfile.BALANCED -> "Balanced"
-    PowerProfile.HIGH_ACCURACY -> "Accurate"
+@androidx.annotation.StringRes
+private fun PowerProfile.labelRes(): Int = when (this) {
+    PowerProfile.BATTERY_SAVER -> R.string.power_saver
+    PowerProfile.BALANCED -> R.string.power_balanced
+    PowerProfile.HIGH_ACCURACY -> R.string.power_accurate
 }

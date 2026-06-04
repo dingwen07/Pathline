@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,11 +53,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
@@ -97,6 +100,7 @@ data class DiagnosticsState(
 
 @HiltViewModel
 class DiagnosticsViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val sampleDao: LocationSampleDao,
     private val visitDao: VisitDao,
     private val tripDao: TripDao,
@@ -134,7 +138,7 @@ class DiagnosticsViewModel @Inject constructor(
             trips = tripDao.count(),
             places = placeDao.count(),
             lastFix = recent?.let {
-                "${TimeBuckets.localDate(it.dayEpoch)} ${Format.time(it.timestampMs)} · ${it.devicePhysicalState.label} · ±${it.accuracy?.toInt() ?: "?"}m"
+                "${TimeBuckets.localDate(it.dayEpoch)} ${Format.time(it.timestampMs)} · ${appContext.getString(it.devicePhysicalState.labelRes)} · ±${it.accuracy?.toInt() ?: "?"}m"
             } ?: "—",
         )
         diagnostics.value = DiagnosticsState(
@@ -142,7 +146,7 @@ class DiagnosticsViewModel @Inject constructor(
             recorderRows = listOf(
                 "Tracking enabled" to settings.trackingEnabled.toString(),
                 "Foreground service running" to recorder.isRecording.toString(),
-                "Motion state" to recorder.state.label,
+                "Motion state" to appContext.getString(recorder.state.labelRes),
                 "Power profile" to (recorder.profile?.name ?: settings.powerProfile.name),
                 "Recorder updated" to (recorder.updatedAtMs?.let { Format.time(it) } ?: "—"),
                 "Last service start error" to (recorder.lastStartError ?: "—"),
@@ -224,18 +228,18 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
             Scaffold(
                 topBar = {
                     TopAppBar(
-                        title = { Text("Diagnostics") },
+                        title = { Text(stringResource(R.string.diagnostics_title)) },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
-                                Icon(Icons.Filled.Close, contentDescription = "Close")
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                             }
                         },
                         actions = {
                             IconButton(onClick = { viewModel.refresh() }) {
-                                Icon(Icons.Filled.Refresh, contentDescription = "Refresh diagnostics")
+                                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.cd_refresh_diagnostics))
                             }
                             IconButton(onClick = { shareLogs(context) }) {
-                                Icon(Icons.Filled.Share, contentDescription = "Share logs")
+                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.cd_share_logs))
                             }
                         },
                     )
@@ -272,7 +276,7 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                     }
                     item {
                         Text(
-                            "Session logs (newest first) — tap to view",
+                            stringResource(R.string.diag_session_logs),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -291,7 +295,7 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                         HorizontalDivider()
                     }
                     if (files.isEmpty()) {
-                        item { Text("No logs yet.", Modifier.padding(16.dp)) }
+                        item { Text(stringResource(R.string.diag_no_logs), Modifier.padding(16.dp)) }
                     }
                 }
             }
@@ -329,20 +333,21 @@ private fun LogFileDialog(
                         title = { Text(file.name) },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
-                                Icon(Icons.Filled.Close, contentDescription = "Close log")
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_close_log))
                             }
                         },
                         actions = {
                             IconButton(onClick = onShare) {
-                                Icon(Icons.Filled.Share, contentDescription = "Share this log")
+                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.cd_share_log))
                             }
                         },
                     )
                 },
             ) { padding ->
+                val emptyText = stringResource(R.string.diag_log_empty)
                 SelectionContainer(Modifier.fillMaxSize().padding(padding)) {
                     Text(
-                        content.ifEmpty { "(empty)" },
+                        content.ifEmpty { emptyText },
                         modifier = Modifier.fillMaxSize()
                             .verticalScroll(rememberScrollState())
                             .horizontalScroll(rememberScrollState())
@@ -404,7 +409,7 @@ fun shareLogs(context: Context) {
         putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(intent, "Share Pathline logs"))
+    context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_logs_chooser)))
 }
 
 /** Share exactly one selected session log via a FileProvider content URI. */
@@ -418,5 +423,5 @@ fun shareLog(context: Context, file: File) {
         putExtra(android.content.Intent.EXTRA_SUBJECT, file.name)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(intent, "Share ${file.name}"))
+    context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_log_chooser, file.name)))
 }

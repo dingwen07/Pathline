@@ -25,12 +25,12 @@ import javax.inject.Inject
 import kotlin.math.roundToLong
 
 /** Time windows the map explorer can plot. */
-enum class MapRange(val label: String) {
-    TODAY("Today"),
-    WEEK("Week"),
-    MONTH("Month"),
-    YEAR("Year"),
-    CUSTOM("Custom"),
+enum class MapRange(@param:androidx.annotation.StringRes val labelRes: Int) {
+    TODAY(net.extrawdw.apps.locationhistory.R.string.range_today),
+    WEEK(net.extrawdw.apps.locationhistory.R.string.range_week),
+    MONTH(net.extrawdw.apps.locationhistory.R.string.range_month),
+    YEAR(net.extrawdw.apps.locationhistory.R.string.range_year),
+    CUSTOM(net.extrawdw.apps.locationhistory.R.string.range_custom),
 }
 
 data class MapExplorerState(

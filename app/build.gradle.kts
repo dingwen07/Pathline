@@ -53,6 +53,12 @@ android {
         compose = true
         buildConfig = true
     }
+    androidResources {
+        // Auto-generate res/xml/locales_config.xml from the translated values-* folders and inject
+        // android:localeConfig into the manifest, so the app shows up in Android 13+ "per-app
+        // language" settings. The unqualified values/ locale is declared in res/resources.properties.
+        generateLocaleConfig = true
+    }
 }
 
 // Emit Room schemas to a versioned directory so migrations can be validated/tested.

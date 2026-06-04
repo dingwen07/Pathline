@@ -1,16 +1,19 @@
 package net.extrawdw.apps.locationhistory.service
 
+import android.app.LocaleManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.annotation.DrawableRes
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
 import net.extrawdw.apps.locationhistory.MainActivity
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
@@ -29,15 +32,30 @@ object Notifications {
     const val ALERT_CHANNEL_ID = "pathline_alerts"
     const val RECORDING_STOPPED_NOTIFICATION_ID = 7002
 
+    /**
+     * A context whose resources resolve against the app's per-app language (the Android 13+
+     * "App language" preference). These notifications are posted from [LocationRecorderService] and
+     * the task-removal path; a Service context does **not** pick up the per-app locale the way an
+     * Activity does, so plain getString() would fall back to the system locale and render in the
+     * wrong language. Re-resolve strings against the locale chosen in [LocaleManager].
+     */
+    private fun localized(context: Context): Context {
+        val locales = context.getSystemService(LocaleManager::class.java)?.applicationLocales
+        if (locales == null || locales.isEmpty) return context
+        val config = Configuration(context.resources.configuration).apply { setLocales(locales) }
+        return context.createConfigurationContext(config)
+    }
+
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(RECORDING_CHANNEL_ID) == null) {
+            val res = localized(context)
             val channel = NotificationChannel(
                 RECORDING_CHANNEL_ID,
-                context.getString(R.string.recording_channel_name),
+                res.getString(R.string.recording_channel_name),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = context.getString(R.string.recording_channel_desc)
+                description = res.getString(R.string.recording_channel_desc)
                 setShowBadge(false)
             }
             manager.createNotificationChannel(channel)
@@ -47,12 +65,13 @@ object Notifications {
     fun ensureAlertChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(ALERT_CHANNEL_ID) == null) {
+            val res = localized(context)
             val channel = NotificationChannel(
                 ALERT_CHANNEL_ID,
-                context.getString(R.string.alert_channel_name),
+                res.getString(R.string.alert_channel_name),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = context.getString(R.string.alert_channel_desc)
+                description = res.getString(R.string.alert_channel_desc)
                 // Heads-up popup, but no sound or vibration.
                 setSound(null, null)
                 enableVibration(false)
@@ -64,9 +83,10 @@ object Notifications {
     /** Alert (popup, silent) telling the user recording was turned off after task removal. */
     fun notifyRecordingStopped(context: Context) {
         ensureAlertChannel(context)
-        val text = context.getString(R.string.recording_stopped_text)
+        val res = localized(context)
+        val text = res.getString(R.string.recording_stopped_text)
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
-            .setContentTitle(context.getString(R.string.recording_stopped_title))
+            .setContentTitle(res.getString(R.string.recording_stopped_title))
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(contentIntent(context))
@@ -79,12 +99,12 @@ object Notifications {
             .setAutoCancel(true)
             .addAction(
                 0,
-                context.getString(R.string.recording_stopped_action_resume),
+                res.getString(R.string.recording_stopped_action_resume),
                 actionIntent(context, RecordingActionReceiver.ACTION_RESUME_RECORDING, 1),
             )
             .addAction(
                 0,
-                context.getString(R.string.recording_stopped_action_keep_on),
+                res.getString(R.string.recording_stopped_action_keep_on),
                 actionIntent(context, RecordingActionReceiver.ACTION_KEEP_RECORDING_ON_CLOSE, 2),
             )
             .build()
@@ -104,9 +124,10 @@ object Notifications {
 
     fun buildRecordingNotification(context: Context, state: DevicePhysicalState): Notification {
         ensureChannel(context)
+        val res = localized(context)
         return NotificationCompat.Builder(context, RECORDING_CHANNEL_ID)
-            .setContentTitle(context.getString(R.string.recording_title))
-            .setContentText(state.label)
+            .setContentTitle(res.getString(R.string.recording_title))
+            .setContentText(res.getString(state.labelRes))
             .setContentIntent(contentIntent(context))
             // Status bar: simplified monochrome pin. Shade large icon: current movement state.
             .setSmallIcon(R.drawable.ic_stat_recording)
@@ -148,7 +169,7 @@ object Notifications {
         val drawable = ContextCompat.getDrawable(context, largeIconFor(state)) ?: return null
         val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 108
         val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 108
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(width, height)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, width, height)
         drawable.draw(canvas)

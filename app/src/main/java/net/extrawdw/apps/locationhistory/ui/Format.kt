@@ -10,14 +10,15 @@ import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.DirectionsBoat
 import androidx.compose.material.icons.filled.Train
+import android.content.Context
 import androidx.compose.ui.graphics.vector.ImageVector
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.util.Locale
 
 /** Small UI formatting helpers shared by the timeline and map screens. */
 object Format {
@@ -32,20 +33,25 @@ object Format {
 
     fun date(dayEpoch: Long): String = LocalDate.ofEpochDay(dayEpoch).format(dateFormatter)
 
-    fun duration(startMs: Long, endMs: Long): String {
+    fun duration(context: Context, startMs: Long, endMs: Long): String {
         val minutes = ((endMs - startMs) / 60_000L).coerceAtLeast(0)
         return when {
-            minutes < 1 -> "<1 min"
-            minutes < 60 -> "$minutes min"
-            else -> "${minutes / 60}h ${minutes % 60}m"
+            minutes < 1 -> context.getString(R.string.duration_under_minute)
+            minutes < 60 -> context.getString(R.string.duration_minutes, minutes.toInt())
+            else -> context.getString(
+                R.string.duration_hours_minutes,
+                (minutes / 60).toInt(),
+                (minutes % 60).toInt(),
+            )
         }
     }
 
-    fun distance(meters: Double): String =
-        if (meters < 1000) "${meters.toInt()} m"
-        else String.format(Locale.getDefault(), "%.1f km", meters / 1000.0)
+    fun distance(context: Context, meters: Double): String =
+        if (meters < 1000) context.getString(R.string.distance_meters, meters.toInt())
+        else context.getString(R.string.distance_kilometers, meters / 1000.0)
 
-    fun confidencePct(confidence: Float): String = "${(confidence * 100).toInt()}%"
+    fun confidencePct(context: Context, confidence: Float): String =
+        context.getString(R.string.confidence_percent, (confidence * 100).toInt())
 
     fun transportIcon(mode: TransportMode): ImageVector = when (mode) {
         TransportMode.WALKING -> Icons.AutoMirrored.Filled.DirectionsWalk

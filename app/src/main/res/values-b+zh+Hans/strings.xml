@@ -1,0 +1,289 @@
+<resources>
+    <string name="app_name">Pathline</string>
+
+    <!-- ============================ Notifications ============================ -->
+    <string name="recording_channel_name">位置记录</string>
+    <string name="recording_channel_desc">在 Pathline 记录您的路线时显示。</string>
+    <string name="recording_title">正在记录您的时间线</string>
+    <string name="alert_channel_name">记录提醒</string>
+    <string name="alert_channel_desc">记录被中断或关闭时的重要通知。</string>
+    <string name="recording_stopped_title">记录已关闭</string>
+    <string name="recording_stopped_text">将 Pathline 从最近任务中移除会停止记录您的时间线。打开 Pathline 即可重新开启记录。</string>
+    <string name="recording_stopped_action_resume">开启记录</string>
+    <string name="recording_stopped_action_keep_on">关闭后继续记录</string>
+
+    <!-- ============================ Common actions ============================ -->
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_close">关闭</string>
+    <string name="action_change">更改</string>
+    <string name="action_continue">继续</string>
+
+    <!-- ============================ Navigation ============================ -->
+    <string name="nav_timeline">时间线</string>
+    <string name="nav_places">地点</string>
+    <string name="nav_explorer">浏览</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- ============================ Device physical state ============================ -->
+    <string name="state_stationary">静止</string>
+    <string name="state_walking">步行</string>
+    <string name="state_running">跑步</string>
+    <string name="state_cycling">骑行</string>
+    <string name="state_in_vehicle">乘车</string>
+    <string name="state_unknown">未知</string>
+
+    <!-- ============================ Transport mode ============================ -->
+    <string name="transport_walking">步行</string>
+    <string name="transport_running">跑步</string>
+    <string name="transport_cycling">骑行</string>
+    <string name="transport_car">汽车</string>
+    <string name="transport_bus">公交</string>
+    <string name="transport_rail">轨道交通</string>
+    <string name="transport_ferry">渡轮</string>
+    <string name="transport_flight">飞机</string>
+    <string name="transport_unknown">未知</string>
+
+    <!-- ============================ Place source ============================ -->
+    <string name="place_source_user">用户</string>
+    <string name="place_source_maps">地图</string>
+    <string name="place_source_inferred">推断</string>
+
+    <!-- ============================ Formatting helpers ============================ -->
+    <string name="duration_under_minute">&lt;1 分钟</string>
+    <string name="duration_minutes">%1$d 分钟</string>
+    <string name="duration_hours_minutes">%1$d 小时 %2$d 分</string>
+    <string name="distance_meters">%1$d 米</string>
+    <string name="distance_kilometers">%1$.1f 公里</string>
+    <string name="confidence_percent">%1$d%%</string>
+    <string name="time_range">%1$s – %2$s</string>
+    <string name="time_range_duration">%1$s – %2$s · %3$s</string>
+
+    <!-- ============================ Timeline ============================ -->
+    <string name="timeline_empty">这一天没有记录到任何活动</string>
+    <string name="cd_jump_to_today">跳到今天</string>
+    <string name="cd_recenter">回到当前位置</string>
+    <string name="cd_edit">编辑</string>
+    <string name="cd_edit_trip">编辑行程</string>
+    <string name="menu_split">拆分</string>
+    <string name="menu_edit_place">编辑地点</string>
+    <string name="menu_change_place">更改地点</string>
+    <string name="menu_confirm_place">确认地点</string>
+    <string name="menu_stationary_place">静止（一个地点）</string>
+    <string name="chip_unconfirmed">未确认</string>
+    <string name="chip_confirm">确认</string>
+    <string name="chip_edit_mode">编辑方式</string>
+    <string name="trip_summary">%1$s · %2$s · %3$s</string>
+
+    <!-- ============================ Places ============================ -->
+    <string name="places_title">地点</string>
+    <string name="places_pending_header">待确认</string>
+    <string name="places_saved_header">已保存的地点</string>
+    <string name="places_assign">指定地点</string>
+    <string name="cd_place_locked">已锁定</string>
+    <string name="cd_place_delete">删除地点</string>
+    <string name="cd_place_edit">编辑地点</string>
+    <string name="places_empty">检测到您访问的地点后，会显示在这里。</string>
+    <string name="place_default_name">地点</string>
+    <string name="place_summary">%1$s · 半径=%2$d 米 · %3$s</string>
+    <string name="places_delete_title">删除地点？</string>
+    <string name="places_delete_message">%1$s 没有访问记录，可以从已保存的地点中移除。</string>
+
+    <!-- ============================ Place editor ============================ -->
+    <string name="place_edit_title">编辑地点</string>
+    <string name="field_name">名称</string>
+    <string name="field_address">地址</string>
+    <string name="place_edit_radius_hint">半径：%1$d 米   ·   点按地图设置中心</string>
+    <string name="place_lock_title">锁定此地点</string>
+    <string name="place_lock_desc">不再根据新的访问调整中心和半径。</string>
+
+    <!-- ============================ Confirm / assign place ============================ -->
+    <string name="assign_place_title">指定地点</string>
+    <string name="search_places_label">搜索地点</string>
+    <string name="search_results_header">搜索结果（由近到远）</string>
+    <string name="saved_places_nearest_header">已保存的地点（由近到远）</string>
+    <string name="nearby_header">附近（由近到远）</string>
+    <string name="custom_places_header">自定义地点</string>
+    <string name="custom_place_name_label">自定义地点名称</string>
+    <string name="distance_away">距离 %1$s</string>
+    <string name="candidate_subtitle">距离 %1$s · %2$s</string>
+
+    <!-- ============================ Place detail ============================ -->
+    <string name="place_detail_summary">%1$s · 半径=%2$d 米</string>
+    <string name="place_detail_summary_locked">%1$s · 半径=%2$d 米 · 已锁定</string>
+    <string name="visit_detail_stats">半径=%1$d 米 · %2$s · 可靠度 %3$d%%</string>
+
+    <!-- ============================ Split / activity editor ============================ -->
+    <string name="split_edit_title">编辑活动</string>
+    <string name="split_not_enough">采样点不足，无法拆分 — 请重新归类整个项目。</string>
+    <string name="field_type">类型</string>
+    <string name="action_apply">应用</string>
+    <string name="action_apply_whole">应用到整个项目</string>
+    <string name="split_tab_split">拆分</string>
+    <string name="split_tab_reclassify">全部重新归类</string>
+    <string name="action_split_here">在此拆分</string>
+    <string name="cd_move_split_earlier">将拆分点前移</string>
+    <string name="cd_move_split_later">将拆分点后移</string>
+    <string name="split_before">之前</string>
+    <string name="split_after">之后</string>
+    <string name="type_picker">%1$s：%2$s</string>
+    <string name="side_span_summary">%1$s – %2$s · %3$s · %4$s</string>
+
+    <!-- ============================ Settings ============================ -->
+    <string name="settings_title">设置</string>
+    <string name="settings_bg_recording_title">后台记录</string>
+    <string name="settings_bg_recording_desc">使用运动传感器和地理围栏，仅在您移动时启用 GPS，更省电。</string>
+    <string name="settings_grant_permissions">授予位置和活动权限</string>
+    <string name="settings_power_profile">电量模式</string>
+    <string name="power_saver">省电</string>
+    <string name="power_balanced">均衡</string>
+    <string name="power_accurate">精确</string>
+    <string name="settings_stop_on_close_title">关闭应用时停止</string>
+    <string name="settings_stop_on_close_desc">当您将 Pathline 从最近任务中划走时，记录会停止并收到通知。关闭此项可在关闭应用后继续记录。</string>
+    <string name="settings_data_model_title">数据与模型</string>
+    <string name="settings_state_model">状态模型：%1$s</string>
+    <string name="settings_transport_model">交通模型：%1$s</string>
+    <string name="model_litert">LiteRT</string>
+    <string name="model_heuristic">启发式回退</string>
+    <string name="settings_train_model">训练模型</string>
+    <string name="settings_train_desc">仅在充电时训练以节省电量。</string>
+    <string name="settings_diagnostics_title">诊断</string>
+    <string name="settings_diagnostics_desc">查看并分享内部数据和会话日志。</string>
+    <string name="settings_open_diagnostics">打开诊断</string>
+
+    <!-- ============================ Onboarding ============================ -->
+    <string name="onboarding_welcome_title">欢迎使用 Pathline</string>
+    <string name="onboarding_welcome_body">Pathline 在设备本地为您保存一份私密的时间线，记录您访问的地点以及之间的行程 — 无需账号，您的位置数据绝不离开手机。</string>
+    <string name="onboarding_permissions_title">几项权限</string>
+    <string name="onboarding_permissions_body">Pathline 记录您去往的地点以及出行方式。它需要几项权限才能正常工作。</string>
+    <string name="perm_notifications_title">通知</string>
+    <string name="perm_notifications_desc">在记录进行时显示状态提示。</string>
+    <string name="perm_location_title">位置</string>
+    <string name="perm_location_desc">记录您去往的地点，以便 Pathline 构建您的时间线。</string>
+    <string name="perm_activity_title">身体活动</string>
+    <string name="perm_activity_desc">检测您何时移动以及如何出行，让记录更省电。</string>
+    <string name="perm_phone_title">电话（可选）</string>
+    <string name="perm_phone_desc">读取蜂窝信号强度以改进位置判断。即使拒绝，Pathline 也能正常使用。</string>
+    <string name="onboarding_background_title">在后台持续记录</string>
+    <string name="onboarding_background_body">为了构建完整的时间线，位置访问需要设置为“始终允许”，这样 Pathline 才能在应用关闭时继续记录。Android 会在下一个界面单独请求此项。</string>
+    <string name="action_get_started">开始使用</string>
+    <string name="action_restore_backup">从备份恢复</string>
+    <string name="action_allow_access">允许访问</string>
+    <string name="action_not_now">暂不</string>
+    <string name="action_finish">完成</string>
+    <string name="action_allow_all_time">始终允许</string>
+    <string name="action_maybe_later">以后再说</string>
+
+    <!-- ============================ Map explorer ============================ -->
+    <string name="range_today">今天</string>
+    <string name="range_week">本周</string>
+    <string name="range_month">本月</string>
+    <string name="range_year">本年</string>
+    <string name="range_custom">自定义</string>
+    <string name="map_draw_track">绘制轨迹</string>
+    <string name="map_loading">加载中…</string>
+    <string name="map_no_dates">未选择日期</string>
+    <string name="action_plot">绘制</string>
+    <string name="date_range">%1$s – %2$s</string>
+
+    <!-- ============================ Backup ============================ -->
+    <string name="backup_title">备份</string>
+    <string name="backup_intro">将完整的时间线、地点和已训练的模型备份到您选择的文件夹（Google Drive、Dropbox、本地存储）。每次仅重新上传最近一周的数据。</string>
+    <string name="backup_choose_folder">选择备份文件夹</string>
+    <string name="backup_selected_folder">所选文件夹</string>
+    <string name="backup_dest">备份到：%1$s</string>
+    <string name="backup_last">上次备份：%1$s</string>
+    <string name="backup_now">立即备份</string>
+    <string name="backup_change_reconnect">更改 / 重新连接</string>
+    <string name="backup_gpx_title">同时导出 GPX</string>
+    <string name="backup_gpx_desc">在“export”文件夹下生成开放、未加密的每周 .gpx 轨迹。</string>
+    <string name="backup_gpx_use_separate">使用单独的 GPX 文件夹</string>
+    <string name="backup_gpx_change">更改 GPX 文件夹</string>
+    <string name="backup_dump_intro">一次性数据库转储会将完整的独立副本写入您选择的文件夹。</string>
+    <string name="backup_dump_action">一次性转储…</string>
+    <string name="encrypt_title">加密备份</string>
+    <string name="encrypt_password_on">已用密码保护。</string>
+    <string name="encrypt_passkey_on">已用通行密钥保护。</string>
+    <string name="encrypt_off">关闭 — 文件以未加密形式存储。</string>
+    <string name="encrypt_chooser_text">用您能记住的密码，或用通行密钥（由您的密码管理器同步 — 无需记忆，可在您的其他设备上使用）来保护备份。</string>
+    <string name="action_use_passkey">使用通行密钥</string>
+    <string name="action_use_password">使用密码</string>
+    <string name="backup_set_password_title">设置备份密码</string>
+    <string name="action_encrypt">加密</string>
+    <string name="dump_password_title">此次转储的密码</string>
+    <string name="action_dump">转储</string>
+    <string name="dump_encrypt_title">加密此次转储？</string>
+    <string name="dump_encrypt_text">选择如何保护这次一次性转储。</string>
+    <string name="action_password">密码</string>
+    <string name="action_passkey">通行密钥</string>
+    <string name="action_no_encryption">不加密</string>
+    <string name="backup_location_title">备份位置</string>
+    <string name="backup_files_written">文件将写入：</string>
+    <string name="backup_subfolder_label">子文件夹（留空则使用该文件夹本身）</string>
+    <string name="backup_folder_fallback">文件夹</string>
+    <string name="backup_default_subdir">Pathline</string>
+    <string name="backup_overwrite_warn">⚠ 此位置已包含 Pathline 备份。继续将会覆盖它。</string>
+    <string name="action_overwrite">覆盖</string>
+    <string name="action_use_this">使用此处</string>
+    <string name="password_dialog_info">此密码用于保护备份。在本设备上它会安全地存储在 Android 密钥库中；请妥善保管一份，以便在其他设备上恢复。</string>
+    <string name="field_password">密码</string>
+    <string name="field_retype_password">再次输入密码</string>
+    <string name="password_mismatch">两次密码不一致</string>
+    <string name="cd_hide_password">隐藏密码</string>
+    <string name="cd_show_password">显示密码</string>
+    <string name="backup_password_title">备份密码</string>
+    <string name="action_restore">恢复</string>
+    <string name="managed_close">关闭</string>
+    <string name="managed_working">处理中…</string>
+
+    <string name="backup_op_setup">正在设置备份</string>
+    <string name="backup_op_backing_up">正在备份</string>
+    <string name="backup_op_enable_encryption">正在启用加密</string>
+    <string name="backup_op_enable_passkey">正在启用通行密钥加密</string>
+    <string name="backup_op_remove_encryption">正在移除加密</string>
+    <string name="backup_op_dump">正在创建数据库转储</string>
+    <string name="backup_op_restore">正在恢复</string>
+
+    <string name="backup_result_backed">完成 — 已写入 %1$d 个分区</string>
+    <string name="backup_result_backed_failed">完成 — 已写入 %1$d 个分区，%2$d 个失败</string>
+    <string name="backup_result_restored">已从 %2$d 个分区恢复 %1$d 行</string>
+    <string name="backup_result_no_destination">请先选择备份文件夹</string>
+    <string name="backup_result_needs_reclaim">备份文件夹已无法访问 — 请重新连接</string>
+    <string name="backup_result_key_unavailable">备份密钥不可用 — 请重新输入密码/通行密钥</string>
+    <string name="backup_result_failed">失败：%1$s</string>
+    <string name="restore_no_backup">该文件夹中未找到备份</string>
+    <string name="restore_missing_salt">备份缺少其通行密钥盐值</string>
+    <string name="passkey_label">通行密钥</string>
+    <string name="passkey_unlock_failed">通行密钥解锁失败</string>
+    <string name="passkey_setup_failed">通行密钥设置失败</string>
+
+    <!-- ============================ Diagnostics (chrome only) ============================ -->
+    <string name="diagnostics_title">诊断</string>
+    <string name="cd_refresh_diagnostics">刷新诊断</string>
+    <string name="cd_share_logs">分享日志</string>
+    <string name="cd_close_log">关闭日志</string>
+    <string name="cd_share_log">分享此日志</string>
+    <string name="diag_session_logs">会话日志（最新在前）— 点按查看</string>
+    <string name="diag_no_logs">暂无日志。</string>
+    <string name="diag_log_empty">（空）</string>
+    <string name="share_logs_chooser">分享 Pathline 日志</string>
+    <string name="share_log_chooser">分享 %1$s</string>
+
+    <!-- ============================ Plurals ============================ -->
+    <plurals name="visits_count">
+        <item quantity="other">%d 次访问</item>
+    </plurals>
+    <plurals name="samples_count">
+        <item quantity="other">%d 个采样点</item>
+    </plurals>
+    <plurals name="samples_recorded">
+        <item quantity="other">已记录 %d 个位置采样</item>
+    </plurals>
+    <plurals name="fixes_count">
+        <item quantity="other">%d 个定位</item>
+    </plurals>
+    <plurals name="points_count">
+        <item quantity="other">%d 个点</item>
+    </plurals>
+</resources>

@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -39,6 +40,7 @@ import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.rememberCameraPositionState
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 
 /**
@@ -73,14 +75,14 @@ fun PlaceEditDialog(
             Scaffold(
                 topBar = {
                     TopAppBar(
-                        title = { Text("Edit place") },
+                        title = { Text(stringResource(R.string.place_edit_title)) },
                         navigationIcon = {
-                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close)) }
                         },
                         actions = {
                             TextButton(onClick = {
                                 onSave(name, address.ifBlank { null }, center.latitude, center.longitude, radius.toDouble(), fixed)
-                            }) { Text("Save") }
+                            }) { Text(stringResource(R.string.action_save)) }
                         },
                     )
                 },
@@ -88,16 +90,16 @@ fun PlaceEditDialog(
                 Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
                     OutlinedTextField(
                         value = name, onValueChange = { name = it },
-                        label = { Text("Name") }, singleLine = true,
+                        label = { Text(stringResource(R.string.field_name)) }, singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
                     OutlinedTextField(
                         value = address, onValueChange = { address = it },
-                        label = { Text("Address") }, singleLine = true,
+                        label = { Text(stringResource(R.string.field_address)) }, singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
                     Text(
-                        "Radius: ${radius.toInt()} m   ·   tap the map to set the center",
+                        stringResource(R.string.place_edit_radius_hint, radius.toInt()),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -107,8 +109,8 @@ fun PlaceEditDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Lock this place", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                            Text("Stop adjusting the center and radius from new visits.", style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.place_lock_title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(stringResource(R.string.place_lock_desc), style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(checked = fixed, onCheckedChange = { fixed = it })
                     }

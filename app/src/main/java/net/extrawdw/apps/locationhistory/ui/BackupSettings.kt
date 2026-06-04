@@ -2,6 +2,8 @@ package net.extrawdw.apps.locationhistory.ui
 
 import android.content.Context
 import android.net.Uri
+import dagger.hilt.android.qualifiers.ApplicationContext
+import net.extrawdw.apps.locationhistory.R
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -67,6 +70,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class BackupViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val controller: BackupOperationController,
     private val passkeyManager: PasskeyManager,
     private val backupRepository: BackupRepository,
@@ -98,7 +102,7 @@ class BackupViewModel @Inject constructor(
     fun enablePasskey(activityContext: Context) = viewModelScope.launch {
         runCatching { passkeyManager.obtainForSetup(activityContext) }
             .onSuccess { controller.startEnablePasskey(EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)) }
-            .onFailure { controller.fail(ManagedKind.BACKUP, "Passkey", it.message ?: "Passkey setup failed") }
+            .onFailure { controller.fail(ManagedKind.BACKUP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
     }
 
     fun dump(uri: Uri, subdir: String?, choice: EncryptionChoice) = controller.startDump(uri, subdir, choice)
@@ -106,7 +110,7 @@ class BackupViewModel @Inject constructor(
     fun dumpWithPasskey(activityContext: Context, uri: Uri, subdir: String?) = viewModelScope.launch {
         runCatching { passkeyManager.obtainForSetup(activityContext) }
             .onSuccess { controller.startDump(uri, subdir, EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)) }
-            .onFailure { controller.fail(ManagedKind.DUMP, "Passkey", it.message ?: "Passkey setup failed") }
+            .onFailure { controller.fail(ManagedKind.DUMP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
     }
 }
 
@@ -134,31 +138,31 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Backup", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.backup_title), style = MaterialTheme.typography.titleMedium)
             val cfg = config
 
             if (cfg?.treeUri == null) {
                 Text(
-                    "Back up your full timeline, places and trained models to a folder you choose " +
-                        "(Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.",
+                    stringResource(R.string.backup_intro),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text("Choose backup folder") }
+                OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text(stringResource(R.string.backup_choose_folder)) }
             } else {
+                val selectedFolderLabel = stringResource(R.string.backup_selected_folder)
                 val dest = buildString {
-                    append(Uri.parse(cfg.treeUri).lastPathSegment ?: "selected folder")
+                    append(Uri.parse(cfg.treeUri).lastPathSegment ?: selectedFolderLabel)
                     if (!cfg.subdir.isNullOrBlank()) append(" / ${cfg.subdir}")
                 }
-                Text("Backing up to: $dest", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.backup_dest, dest), style = MaterialTheme.typography.bodySmall)
                 if (cfg.lastBackupMs > 0) {
                     Text(
-                        "Last backup: ${DateFormat.getDateTimeInstance().format(Date(cfg.lastBackupMs))}",
+                        stringResource(R.string.backup_last, DateFormat.getDateTimeInstance().format(Date(cfg.lastBackupMs))),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = viewModel::backupNow) { Text("Back up now") }
-                    OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text("Change / reconnect") }
+                    OutlinedButton(onClick = viewModel::backupNow) { Text(stringResource(R.string.backup_now)) }
+                    OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text(stringResource(R.string.backup_change_reconnect)) }
                 }
 
                 EncryptionRow(
@@ -173,9 +177,9 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Also export GPX", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.backup_gpx_title), style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Open, unencrypted weekly .gpx tracks under an \"export\" folder.",
+                            stringResource(R.string.backup_gpx_desc),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -183,17 +187,17 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                 }
                 if (cfg.gpxEnabled) {
                     OutlinedButton(onClick = { pickGpxFolder.launch(null) }) {
-                        Text(if (cfg.gpxTreeUri == null) "Use a separate GPX folder" else "Change GPX folder")
+                        Text(stringResource(if (cfg.gpxTreeUri == null) R.string.backup_gpx_use_separate else R.string.backup_gpx_change))
                     }
                 }
             }
 
             Text(
-                "One-time database dump writes a complete standalone copy to a folder you pick.",
+                stringResource(R.string.backup_dump_intro),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
             )
-            OutlinedButton(onClick = { pickDumpFolder.launch(null) }) { Text("One-time dump…") }
+            OutlinedButton(onClick = { pickDumpFolder.launch(null) }) { Text(stringResource(R.string.backup_dump_action)) }
         }
     }
 
@@ -218,8 +222,8 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
     }
     if (showPasswordDialog) {
         PasswordDialog(
-            title = "Set a backup password",
-            confirmLabel = "Encrypt",
+            title = stringResource(R.string.backup_set_password_title),
+            confirmLabel = stringResource(R.string.action_encrypt),
             requireConfirm = true,
             onConfirm = { pw -> showPasswordDialog = false; viewModel.enablePassword(pw) },
             onDismiss = { showPasswordDialog = false },
@@ -252,13 +256,15 @@ private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOf
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Encrypt backup", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.encrypt_title), style = MaterialTheme.typography.bodyMedium)
             Text(
-                when (mode) {
-                    BackupEncryption.PASSWORD -> "Protected with your password."
-                    BackupEncryption.PASSKEY -> "Protected with a passkey."
-                    BackupEncryption.NONE -> "Off — files are stored unencrypted."
-                },
+                stringResource(
+                    when (mode) {
+                        BackupEncryption.PASSWORD -> R.string.encrypt_password_on
+                        BackupEncryption.PASSKEY -> R.string.encrypt_passkey_on
+                        BackupEncryption.NONE -> R.string.encrypt_off
+                    },
+                ),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -273,16 +279,15 @@ private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOf
 private fun EncryptionChooserDialog(onPassword: () -> Unit, onPasskey: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Encrypt backup") },
+        title = { Text(stringResource(R.string.encrypt_title)) },
         text = {
             Text(
-                "Protect the backup with a password you remember, or a passkey (synced by your " +
-                    "password manager — nothing to remember, works on your other devices).",
+                stringResource(R.string.encrypt_chooser_text),
                 style = MaterialTheme.typography.bodySmall,
             )
         },
-        confirmButton = { TextButton(onClick = onPasskey) { Text("Use passkey") } },
-        dismissButton = { TextButton(onClick = onPassword) { Text("Use password") } },
+        confirmButton = { TextButton(onClick = onPasskey) { Text(stringResource(R.string.action_use_passkey)) } },
+        dismissButton = { TextButton(onClick = onPassword) { Text(stringResource(R.string.action_use_password)) } },
     )
 }
 
@@ -309,21 +314,21 @@ private fun DumpFlowDialogs(
             onDismiss = onDismiss,
         )
         passwordFor -> PasswordDialog(
-            title = "Password for this dump",
-            confirmLabel = "Dump",
+            title = stringResource(R.string.dump_password_title),
+            confirmLabel = stringResource(R.string.action_dump),
             requireConfirm = true,
             onConfirm = { pw -> onPassword(subdir, pw) },
             onDismiss = onDismiss,
         )
         else -> AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Encrypt this dump?") },
-            text = { Text("Choose how to protect this one-time dump.") },
-            confirmButton = { TextButton(onClick = { passwordFor = true }) { Text("Password") } },
+            title = { Text(stringResource(R.string.dump_encrypt_title)) },
+            text = { Text(stringResource(R.string.dump_encrypt_text)) },
+            confirmButton = { TextButton(onClick = { passwordFor = true }) { Text(stringResource(R.string.action_password)) } },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { onPasskey(subdir) }) { Text("Passkey") }
-                    TextButton(onClick = { onNone(subdir) }) { Text("No encryption") }
+                    TextButton(onClick = { onPasskey(subdir) }) { Text(stringResource(R.string.action_passkey)) }
+                    TextButton(onClick = { onNone(subdir) }) { Text(stringResource(R.string.action_no_encryption)) }
                 }
             },
         )
@@ -343,8 +348,9 @@ fun SubdirDialog(
     onDismiss: () -> Unit,
     checkExists: (suspend (String?) -> Boolean)? = null,
 ) {
-    val folderName = treeUri.lastPathSegment?.substringAfterLast('/') ?: "folder"
-    var subdir by remember(treeUri) { mutableStateOf(if (defaultLooksLikePathline) "" else "Pathline") }
+    val folderName = treeUri.lastPathSegment?.substringAfterLast('/') ?: stringResource(R.string.backup_folder_fallback)
+    val defaultSubdir = stringResource(R.string.backup_default_subdir)
+    var subdir by remember(treeUri) { mutableStateOf(if (defaultLooksLikePathline) "" else defaultSubdir) }
     var exists by remember(treeUri) { mutableStateOf(false) }
 
     // Check whether the resolved location already holds a backup, to warn about overwriting.
@@ -354,10 +360,10 @@ fun SubdirDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Backup location") },
+        title = { Text(stringResource(R.string.backup_location_title)) },
         text = {
             Column {
-                Text("Files will be written to:", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.backup_files_written), style = MaterialTheme.typography.bodySmall)
                 Text(
                     folderName + (if (subdir.isBlank()) " /" else " / $subdir /"),
                     style = MaterialTheme.typography.bodyMedium,
@@ -365,14 +371,13 @@ fun SubdirDialog(
                 OutlinedTextField(
                     value = subdir,
                     onValueChange = { subdir = it },
-                    label = { Text("Subfolder (leave empty to use the folder itself)") },
+                    label = { Text(stringResource(R.string.backup_subfolder_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
                 if (exists) {
                     Text(
-                        "⚠ This location already contains a Pathline backup. Continuing will " +
-                            "overwrite it.",
+                        stringResource(R.string.backup_overwrite_warn),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(top = 8.dp),
@@ -382,10 +387,10 @@ fun SubdirDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(subdir.ifBlank { null }) }) {
-                Text(if (exists) "Overwrite" else "Use this")
+                Text(stringResource(if (exists) R.string.action_overwrite else R.string.action_use_this))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
@@ -415,7 +420,7 @@ fun PasswordDialog(
         IconButton(onClick = { revealed = !revealed }) {
             Icon(
                 if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                contentDescription = if (revealed) "Hide password" else "Show password",
+                contentDescription = stringResource(if (revealed) R.string.cd_hide_password else R.string.cd_show_password),
             )
         }
     }
@@ -426,14 +431,13 @@ fun PasswordDialog(
         text = {
             Column {
                 Text(
-                    "This password protects the backup. On this device it's stored securely in the " +
-                        "Android Keystore; keep a copy somewhere safe to restore on another device.",
+                    stringResource(R.string.password_dialog_info),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("Password") },
+                    label = { Text(stringResource(R.string.field_password)) },
                     singleLine = true,
                     visualTransformation = transformation,
                     keyboardOptions = keyboard,
@@ -444,7 +448,7 @@ fun PasswordDialog(
                     OutlinedTextField(
                         value = confirm,
                         onValueChange = { confirm = it },
-                        label = { Text("Retype password") },
+                        label = { Text(stringResource(R.string.field_retype_password)) },
                         singleLine = true,
                         isError = mismatch,
                         visualTransformation = transformation,
@@ -454,7 +458,7 @@ fun PasswordDialog(
                     )
                     if (mismatch) {
                         Text(
-                            "Passwords don't match",
+                            stringResource(R.string.password_mismatch),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -463,7 +467,7 @@ fun PasswordDialog(
             }
         },
         confirmButton = { TextButton(onClick = { onConfirm(text.toCharArray()) }, enabled = valid) { Text(confirmLabel) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
@@ -504,7 +508,7 @@ fun ManagedOperationSheet(state: ManagedState, onClose: () -> Unit) {
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onClose, enabled = state.finished) {
-                        Text(if (state.finished) "Close" else "Working…")
+                        Text(stringResource(if (state.finished) R.string.managed_close else R.string.managed_working))
                     }
                 }
             }

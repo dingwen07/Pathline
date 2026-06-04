@@ -66,9 +66,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import net.extrawdw.apps.locationhistory.R
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -330,7 +333,7 @@ fun TimelineScreen(viewModel: TimelineViewModel = hiltViewModel()) {
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) {
-                    Icon(Icons.Filled.MyLocation, contentDescription = "Recenter on current location")
+                    Icon(Icons.Filled.MyLocation, contentDescription = stringResource(R.string.cd_recenter))
                 }
             }
         }
@@ -415,7 +418,7 @@ private fun DayHeader(
             onClick = onToday,
             enabled = !isToday,
         ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Jump to today")
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.cd_jump_to_today))
         }
     }
     HorizontalDivider()
@@ -490,7 +493,7 @@ fun modeColor(mode: TransportMode): Color = when (mode) {
 @Composable
 private fun EmptyDay(modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("No activity recorded for this day", style = MaterialTheme.typography.bodyLarge)
+        Text(stringResource(R.string.timeline_empty), style = MaterialTheme.typography.bodyLarge)
     }
 }
 
@@ -542,25 +545,30 @@ private fun VisitRow(
                         modifier = Modifier.weight(1f).then(if (item.place != null) Modifier.clickable(onClick = onOpenPlace) else Modifier),
                     )
                     Box {
-                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Edit, contentDescription = "Edit") }
+                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_edit)) }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("Split") }, onClick = { menuOpen = false; onEditSamples() })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.menu_split)) }, onClick = { menuOpen = false; onEditSamples() })
                             if (item.place != null) {
-                                DropdownMenuItem(text = { Text("Edit place") }, onClick = { menuOpen = false; onEditPlace() })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.menu_edit_place)) }, onClick = { menuOpen = false; onEditPlace() })
                             }
                         }
                     }
                 }
                 Text(
-                    "${Format.time(item.startMs)} – ${Format.time(item.endMs)} · ${Format.duration(item.startMs, item.endMs)}",
+                    stringResource(
+                        R.string.time_range_duration,
+                        Format.time(item.startMs),
+                        Format.time(item.endMs),
+                        Format.duration(LocalContext.current, item.startMs, item.endMs),
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!item.confirmed) {
                         UnconfirmedChip()
-                        AssistChip(onClick = onConfirm, label = { Text("Confirm place") })
+                        AssistChip(onClick = onConfirm, label = { Text(stringResource(R.string.menu_confirm_place)) })
                     } else {
-                        AssistChip(onClick = onConfirm, label = { Text("Change place") })
+                        AssistChip(onClick = onConfirm, label = { Text(stringResource(R.string.menu_change_place)) })
                     }
                 }
             }
@@ -576,24 +584,31 @@ private fun TripRow(
     onEdit: () -> Unit,
 ) {
     val trip = item.trip
+    val context = LocalContext.current
+    val modeLabel = stringResource(trip.mode.labelRes)
     var menuOpen by remember(trip.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 16.dp)) {
         Box(Modifier.width(GUTTER_WIDTH).fillMaxHeight()) { TripLine(item, Modifier.fillMaxSize()) }
         Column(Modifier.weight(1f).padding(top = 6.dp, bottom = 6.dp)) {
             Box {
                 CompactTripLine(
-                    icon = { Icon(Format.transportIcon(trip.mode), trip.mode.label, tint = modeColor(trip.mode)) },
-                    text = "${trip.mode.label} · ${Format.distance(trip.distanceMeters)} · ${Format.duration(trip.startMs, trip.endMs)}",
+                    icon = { Icon(Format.transportIcon(trip.mode), modeLabel, tint = modeColor(trip.mode)) },
+                    text = stringResource(
+                        R.string.trip_summary,
+                        modeLabel,
+                        Format.distance(context, trip.distanceMeters),
+                        Format.duration(context, trip.startMs, trip.endMs),
+                    ),
                     confirmed = trip.confirmed,
                     onConfirm = { menuOpen = true },
                     showEdit = true,
                     onEdit = onEdit,
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(text = { Text("Stationary (a place)") }, onClick = { menuOpen = false; onMarkStationary() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.menu_stationary_place)) }, onClick = { menuOpen = false; onMarkStationary() })
                     HorizontalDivider()
                     TransportMode.MODEL_CLASSES.forEach { mode ->
-                        DropdownMenuItem(text = { Text(mode.label) }, onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })
+                        DropdownMenuItem(text = { Text(stringResource(mode.labelRes)) }, onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })
                     }
                 }
             }
@@ -623,8 +638,8 @@ private fun CompactTripLine(
             color = if (confirmed) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
-        AssistChip(onClick = onConfirm, label = { Text(if (confirmed) "Edit mode" else "Confirm") })
-        if (showEdit) IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit trip") }
+        AssistChip(onClick = onConfirm, label = { Text(stringResource(if (confirmed) R.string.chip_edit_mode else R.string.chip_confirm)) })
+        if (showEdit) IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_edit_trip)) }
     }
 }
 
@@ -645,5 +660,5 @@ private fun tripJoinColor(item: TimelineItem?, first: Boolean): Color? {
 
 @Composable
 private fun UnconfirmedChip() {
-    AssistChip(onClick = {}, enabled = false, label = { Text("Unconfirmed") })
+    AssistChip(onClick = {}, enabled = false, label = { Text(stringResource(R.string.chip_unconfirmed)) })
 }

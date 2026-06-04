@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -45,11 +46,13 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.backup.BackupOperationController
 import net.extrawdw.apps.locationhistory.backup.ManagedKind
 import net.extrawdw.apps.locationhistory.backup.ManagedState
@@ -63,6 +66,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val settingsRepository: SettingsRepository,
     private val recordingController: RecordingController,
     private val workScheduler: WorkScheduler,
@@ -110,7 +114,7 @@ class OnboardingViewModel @Inject constructor(
     fun beginRestore(uri: Uri, activityContext: Context) = viewModelScope.launch {
         val info = backupRepository.cryptoInfoAt(uri)
         if (info == null) {
-            controller.fail(ManagedKind.RESTORE, "Restore", "No backup found in that folder")
+            controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.action_restore), appContext.getString(R.string.restore_no_backup))
             return@launch
         }
         when (info.mode) {
@@ -119,12 +123,12 @@ class OnboardingViewModel @Inject constructor(
             BackupEncryption.PASSKEY -> {
                 val salt = info.prfSalt
                 if (salt == null) {
-                    controller.fail(ManagedKind.RESTORE, "Restore", "Backup is missing its passkey salt")
+                    controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.action_restore), appContext.getString(R.string.restore_missing_salt))
                     return@launch
                 }
                 runCatching { passkeyManager.obtainForRestore(activityContext, salt, info.credentialId) }
                     .onSuccess { controller.startRestore(uri, null, it.secret) }
-                    .onFailure { controller.fail(ManagedKind.RESTORE, "Passkey", it.message ?: "Passkey unlock failed") }
+                    .onFailure { controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_unlock_failed)) }
             }
         }
     }
@@ -167,8 +171,8 @@ fun OnboardingScreen(
 
     if (restoreNeedsPassword) {
         PasswordDialog(
-            title = "Backup password",
-            confirmLabel = "Restore",
+            title = stringResource(R.string.backup_password_title),
+            confirmLabel = stringResource(R.string.action_restore),
             onConfirm = { pw -> viewModel.submitRestorePassword(pw) },
             onDismiss = { viewModel.cancelRestore() },
         )
@@ -197,37 +201,35 @@ fun OnboardingScreen(
                     OnboardingStep.WELCOME -> WelcomeContent()
                     OnboardingStep.PERMISSIONS -> PermissionContent(
                         icon = Icons.Filled.LocationOn,
-                        title = "A few permissions",
-                        body = "Pathline records where you go and how you get there. It needs a few permissions to work correctly.",
+                        title = stringResource(R.string.onboarding_permissions_title),
+                        body = stringResource(R.string.onboarding_permissions_body),
                         rows = listOf(
                             PermissionRow(
                                 Icons.Filled.Notifications,
-                                "Notifications",
-                                "Shows a status notice while recording is active.",
+                                stringResource(R.string.perm_notifications_title),
+                                stringResource(R.string.perm_notifications_desc),
                             ),
                             PermissionRow(
                                 Icons.Filled.LocationOn,
-                                "Location",
-                                "Records where you go so Pathline can build your timeline.",
+                                stringResource(R.string.perm_location_title),
+                                stringResource(R.string.perm_location_desc),
                             ),
                             PermissionRow(
                                 Icons.AutoMirrored.Filled.DirectionsRun,
-                                "Physical activity",
-                                "Detects when you're moving and how you travel, so recording stays light on the battery.",
+                                stringResource(R.string.perm_activity_title),
+                                stringResource(R.string.perm_activity_desc),
                             ),
                             PermissionRow(
                                 Icons.Filled.Phone,
-                                "Phone (optional)",
-                                "Reads cell-signal strength to improve location context. Pathline works fine if you deny this.",
+                                stringResource(R.string.perm_phone_title),
+                                stringResource(R.string.perm_phone_desc),
                             ),
                         ),
                     )
                     OnboardingStep.BACKGROUND -> PermissionContent(
                         icon = Icons.Filled.LocationOn,
-                        title = "Keep recording in the background",
-                        body = "To build a complete timeline, location access needs to be set to " +
-                            "\"Allow all the time\" so Pathline keeps recording when the app is closed. " +
-                            "Android asks for this separately on the next screen.",
+                        title = stringResource(R.string.onboarding_background_title),
+                        body = stringResource(R.string.onboarding_background_body),
                         rows = emptyList(),
                     )
                 }
@@ -236,31 +238,31 @@ fun OnboardingScreen(
             // Primary / secondary actions per step.
             when (step) {
                 OnboardingStep.WELCOME -> {
-                    PrimaryButton("Get started") { step = OnboardingStep.PERMISSIONS }
+                    PrimaryButton(stringResource(R.string.action_get_started)) { step = OnboardingStep.PERMISSIONS }
                     TextButton(
                         onClick = { pickRestoreFolder.launch(null) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Restore from a backup") }
+                    ) { Text(stringResource(R.string.action_restore_backup)) }
                 }
                 OnboardingStep.PERMISSIONS -> {
-                    PrimaryButton(if (permissions.granted) "Continue" else "Allow access") {
+                    PrimaryButton(stringResource(if (permissions.granted) R.string.action_continue else R.string.action_allow_access)) {
                         if (permissions.granted) step = OnboardingStep.BACKGROUND
                         else permissions.requestForeground()
                     }
                     TextButton(
                         onClick = { step = OnboardingStep.BACKGROUND },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Not now") }
+                    ) { Text(stringResource(R.string.action_not_now)) }
                 }
                 OnboardingStep.BACKGROUND -> {
-                    PrimaryButton(if (permissions.backgroundGranted) "Finish" else "Allow all the time") {
+                    PrimaryButton(stringResource(if (permissions.backgroundGranted) R.string.action_finish else R.string.action_allow_all_time)) {
                         if (permissions.backgroundGranted) onFinish(permissions.granted)
                         else permissions.requestBackground()
                     }
                     TextButton(
                         onClick = { onFinish(permissions.granted) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Maybe later") }
+                    ) { Text(stringResource(R.string.action_maybe_later)) }
                 }
             }
         }
@@ -277,15 +279,14 @@ private fun WelcomeContent() {
     )
     Spacer(Modifier.size(20.dp))
     Text(
-        "Welcome to Pathline",
+        stringResource(R.string.onboarding_welcome_title),
         style = MaterialTheme.typography.headlineMedium,
         fontWeight = FontWeight.SemiBold,
         textAlign = TextAlign.Center,
     )
     Spacer(Modifier.size(12.dp))
     Text(
-        "Pathline keeps a private, on-device timeline of the places you visit and the trips between " +
-            "them — no account, and your location never leaves your phone.",
+        stringResource(R.string.onboarding_welcome_body),
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
