@@ -4,7 +4,6 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -85,13 +84,6 @@ data class PlaceEntity(
     val address: String?,
     val confirmed: Boolean,
     val createdAtMs: Long,
-    /**
-     * Deprecated, derived. Never written (the authoritative count is a live `COUNT(*)` over visits,
-     * see [TimelineDao.observePlaceVisitCounts]), so it would only ever export as a stale 0.
-     * [Transient] keeps it out of backups; the column stays to avoid a destructive schema migration.
-     */
-    @Transient
-    val visitCount: Int = 0,
     /** When true the user has pinned the center/radius — the app must not auto-update them. */
     val fixed: Boolean = false,
     /**
@@ -184,6 +176,12 @@ data class GeofenceEntity(
 /**
  * A training example for the device-state model. The feature vector is stored as a comma-separated
  * float string; [fromUserConfirmation] examples are ground truth and weighted accordingly.
+ * [featureSchemaVersion] records the [Features.STATE_FEATURE_SCHEMA_VERSION] the vector was produced
+ * under — the bare CSV has no feature names, so this is the only way to tell that a stored example
+ * still matches the current feature layout. Examples from a different version are dropped before
+ * training (a reorder/repurpose keeps the same length, so the dimension check alone can't catch it).
+ * Defaults to 0 (legacy/unknown) so any example restored from a backup predating this field is
+ * treated as mismatched and purged rather than silently mis-trained.
  */
 @Serializable
 @Entity(tableName = "state_training_examples")
@@ -194,9 +192,10 @@ data class StateTrainingExampleEntity(
     val fromUserConfirmation: Boolean,
     val createdAtMs: Long,
     val consumed: Boolean = false,
+    val featureSchemaVersion: Int = 0,
 )
 
-/** A training example for the transport-mode model. */
+/** A training example for the transport-mode model. See [StateTrainingExampleEntity] for [featureSchemaVersion]. */
 @Serializable
 @Entity(tableName = "transport_training_examples")
 data class TransportTrainingExampleEntity(
@@ -206,6 +205,7 @@ data class TransportTrainingExampleEntity(
     val fromUserConfirmation: Boolean,
     val createdAtMs: Long,
     val consumed: Boolean = false,
+    val featureSchemaVersion: Int = 0,
 )
 
 /**

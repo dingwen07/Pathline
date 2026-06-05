@@ -32,6 +32,16 @@ object Features {
     const val STATE_FEATURE_DIM = 13
     const val TRANSPORT_FEATURE_DIM = 16
 
+    /**
+     * Layout version of each feature vector, stamped onto every training example
+     * ([net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity.featureSchemaVersion]).
+     * **Bump the relevant one whenever you change the order, meaning, normalization, or dimension of
+     * that feature set** — examples from an older version are then purged instead of mis-trained, since
+     * the stored CSV carries no names to reconcile against.
+     */
+    const val STATE_FEATURE_SCHEMA_VERSION = 1
+    const val TRANSPORT_FEATURE_SCHEMA_VERSION = 1
+
     private const val MAX_SPEED_MPS = 40f          // ~144 km/h, normalization ceiling
     private const val MAX_MOTION_VAR = 20f
     private const val SLOW_SPEED_MPS = 0.5f         // below this a sample counts as "stopped"

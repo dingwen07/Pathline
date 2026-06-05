@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.data.repo
 import net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity
 import net.extrawdw.apps.locationhistory.data.db.TrainingDao
 import net.extrawdw.apps.locationhistory.data.db.TransportTrainingExampleEntity
+import net.extrawdw.apps.locationhistory.ml.Features
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,6 +19,7 @@ class TrainingRepository @Inject constructor(
                 label = label,
                 fromUserConfirmation = fromUserConfirmation,
                 createdAtMs = System.currentTimeMillis(),
+                featureSchemaVersion = Features.STATE_FEATURE_SCHEMA_VERSION,
             ),
         )
     }
@@ -29,6 +31,7 @@ class TrainingRepository @Inject constructor(
                 label = label,
                 fromUserConfirmation = fromUserConfirmation,
                 createdAtMs = System.currentTimeMillis(),
+                featureSchemaVersion = Features.TRANSPORT_FEATURE_SCHEMA_VERSION,
             ),
         )
     }
@@ -39,6 +42,14 @@ class TrainingRepository @Inject constructor(
     suspend fun unconsumedTransportCount() = dao.unconsumedTransportCount()
     suspend fun markStateConsumed() = dao.markStateConsumed()
     suspend fun markTransportConsumed() = dao.markTransportConsumed()
+
+    /** Drop examples whose feature layout no longer matches the current code, so a changed
+     *  [Features] vector can't silently corrupt training (and stale rows don't inflate the
+     *  unconsumed count forever). Returns the number purged. */
+    suspend fun purgeStaleStateExamples() =
+        dao.deleteStateExamplesNotVersion(Features.STATE_FEATURE_SCHEMA_VERSION)
+    suspend fun purgeStaleTransportExamples() =
+        dao.deleteTransportExamplesNotVersion(Features.TRANSPORT_FEATURE_SCHEMA_VERSION)
 
     companion object {
         fun encode(features: FloatArray): String = features.joinToString(",")

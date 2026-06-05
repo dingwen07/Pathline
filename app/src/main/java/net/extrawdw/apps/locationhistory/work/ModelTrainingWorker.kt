@@ -28,6 +28,11 @@ class ModelTrainingWorker @AssistedInject constructor(
         net.extrawdw.apps.locationhistory.core.AppLog.i("TrainingWorker", "training run starting (charging)")
         var trainedAnything = false
 
+        // Drop examples whose feature layout no longer matches the current code (e.g. restored from an
+        // older backup, or produced before a Features change) so they can't corrupt the retrain.
+        val purged = trainingRepository.purgeStaleStateExamples() + trainingRepository.purgeStaleTransportExamples()
+        if (purged > 0) net.extrawdw.apps.locationhistory.core.AppLog.i("TrainingWorker", "purged $purged stale-layout examples")
+
         models.stateModel()?.takeIf { it.supportsTraining() }?.let { model ->
             val examples = trainingRepository.allStateExamples()
                 .map { TrainingRepository.decode(it.features) to it.label }

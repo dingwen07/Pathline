@@ -15,8 +15,7 @@ interface PlaceDao {
     @Update
     suspend fun update(place: PlaceEntity)
 
-    // Most-visited first, using the live count over visits. (Previously ordered by the stored
-    // `visitCount`, which is never written and so was always 0 — i.e. effectively name-only.)
+    // Most-visited first, counted live over the visits table (there is no stored count column).
     @Query(
         "SELECT * FROM places ORDER BY " +
             "(SELECT COUNT(*) FROM visits WHERE visits.placeId = places.id) DESC, name ASC"

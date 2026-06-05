@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "32689adb568c5ff14807794671f1df52",
+    "identityHash": "f6a89f12e60b6e4ea53f64623d851941",
     "entities": [
       {
         "tableName": "location_samples",
@@ -203,7 +203,7 @@
       },
       {
         "tableName": "places",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `category` TEXT, `source` TEXT NOT NULL, `googlePlaceId` TEXT, `address` TEXT, `confirmed` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `visitCount` INTEGER NOT NULL, `fixed` INTEGER NOT NULL, `anchorLatitude` REAL, `anchorLongitude` REAL, `anchorRadiusMeters` REAL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `category` TEXT, `source` TEXT NOT NULL, `googlePlaceId` TEXT, `address` TEXT, `confirmed` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `fixed` INTEGER NOT NULL, `anchorLatitude` REAL, `anchorLongitude` REAL, `anchorRadiusMeters` REAL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -265,12 +265,6 @@
           {
             "fieldPath": "createdAtMs",
             "columnName": "createdAtMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "visitCount",
-            "columnName": "visitCount",
             "affinity": "INTEGER",
             "notNull": true
           },
@@ -601,7 +595,7 @@
       },
       {
         "tableName": "state_training_examples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL, `featureSchemaVersion` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -636,6 +630,12 @@
           {
             "fieldPath": "consumed",
             "columnName": "consumed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "featureSchemaVersion",
+            "columnName": "featureSchemaVersion",
             "affinity": "INTEGER",
             "notNull": true
           }
@@ -649,7 +649,7 @@
       },
       {
         "tableName": "transport_training_examples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL, `featureSchemaVersion` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -684,6 +684,12 @@
           {
             "fieldPath": "consumed",
             "columnName": "consumed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "featureSchemaVersion",
+            "columnName": "featureSchemaVersion",
             "affinity": "INTEGER",
             "notNull": true
           }
@@ -723,7 +729,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '32689adb568c5ff14807794671f1df52')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f6a89f12e60b6e4ea53f64623d851941')"
     ]
   }
 }

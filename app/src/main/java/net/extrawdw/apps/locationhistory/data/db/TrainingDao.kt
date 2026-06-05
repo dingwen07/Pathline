@@ -30,6 +30,13 @@ interface TrainingDao {
 
     @Query("UPDATE transport_training_examples SET consumed = 1 WHERE consumed = 0")
     suspend fun markTransportConsumed()
+
+    /** Delete examples whose feature layout differs from the current one (see featureSchemaVersion). */
+    @Query("DELETE FROM state_training_examples WHERE featureSchemaVersion != :version")
+    suspend fun deleteStateExamplesNotVersion(version: Int): Int
+
+    @Query("DELETE FROM transport_training_examples WHERE featureSchemaVersion != :version")
+    suspend fun deleteTransportExamplesNotVersion(version: Int): Int
 }
 
 @Dao
