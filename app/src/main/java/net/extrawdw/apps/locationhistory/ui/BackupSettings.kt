@@ -76,7 +76,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class BackupViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val controller: BackupOperationController,
     private val passkeyManager: PasskeyManager,
     private val backupRepository: BackupRepository,

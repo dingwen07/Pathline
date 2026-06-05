@@ -66,7 +66,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val settingsRepository: SettingsRepository,
     private val recordingController: RecordingController,
     private val workScheduler: WorkScheduler,

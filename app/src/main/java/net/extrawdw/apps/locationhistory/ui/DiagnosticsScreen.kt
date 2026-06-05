@@ -100,7 +100,7 @@ data class DiagnosticsState(
 
 @HiltViewModel
 class DiagnosticsViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val sampleDao: LocationSampleDao,
     private val visitDao: VisitDao,
     private val tripDao: TripDao,
