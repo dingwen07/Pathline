@@ -25,6 +25,16 @@
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
+    <!--
+      Scoped package visibility (Android 11+): see the SAF DocumentsProvider apps so we can resolve a
+      backup/GPX destination's provider to a friendly app name.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PathlineApp"
         android:allowBackup="true"

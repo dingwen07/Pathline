@@ -34,46 +34,54 @@ class SafDir internal constructor(
     private val context: Context,
     private val doc: DocumentFile,
 ) {
-    private val children: MutableMap<String, DocumentFile> by lazy {
-        doc.listFiles().filter { it.name != null }.associateByTo(HashMap()) { it.name!! }
+    // A display name can map to MULTIPLE documents: Google Drive (and some other providers) permit
+    // several files with the same name in one folder. We must track them all — otherwise a
+    // delete-then-create write removes only one copy and duplicates pile up across incremental runs.
+    private val children: MutableMap<String, MutableList<DocumentFile>> by lazy {
+        val map = HashMap<String, MutableList<DocumentFile>>()
+        doc.listFiles().forEach { f -> f.name?.let { map.getOrPut(it) { mutableListOf() }.add(f) } }
+        map
+    }
+
+    /** Resolve an existing subdirectory **without creating it**; null if it doesn't exist yet. */
+    fun childDirOrNull(name: String): SafDir? {
+        val existing = children[name]?.firstOrNull { it.isDirectory && it.exists() } ?: return null
+        return SafDir(context, existing)
     }
 
     /** Find or create a subdirectory. */
     fun childDir(name: String): SafDir {
-        val existing = children[name]
-        val dir = if (existing != null && existing.isDirectory) {
-            existing
-        } else {
-            existing?.delete() // a stale file where a dir should be
-            doc.createDirectory(name)?.also { children[name] = it }
-                ?: error("could not create backup subdirectory '$name'")
-        }
+        children[name]?.firstOrNull { it.isDirectory && it.exists() }?.let { return SafDir(context, it) }
+        // No directory by that name (possibly a stale file, or duplicates): clear them, then create.
+        deleteAllNamed(name)
+        val dir = doc.createDirectory(name)?.also { children[name] = mutableListOf(it) }
+            ?: error("could not create backup subdirectory '$name'")
         return SafDir(context, dir)
     }
 
-    fun exists(name: String): Boolean = children[name]?.exists() == true
+    fun exists(name: String): Boolean = children[name]?.any { it.exists() } == true
 
     fun fileNames(): List<String> = children.keys.toList()
 
-    /** (Re)write a file atomically-ish: drop any existing entry, then create and stream into it. */
+    /** (Re)write a file: drop EVERY existing document with this name first (providers may allow dupes). */
     fun writeFile(name: String, mime: String, write: (OutputStream) -> Unit) {
-        children[name]?.delete()
-        children.remove(name)
+        deleteAllNamed(name)
         val file = doc.createFile(mime, name) ?: error("could not create backup file '$name'")
         // Some providers append an extension/suffix; track by the real returned name.
-        file.name?.let { children[it] = file }
-        val resolved = file.uri
-        context.contentResolver.openOutputStream(resolved, "wt")?.use(write)
+        file.name?.let { children.getOrPut(it) { mutableListOf() }.add(file) }
+        context.contentResolver.openOutputStream(file.uri, "wt")?.use(write)
             ?: error("could not open output stream for '$name'")
     }
 
     fun readFile(name: String): InputStream? {
-        val file = children[name]?.takeIf { it.exists() } ?: return null
+        val file = children[name]?.firstOrNull { it.exists() } ?: return null
         return context.contentResolver.openInputStream(file.uri)
     }
 
-    fun deleteFile(name: String) {
-        children[name]?.delete()
-        children.remove(name)
+    fun deleteFile(name: String) = deleteAllNamed(name)
+
+    /** Delete every document with [name] (handles providers that allow duplicate display names). */
+    private fun deleteAllNamed(name: String) {
+        children.remove(name)?.forEach { it.delete() }
     }
 }

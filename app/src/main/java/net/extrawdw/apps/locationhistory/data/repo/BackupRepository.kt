@@ -258,10 +258,15 @@ class BackupRepository @Inject constructor(
         return engine.readManifest(tree) != null
     }
 
-    /** Whether a backup already exists at [treeUri] resolved through [subdir] (for overwrite warnings). */
+    /**
+     * Whether a backup already exists at [treeUri] resolved through [subdir] (for overwrite warnings).
+     * Resolves the subdir **read-only** — this runs on every keystroke in the subdir field, so it must
+     * never create the folder (otherwise editing the name spawns a directory per intermediate value).
+     */
     suspend fun backupExistsAt(treeUri: Uri, subdir: String?): Boolean {
         val tree = safStore.open(treeUri) ?: return false
-        return engine.readManifest(rootDir(tree, subdir)) != null
+        val root = existingRootDir(tree, subdir) ?: return false
+        return engine.readManifest(root) != null
     }
 
     /** Crypto descriptor of the backup at [treeUri], or null if none. */
@@ -279,6 +284,10 @@ class BackupRepository @Inject constructor(
 
     private fun rootDir(tree: SafDir, subdir: String?): SafDir =
         subdir?.trim()?.takeIf { it.isNotEmpty() }?.let { tree.childDir(it) } ?: tree
+
+    /** Like [rootDir] but never creates the subdir — null if it doesn't exist yet. */
+    private fun existingRootDir(tree: SafDir, subdir: String?): SafDir? =
+        subdir?.trim()?.takeIf { it.isNotEmpty() }?.let { tree.childDirOrNull(it) } ?: tree
 
     private fun material(cfg: BackupConfig): BackupEngine.Material? = when (cfg.encryption) {
         BackupEncryption.NONE -> BackupEngine.Material(BackupCrypto.plaintextHeader(), null)

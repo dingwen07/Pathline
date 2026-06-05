@@ -192,7 +192,9 @@
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">备份</string>
     <string name="backup_intro">将完整的时间线、地点和已训练的模型备份到您选择的文件夹（Google Drive、Dropbox、本地存储）。每次仅重新上传最近一周的数据。</string>
-    <string name="backup_selected_folder">所选文件夹</string>
+    <string name="dest_internal_storage">内部存储</string>
+    <string name="dest_external_storage">外部存储</string>
+    <string name="dest_unknown">备份文件夹</string>
     <string name="backup_dest">备份到：%1$s</string>
     <string name="backup_last">上次备份：%1$s</string>
     <string name="backup_now">立即备份</string>

@@ -190,10 +190,8 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
-                val selectedFolderLabel = stringResource(R.string.backup_selected_folder)
-                val dest = buildString {
-                    append(Uri.parse(cfg.treeUri).lastPathSegment ?: selectedFolderLabel)
-                    if (!cfg.subdir.isNullOrBlank()) append(" / ${cfg.subdir}")
+                val dest = remember(cfg.treeUri, cfg.subdir) {
+                    SafDestination.describe(activity, cfg.treeUri, cfg.subdir)
                 }
                 Text(stringResource(R.string.backup_dest, dest), style = MaterialTheme.typography.bodySmall)
                 if (cfg.lastBackupMs > 0) {
@@ -301,6 +299,7 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
 @Composable
 fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
     val gpx by viewModel.gpxConfig.collectAsState()
+    val context = LocalContext.current
     var pendingExportUri by remember { mutableStateOf<Uri?>(null) }
 
     val pickAutoFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
@@ -329,8 +328,7 @@ fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
             if (cfg?.treeUri == null) {
                 Text(stringResource(R.string.gpx_auto_intro), style = MaterialTheme.typography.bodySmall)
             } else {
-                val selectedFolderLabel = stringResource(R.string.backup_selected_folder)
-                val dest = Uri.parse(cfg.treeUri).lastPathSegment ?: selectedFolderLabel
+                val dest = remember(cfg.treeUri) { SafDestination.describe(context, cfg.treeUri, null) }
                 Text(stringResource(R.string.gpx_dest, dest), style = MaterialTheme.typography.bodySmall)
                 if (cfg.lastExportMs > 0) {
                     Text(
