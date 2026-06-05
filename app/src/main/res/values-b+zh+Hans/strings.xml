@@ -192,18 +192,32 @@
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">备份</string>
     <string name="backup_intro">将完整的时间线、地点和已训练的模型备份到您选择的文件夹（Google Drive、Dropbox、本地存储）。每次仅重新上传最近一周的数据。</string>
-    <string name="backup_choose_folder">选择备份文件夹</string>
     <string name="backup_selected_folder">所选文件夹</string>
     <string name="backup_dest">备份到：%1$s</string>
     <string name="backup_last">上次备份：%1$s</string>
     <string name="backup_now">立即备份</string>
     <string name="backup_change_reconnect">更改 / 重新连接</string>
-    <string name="backup_gpx_title">同时导出 GPX</string>
-    <string name="backup_gpx_desc">在“export”文件夹下生成开放、未加密的每周 .gpx 轨迹。</string>
-    <string name="backup_gpx_use_separate">使用单独的 GPX 文件夹</string>
-    <string name="backup_gpx_change">更改 GPX 文件夹</string>
     <string name="backup_dump_intro">一次性数据库转储会将完整的独立副本写入您选择的文件夹。</string>
     <string name="backup_dump_action">一次性转储…</string>
+
+    <!-- GPX 导出（开放格式，独立于备份） -->
+    <string name="gpx_title">GPX 导出</string>
+    <string name="gpx_intro">面向其他应用和地图的开放格式每周 .gpx 轨迹。仅含经纬度/海拔/时间——不是备份，也无法用于恢复。</string>
+    <string name="gpx_unencrypted_warn">GPX 文件始终以未加密方式存储。</string>
+    <string name="gpx_auto_intro">选择一个文件夹，在记录时自动更新 GPX 副本。</string>
+    <string name="gpx_dest">自动导出至：%1$s</string>
+    <string name="gpx_last">上次导出：%1$s</string>
+    <string name="gpx_export_now">立即导出</string>
+    <string name="gpx_onetime_intro">一次性导出会将每周 .gpx 文件写入您选择的文件夹。</string>
+    <string name="gpx_onetime_action">一次性 GPX 导出…</string>
+    <string name="gpx_range_title">导出 GPX</string>
+    <string name="gpx_range_text">导出所有已记录的日期，或选择一个日期范围。</string>
+    <string name="gpx_range_all">所有日期</string>
+    <string name="gpx_range_pick">日期范围…</string>
+    <string name="gpx_op_setup">正在设置 GPX 导出</string>
+    <string name="gpx_op_export">正在导出 GPX</string>
+    <string name="gpx_result_exported">已导出 %1$d 个 GPX 文件。</string>
+    <string name="action_export">导出</string>
     <string name="encrypt_title">加密备份</string>
     <string name="encrypt_password_on">已用密码保护。</string>
     <string name="encrypt_passkey_on">已用通行密钥保护。</string>

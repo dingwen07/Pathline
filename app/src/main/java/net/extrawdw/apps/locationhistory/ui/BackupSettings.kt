@@ -20,12 +20,16 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -61,6 +65,8 @@ import net.extrawdw.apps.locationhistory.backup.ManagedState
 import net.extrawdw.apps.locationhistory.data.repo.BackupConfig
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.EncryptionChoice
+import net.extrawdw.apps.locationhistory.data.repo.GpxConfig
+import net.extrawdw.apps.locationhistory.data.repo.GpxRange
 import net.extrawdw.apps.locationhistory.security.BackupEncryption
 import net.extrawdw.apps.locationhistory.security.PasskeyManager
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
@@ -112,8 +118,26 @@ class BackupViewModel @Inject constructor(
     fun backupNow() = controller.startBackup()
     fun enablePassword(password: CharArray) = controller.startEnablePassword(password)
     fun disableEncryption() = controller.startDisableEncryption()
-    fun setGpxEnabled(enabled: Boolean) = viewModelScope.launch { backupRepository.setGpxEnabled(enabled) }
-    fun onGpxFolderPicked(uri: Uri?) = viewModelScope.launch { backupRepository.setGpxTree(uri) }
+
+    /** Master off switch: forget the backup destination and encryption material. */
+    fun disableBackup() = viewModelScope.launch { backupRepository.disableBackup() }
+
+    // --- GPX export (independent of backup) ---------------------------------------------------
+
+    val gpxConfig: StateFlow<GpxConfig?> = backupRepository.gpxConfig
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Turn on GPX auto-export to [uri] and write an initial full export. */
+    fun configureGpx(uri: Uri) {
+        controller.startConfigureGpx(uri)
+        workScheduler.schedulePeriodicBackup()
+    }
+
+    fun gpxExportNow() = controller.startGpxExportNow()
+    fun disableGpx() = viewModelScope.launch { backupRepository.disableGpx() }
+
+    /** One-time GPX export of [range] to a freshly-picked folder, independent of the configured one. */
+    fun gpxExport(uri: Uri, range: GpxRange) = controller.startGpxExport(uri, range)
 
     fun enablePasskey(activityContext: Context) = viewModelScope.launch {
         runCatching { passkeyManager.obtainForSetup(activityContext) }
@@ -145,24 +169,26 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
     val pickBackupFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
         it?.let { uri -> pendingBackupUri = uri }
     }
-    val pickGpxFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-        viewModel.onGpxFolderPicked(it)
-    }
     val pickDumpFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
         it?.let { uri -> pendingDumpUri = uri }
     }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.backup_title), style = MaterialTheme.typography.titleMedium)
             val cfg = config
+            // Master switch: ON launches setup; OFF forgets the destination. Driven by actual config,
+            // so cancelling the folder picker / setup flow simply leaves it OFF.
+            MasterSwitchHeader(
+                title = stringResource(R.string.backup_title),
+                checked = cfg?.treeUri != null,
+                onCheckedChange = { on -> if (on) pickBackupFolder.launch(null) else viewModel.disableBackup() },
+            )
 
             if (cfg?.treeUri == null) {
                 Text(
                     stringResource(R.string.backup_intro),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text(stringResource(R.string.backup_choose_folder)) }
             } else {
                 val selectedFolderLabel = stringResource(R.string.backup_selected_folder)
                 val dest = buildString {
@@ -186,26 +212,6 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                     onTurnOn = { showEncryptionChooser = true },
                     onTurnOff = viewModel::disableEncryption,
                 )
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.backup_gpx_title), style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            stringResource(R.string.backup_gpx_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Switch(checked = cfg.gpxEnabled, onCheckedChange = viewModel::setGpxEnabled)
-                }
-                if (cfg.gpxEnabled) {
-                    OutlinedButton(onClick = { pickGpxFolder.launch(null) }) {
-                        Text(stringResource(if (cfg.gpxTreeUri == null) R.string.backup_gpx_use_separate else R.string.backup_gpx_change))
-                    }
-                }
             }
 
             Text(
@@ -283,6 +289,136 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
     // Managed progress sheet for any in-flight operation.
     val managed by viewModel.managed.collectAsState()
     managed?.let { ManagedOperationSheet(it, onClose = viewModel::dismissManaged) }
+}
+
+/**
+ * GPX export section. Independent of the encrypted backup: it writes open-format, **unencrypted**
+ * weekly `.gpx` files to its own SAF folder, can be turned on without any backup configured, and
+ * also offers a one-time export (all dates or a date range) to a freshly-picked folder.
+ *
+ * Shares [BackupViewModel] (and its managed-operation sheet, rendered by [BackupCard]) with backup.
+ */
+@Composable
+fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
+    val gpx by viewModel.gpxConfig.collectAsState()
+    var pendingExportUri by remember { mutableStateOf<Uri?>(null) }
+
+    val pickAutoFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+        it?.let { uri -> viewModel.configureGpx(uri) }
+    }
+    val pickExportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+        it?.let { uri -> pendingExportUri = uri }
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val cfg = gpx
+            // Master switch: ON picks a folder and starts auto-export; OFF turns it off (files kept).
+            MasterSwitchHeader(
+                title = stringResource(R.string.gpx_title),
+                checked = cfg?.treeUri != null,
+                onCheckedChange = { on -> if (on) pickAutoFolder.launch(null) else viewModel.disableGpx() },
+            )
+            Text(stringResource(R.string.gpx_intro), style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(R.string.gpx_unencrypted_warn),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+
+            if (cfg?.treeUri == null) {
+                Text(stringResource(R.string.gpx_auto_intro), style = MaterialTheme.typography.bodySmall)
+            } else {
+                val selectedFolderLabel = stringResource(R.string.backup_selected_folder)
+                val dest = Uri.parse(cfg.treeUri).lastPathSegment ?: selectedFolderLabel
+                Text(stringResource(R.string.gpx_dest, dest), style = MaterialTheme.typography.bodySmall)
+                if (cfg.lastExportMs > 0) {
+                    Text(
+                        stringResource(R.string.gpx_last, DateFormat.getDateTimeInstance().format(Date(cfg.lastExportMs))),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = viewModel::gpxExportNow) { Text(stringResource(R.string.gpx_export_now)) }
+                    OutlinedButton(onClick = { pickAutoFolder.launch(null) }) { Text(stringResource(R.string.backup_change_reconnect)) }
+                }
+            }
+
+            Text(
+                stringResource(R.string.gpx_onetime_intro),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            OutlinedButton(onClick = { pickExportFolder.launch(null) }) { Text(stringResource(R.string.gpx_onetime_action)) }
+        }
+    }
+
+    pendingExportUri?.let { uri ->
+        GpxRangeDialog(
+            onAll = { pendingExportUri = null; viewModel.gpxExport(uri, GpxRange.All) },
+            onRange = { startDay, endExclusive -> pendingExportUri = null; viewModel.gpxExport(uri, GpxRange.Days(startDay, endExclusive)) },
+            onDismiss = { pendingExportUri = null },
+        )
+    }
+}
+
+/**
+ * Scope picker for a one-time GPX export: "all dates", or a calendar date range. The picker reports
+ * UTC-midnight millis per calendar date; we map those straight to epoch-days (the day index is
+ * zone-independent) and make the end exclusive by adding one day.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GpxRangeDialog(
+    onAll: () -> Unit,
+    onRange: (startDay: Long, endDayExclusive: Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pickRange by remember { mutableStateOf(false) }
+    if (!pickRange) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(R.string.gpx_range_title)) },
+            text = { Text(stringResource(R.string.gpx_range_text)) },
+            confirmButton = { TextButton(onClick = onAll) { Text(stringResource(R.string.gpx_range_all)) } },
+            dismissButton = { TextButton(onClick = { pickRange = true }) { Text(stringResource(R.string.gpx_range_pick)) } },
+        )
+    } else {
+        val state = rememberDateRangePickerState()
+        val start = state.selectedStartDateMillis
+        val end = state.selectedEndDateMillis
+        DatePickerDialog(
+            onDismissRequest = onDismiss,
+            confirmButton = {
+                TextButton(
+                    enabled = start != null && end != null,
+                    onClick = {
+                        if (start != null && end != null) {
+                            onRange(Math.floorDiv(start, MILLIS_PER_DAY), Math.floorDiv(end, MILLIS_PER_DAY) + 1)
+                        }
+                    },
+                ) { Text(stringResource(R.string.action_export)) }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+        ) {
+            DateRangePicker(state = state, modifier = Modifier.heightIn(max = 460.dp))
+        }
+    }
+}
+
+private const val MILLIS_PER_DAY = 86_400_000L
+
+/** Title + master on/off switch shown at the top of the backup and GPX cards. */
+@Composable
+private fun MasterSwitchHeader(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
 @Composable

@@ -141,6 +141,9 @@ fun SettingsScreen(
             // Backup
             BackupCard()
 
+            // GPX export (open format, independent of backup)
+            GpxCard()
+
             // Diagnostics
             var showDiagnostics by remember { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {

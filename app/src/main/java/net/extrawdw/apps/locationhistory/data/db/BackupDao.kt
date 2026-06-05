@@ -57,6 +57,14 @@ interface BackupDao {
     @Query("SELECT DISTINCT ((dayEpoch + 3) / 7) * 7 - 3 FROM location_samples")
     suspend fun sampleWeeks(): List<Long>
 
+    /** Weeks holding samples within an inclusive-start / exclusive-end dayEpoch range (GPX range export). */
+    @Query("SELECT DISTINCT ((dayEpoch + 3) / 7) * 7 - 3 FROM location_samples WHERE dayEpoch >= :startDay AND dayEpoch < :endDay")
+    suspend fun sampleWeeksInDays(startDay: Long, endDay: Long): List<Long>
+
+    /** Weeks touched by any sample recorded at/after [sinceMs] (incremental GPX auto-export). */
+    @Query("SELECT DISTINCT ((dayEpoch + 3) / 7) * 7 - 3 FROM location_samples WHERE timestampMs >= :sinceMs")
+    suspend fun sampleWeeksSince(sinceMs: Long): List<Long>
+
     @Query("SELECT DISTINCT ((dayEpoch + 3) / 7) * 7 - 3 FROM visits")
     suspend fun visitWeeks(): List<Long>
 

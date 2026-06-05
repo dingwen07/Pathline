@@ -38,9 +38,17 @@ data class BackupConfig(
     val subdir: String?,
     val encryption: BackupEncryption,
     val cryptoHeaderJson: String?,
-    val gpxEnabled: Boolean,
-    val gpxTreeUri: String?,
     val lastBackupMs: Long,
+)
+
+/**
+ * Automatic open-format GPX export, configured independently of (and not requiring) the encrypted
+ * backup. [treeUri] is the dedicated SAF location GPX week files are written to; null = GPX
+ * auto-export is off. [lastExportMs] floors the next incremental run's "changed since" query.
+ */
+data class GpxConfig(
+    val treeUri: String?,
+    val lastExportMs: Long,
 )
 
 @Singleton
@@ -104,8 +112,8 @@ class SettingsRepository @Inject constructor(
     private val keyBackupSubdir = stringPreferencesKey("backup_subdir")
     private val keyBackupEncryption = stringPreferencesKey("backup_encryption")
     private val keyBackupHeader = stringPreferencesKey("backup_crypto_header")
-    private val keyGpxEnabled = booleanPreferencesKey("backup_gpx_enabled")
     private val keyGpxTree = stringPreferencesKey("backup_gpx_tree_uri")
+    private val keyGpxLastExport = longPreferencesKey("gpx_last_export_ms")
     private val keyLastBackup = longPreferencesKey("backup_last_ms")
 
     val backupConfig: Flow<BackupConfig> = context.dataStore.data.map { prefs ->
@@ -116,9 +124,14 @@ class SettingsRepository @Inject constructor(
                 runCatching { BackupEncryption.valueOf(it) }.getOrNull()
             } ?: BackupEncryption.NONE,
             cryptoHeaderJson = prefs[keyBackupHeader],
-            gpxEnabled = prefs[keyGpxEnabled] ?: false,
-            gpxTreeUri = prefs[keyGpxTree],
             lastBackupMs = prefs[keyLastBackup] ?: 0L,
+        )
+    }
+
+    val gpxConfig: Flow<GpxConfig> = context.dataStore.data.map { prefs ->
+        GpxConfig(
+            treeUri = prefs[keyGpxTree],
+            lastExportMs = prefs[keyGpxLastExport] ?: 0L,
         )
     }
 
@@ -138,12 +151,19 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    suspend fun setGpxEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[keyGpxEnabled] = enabled }
+    /**
+     * Set (or clear, with null) the GPX auto-export destination. Always resets the last-export
+     * watermark so a freshly-chosen folder receives a full export and stale state never carries over.
+     */
+    suspend fun setGpxTree(uri: String?) {
+        context.dataStore.edit {
+            if (uri == null) it.remove(keyGpxTree) else it[keyGpxTree] = uri
+            it.remove(keyGpxLastExport)
+        }
     }
 
-    suspend fun setGpxTree(uri: String?) {
-        context.dataStore.edit { if (uri == null) it.remove(keyGpxTree) else it[keyGpxTree] = uri }
+    suspend fun setGpxLastExport(ms: Long) {
+        context.dataStore.edit { it[keyGpxLastExport] = ms }
     }
 
     suspend fun setLastBackup(ms: Long) {

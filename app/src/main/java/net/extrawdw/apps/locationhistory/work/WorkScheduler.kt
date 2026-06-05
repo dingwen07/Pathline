@@ -108,9 +108,10 @@ class WorkScheduler @Inject constructor(
     }
 
     /**
-     * Periodic, charging-gated incremental backup to the user's SAF destination. Requires a network
-     * connection because the destination is typically a cloud provider (Drive, Dropbox). No-ops when
-     * no destination is configured, so it's safe to enqueue unconditionally.
+     * Periodic, charging-gated sync to the user's SAF destinations — runs the incremental backup and
+     * the GPX auto-export, each a no-op when its own destination isn't configured. Safe to enqueue
+     * whenever either is turned on. Requires a network connection because the backup destination is
+     * typically a cloud provider (Drive, Dropbox).
      */
     fun schedulePeriodicBackup() {
         val constraints = Constraints.Builder()

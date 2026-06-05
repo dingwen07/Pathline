@@ -86,9 +86,6 @@ object Constants {
     /** Subdirectory created inside the chosen SAF tree that holds the structured backup. */
     const val BACKUP_DIR = "pathline-backup"
 
-    /** Subdirectory (inside the GPX tree) for the optional open-format GPX export. */
-    const val EXPORT_DIR = "export"
-
     /** Bumped whenever the on-disk backup layout/format changes incompatibly. */
     const val BACKUP_FORMAT_VERSION = 1
 }

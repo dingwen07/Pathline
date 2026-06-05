@@ -30,8 +30,6 @@ data class BackupReport(
     val partitionsWritten: Int,
     val partitionsFailed: Int,
     val totalPartitions: Int,
-    /** Sample weeks (Monday dayEpoch) emitted this run — used to drive incremental GPX export. */
-    val sampleWeeksTouched: Set<Long> = emptySet(),
 )
 
 /** Outcome of a restore. */
@@ -134,14 +132,12 @@ class BackupEngine @Inject constructor(
         var written = 0
         var failed = 0
         var done = 0
-        val sampleWeeks = HashSet<Long>()
         for (dirty in claimed) {
             val key = dirty.stream + "/" + dirty.weekStart
             val label = dirty.stream + "/" + TimeBuckets.weekKey(dirty.weekStart)
             try {
                 val entry = emitPartition(root, dirty.stream, dirty.weekStart, material)
                 if (entry == null) merged.remove(key) else merged[key] = entry
-                if (dirty.stream == STREAM_SAMPLES) sampleWeeks.add(dirty.weekStart)
                 written++
                 reporter.log("Backed up $label (${entry?.rowCount ?: 0} rows)")
             } catch (t: Throwable) {
@@ -158,7 +154,7 @@ class BackupEngine @Inject constructor(
         writeManifest(root, material, merged.values.toList(), snapshots, nowMs)
         reporter.progress(1f)
         AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${merged.size}")
-        return BackupReport(written, failed, merged.size, sampleWeeks)
+        return BackupReport(written, failed, merged.size)
     }
 
     suspend fun runFull(
@@ -198,25 +194,32 @@ class BackupEngine @Inject constructor(
         if (clearDirtyAfter) backupDao.clearAllDirty()
         reporter.progress(1f)
         AppLog.i(TAG, "full backup: wrote=${entries.size} failed=$failed")
-        val sampleWeeks = entries.filter { it.stream == STREAM_SAMPLES }.map { it.weekStart }.toSet()
-        return BackupReport(entries.size, failed, entries.size, sampleWeeks)
+        return BackupReport(entries.size, failed, entries.size)
     }
 
     /**
-     * Write GPX track files (open, unencrypted) under an `export/` subdir of [gpxRoot]. When
-     * [weeks] is null, every populated sample week is exported; otherwise only those weeks.
+     * Write one open-format, **unencrypted** GPX track file per week directly into [dir] (a dedicated
+     * SAF location independent of any backup). When [weeks] is null every populated sample week is
+     * exported; otherwise only the given weeks. Files are weekly and named by ISO week key, so a
+     * re-export simply overwrites the affected weeks. Returns the number of week files written.
      */
-    suspend fun exportGpx(gpxRoot: SafDir, weeks: Collection<Long>?): Int {
-        val dir = gpxRoot.childDir(Constants.EXPORT_DIR)
-        val targetWeeks = weeks ?: backupDao.sampleWeeks()
+    suspend fun exportGpx(dir: SafDir, weeks: Collection<Long>?, reporter: BackupReporter = BackupReporter.None): Int {
+        val targetWeeks = (weeks ?: backupDao.sampleWeeks()).sorted()
+        val total = targetWeeks.size.coerceAtLeast(1)
         var count = 0
+        var done = 0
         for (week in targetWeeks) {
             val (startDay, endExclusive) = week to (week + 7)
             val samples = backupDao.samplesForDays(startDay, endExclusive).filter { it.includedInComputation }
             val name = TimeBuckets.weekKey(week) + ".gpx"
-            if (samples.isEmpty()) { dir.deleteFile(name); continue }
-            dir.writeFile(name, "application/gpx+xml") { out -> GpxExporter.write(samples, out) }
-            count++
+            if (samples.isEmpty()) {
+                dir.deleteFile(name)
+            } else {
+                dir.writeFile(name, "application/gpx+xml") { out -> GpxExporter.write(samples, out) }
+                reporter.log("Exported $name (${samples.size} points)")
+                count++
+            }
+            reporter.progress(++done / total.toFloat())
         }
         return count
     }

@@ -204,18 +204,32 @@
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">Backup</string>
     <string name="backup_intro">Back up your full timeline, places and trained models to a folder you choose (Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.</string>
-    <string name="backup_choose_folder">Choose backup folder</string>
     <string name="backup_selected_folder">selected folder</string>
     <string name="backup_dest">Backing up to: %1$s</string>
     <string name="backup_last">Last backup: %1$s</string>
     <string name="backup_now">Back up now</string>
     <string name="backup_change_reconnect">Change / reconnect</string>
-    <string name="backup_gpx_title">Also export GPX</string>
-    <string name="backup_gpx_desc">Open, unencrypted weekly .gpx tracks under an \"export\" folder.</string>
-    <string name="backup_gpx_use_separate">Use a separate GPX folder</string>
-    <string name="backup_gpx_change">Change GPX folder</string>
     <string name="backup_dump_intro">One-time database dump writes a complete standalone copy to a folder you pick.</string>
     <string name="backup_dump_action">One-time dump…</string>
+
+    <!-- GPX export (open format, independent of backup) -->
+    <string name="gpx_title">GPX export</string>
+    <string name="gpx_intro">Open-format weekly .gpx tracks for other apps and maps. Lat/lon/elevation/time only — not a backup, and it can\'t be restored.</string>
+    <string name="gpx_unencrypted_warn">GPX files are always stored unencrypted.</string>
+    <string name="gpx_auto_intro">Pick a folder to keep a GPX copy updated automatically as you record.</string>
+    <string name="gpx_dest">Auto-export to: %1$s</string>
+    <string name="gpx_last">Last export: %1$s</string>
+    <string name="gpx_export_now">Export now</string>
+    <string name="gpx_onetime_intro">One-time export writes weekly .gpx files to a folder you pick.</string>
+    <string name="gpx_onetime_action">One-time GPX export…</string>
+    <string name="gpx_range_title">Export GPX</string>
+    <string name="gpx_range_text">Export all recorded dates, or choose a date range.</string>
+    <string name="gpx_range_all">All dates</string>
+    <string name="gpx_range_pick">Date range…</string>
+    <string name="gpx_op_setup">Setting up GPX export</string>
+    <string name="gpx_op_export">Exporting GPX</string>
+    <string name="gpx_result_exported">Exported %1$d GPX file(s).</string>
+    <string name="action_export">Export</string>
     <string name="encrypt_title">Encrypt backup</string>
     <string name="encrypt_password_on">Protected with your password.</string>
     <string name="encrypt_passkey_on">Protected with a passkey.</string>

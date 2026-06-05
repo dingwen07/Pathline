@@ -21,14 +21,23 @@ import net.extrawdw.apps.locationhistory.security.CryptoHeader
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Result of a backup/restore operation, surfaced to the UI. */
+/** Result of a backup/restore/GPX operation, surfaced to the UI. */
 sealed interface BackupResult {
     data class Backed(val report: BackupReport) : BackupResult
     data class Restored(val report: RestoreReport) : BackupResult
+    /** A GPX export completed, writing [count] week files. */
+    data class Exported(val count: Int) : BackupResult
     data object NoDestination : BackupResult
     data object NeedsReclaim : BackupResult
     data object KeyUnavailable : BackupResult
     data class Error(val message: String) : BackupResult
+}
+
+/** Date scope for a one-time GPX export. */
+sealed interface GpxRange {
+    data object All : GpxRange
+    /** Inclusive-start / exclusive-end dayEpoch. Whole weeks intersecting this range are exported. */
+    data class Days(val startDay: Long, val endDayExclusive: Long) : GpxRange
 }
 
 /** What protects a newly-configured backup or a one-time dump. */
@@ -53,6 +62,7 @@ class BackupRepository @Inject constructor(
     private val engine: BackupEngine,
     private val safStore: SafBackupStore,
     private val keyVault: BackupKeyVault,
+    private val backupDao: net.extrawdw.apps.locationhistory.data.db.BackupDao,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -71,6 +81,13 @@ class BackupRepository @Inject constructor(
         settings.setBackupTree(treeUri.toString(), subdir)
         if (choice != null) applyEncryptionChoice(choice)
         return performBackup(full = true, reporter = reporter)
+    }
+
+    /** Master off switch for automatic backup: forget the destination and any encryption material. */
+    suspend fun disableBackup() {
+        settings.setBackupTree(null, null)
+        settings.setBackupEncryption(BackupEncryption.NONE, null)
+        keyVault.clear()
     }
 
     suspend fun disableEncryption(reporter: BackupReporter = BackupReporter.None): BackupResult {
@@ -114,12 +131,6 @@ class BackupRepository @Inject constructor(
         }
     }
 
-    suspend fun setGpxEnabled(enabled: Boolean) = settings.setGpxEnabled(enabled)
-    suspend fun setGpxTree(uri: Uri?) {
-        uri?.let { persistPermission(it, write = true) }
-        settings.setGpxTree(uri?.toString())
-    }
-
     // --- Running backups ---------------------------------------------------------------------
 
     suspend fun runScheduledBackup(): BackupResult = performBackup(full = false)
@@ -139,9 +150,6 @@ class BackupRepository @Inject constructor(
             } else {
                 engine.runIncremental(root, material, now, reporter = reporter)
             }
-            if (cfg.gpxEnabled) runCatching {
-                exportGpx(cfg, tree, if (needsFull) null else report.sampleWeeksTouched, reporter)
-            }.onFailure { AppLog.w(TAG, "gpx export failed: ${it.message}") }
             settings.setLastBackup(now)
             BackupResult.Backed(report)
         } catch (t: Throwable) {
@@ -150,11 +158,58 @@ class BackupRepository @Inject constructor(
         }
     }
 
-    private suspend fun exportGpx(cfg: BackupConfig, backupTree: SafDir, weeks: Collection<Long>?, reporter: BackupReporter) {
-        val gpxRoot = cfg.gpxTreeUri?.let { safStore.open(Uri.parse(it)) } ?: rootDir(backupTree, cfg.subdir)
-        reporter.log("Exporting GPX…")
-        val n = engine.exportGpx(gpxRoot, weeks)
-        reporter.log("Exported $n GPX file(s)")
+    // --- GPX export (open format, always unencrypted; independent of backup) -----------------
+
+    val gpxConfig: Flow<GpxConfig> get() = settings.gpxConfig
+
+    /** Persist a dedicated GPX destination and write an initial full export of every week. */
+    suspend fun configureGpx(treeUri: Uri, reporter: BackupReporter = BackupReporter.None): BackupResult {
+        persistPermission(treeUri, write = true)
+        settings.setGpxTree(treeUri.toString()) // also resets the last-export watermark → full export
+        return performGpxExport(reporter)
+    }
+
+    /** Turn off GPX auto-export (keeps already-written files in place). */
+    suspend fun disableGpx() = settings.setGpxTree(null)
+
+    suspend fun runScheduledGpxExport(): BackupResult = performGpxExport(BackupReporter.None)
+    suspend fun runManagedGpxExport(reporter: BackupReporter): BackupResult = performGpxExport(reporter)
+
+    /** Export to the configured GPX tree: every week on the first run, only changed weeks after. */
+    private suspend fun performGpxExport(reporter: BackupReporter): BackupResult {
+        val cfg = settings.gpxConfig.first()
+        val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
+        val dir = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
+        return try {
+            val now = System.currentTimeMillis()
+            val weeks = if (cfg.lastExportMs <= 0L) null else backupDao.sampleWeeksSince(cfg.lastExportMs)
+            reporter.log("Exporting GPX…")
+            val n = engine.exportGpx(dir, weeks, reporter)
+            settings.setGpxLastExport(now)
+            BackupResult.Exported(n)
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "gpx export failed: ${t.message}")
+            BackupResult.Error(t.message ?: "gpx export failed")
+        }
+    }
+
+    /**
+     * One-time GPX export to a freshly-picked folder, independent of the configured destination and
+     * its watermark. [range] selects all dates or whole weeks intersecting a dayEpoch range.
+     */
+    suspend fun oneTimeGpxExport(treeUri: Uri, range: GpxRange, reporter: BackupReporter): BackupResult {
+        persistPermission(treeUri, write = true)
+        val dir = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
+        return try {
+            val weeks = when (range) {
+                GpxRange.All -> null
+                is GpxRange.Days -> backupDao.sampleWeeksInDays(range.startDay, range.endDayExclusive)
+            }
+            reporter.log("Exporting GPX…")
+            BackupResult.Exported(engine.exportGpx(dir, weeks, reporter))
+        } catch (t: Throwable) {
+            BackupResult.Error(t.message ?: "gpx export failed")
+        }
     }
 
     // --- One-time dump + restore -------------------------------------------------------------

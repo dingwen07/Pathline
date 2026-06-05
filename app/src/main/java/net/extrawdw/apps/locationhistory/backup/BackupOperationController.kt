@@ -16,10 +16,11 @@ import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.BackupResult
 import net.extrawdw.apps.locationhistory.data.repo.EncryptionChoice
+import net.extrawdw.apps.locationhistory.data.repo.GpxRange
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class ManagedKind { BACKUP, DUMP, RESTORE }
+enum class ManagedKind { BACKUP, DUMP, RESTORE, GPX }
 
 /** Live state of a managed (UI-driven) backup/restore, rendered by the managed sheet. */
 data class ManagedState(
@@ -69,6 +70,15 @@ class BackupOperationController @Inject constructor(
     fun startDump(uri: Uri, subdir: String?, choice: EncryptionChoice) =
         launch(ManagedKind.DUMP, context.getString(R.string.backup_op_dump)) { repo.oneTimeDump(uri, subdir, choice, it) }
 
+    fun startConfigureGpx(uri: Uri) =
+        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_setup)) { repo.configureGpx(uri, it) }
+
+    fun startGpxExportNow() =
+        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_export)) { repo.runManagedGpxExport(it) }
+
+    fun startGpxExport(uri: Uri, range: GpxRange) =
+        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_export)) { repo.oneTimeGpxExport(uri, range, it) }
+
     fun startRestore(uri: Uri, password: CharArray?, prfSecret: ByteArray?) =
         launch(ManagedKind.RESTORE, context.getString(R.string.backup_op_restore)) { repo.restoreFrom(uri, password, prfSecret, it) }
 
@@ -97,7 +107,7 @@ class BackupOperationController @Inject constructor(
                 }
             }
             val result = op(reporter)
-            val ok = result is BackupResult.Backed || result is BackupResult.Restored
+            val ok = result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
             _state.update { s ->
                 s?.copy(running = false, finished = true, progress = if (ok) 1f else s.progress,
                     success = ok, message = describe(result))
@@ -113,6 +123,7 @@ class BackupOperationController @Inject constructor(
                 context.getString(R.string.backup_result_backed, result.report.partitionsWritten)
             }
         is BackupResult.Restored -> context.getString(R.string.backup_result_restored, result.report.rowsRestored, result.report.partitionsRestored)
+        is BackupResult.Exported -> context.getString(R.string.gpx_result_exported, result.count)
         BackupResult.NoDestination -> context.getString(R.string.backup_result_no_destination)
         BackupResult.NeedsReclaim -> context.getString(R.string.backup_result_needs_reclaim)
         BackupResult.KeyUnavailable -> context.getString(R.string.backup_result_key_unavailable)
