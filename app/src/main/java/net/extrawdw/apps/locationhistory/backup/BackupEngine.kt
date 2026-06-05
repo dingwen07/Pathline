@@ -91,17 +91,18 @@ class BackupEngine @Inject constructor(
         val sampleWeeks = HashSet<Long>()
         for (dirty in claimed) {
             val key = dirty.stream + "/" + dirty.weekStart
+            val label = dirty.stream + "/" + TimeBuckets.weekKey(dirty.weekStart)
             try {
                 val entry = emitPartition(root, dirty.stream, dirty.weekStart, material)
                 if (entry == null) merged.remove(key) else merged[key] = entry
                 if (dirty.stream == STREAM_SAMPLES) sampleWeeks.add(dirty.weekStart)
                 written++
-                reporter.log("Backed up $key (${entry?.rowCount ?: 0} rows)")
+                reporter.log("Backed up $label (${entry?.rowCount ?: 0} rows)")
             } catch (t: Throwable) {
-                AppLog.w(TAG, "partition $key failed: ${t.message}")
+                AppLog.w(TAG, "partition $label failed: ${t.message}")
                 backupDao.markDirty(listOf(dirty)) // retry next run
                 failed++
-                reporter.log("FAILED $key: ${t.message}")
+                reporter.log("FAILED $label: ${t.message}")
             }
             reporter.progress(++done / total.toFloat())
         }
@@ -136,9 +137,10 @@ class BackupEngine @Inject constructor(
                         reporter.log("Backed up $stream/${it.weekKey} (${it.rowCount} rows)")
                     }
                 } catch (t: Throwable) {
-                    AppLog.w(TAG, "full: $stream/$week failed: ${t.message}")
+                    val label = "$stream/${TimeBuckets.weekKey(week)}"
+                    AppLog.w(TAG, "full: $label failed: ${t.message}")
                     failed++
-                    reporter.log("FAILED $stream/$week: ${t.message}")
+                    reporter.log("FAILED $label: ${t.message}")
                 }
                 reporter.progress(++done / total.toFloat())
             }
@@ -194,7 +196,9 @@ class BackupEngine @Inject constructor(
         var done = 0
         db.withTransaction {
             backupDao.wipeForRestore()
-            // Insert in dependency order: places → visits → trips; samples independent.
+            // Time-series partitions first (visits, trips, samples), then snapshots (places,
+            // geofences, models) below. No FK constraints are enforced today, so order is not
+            // load-bearing; if FKs are ever added, places must be restored before visits/trips.
             for (stream in listOf(STREAM_VISITS, STREAM_TRIPS, STREAM_SAMPLES)) {
                 manifest.partitions.filter { it.stream == stream }.forEach { entry ->
                     rows += restorePartition(root, entry, cipher)

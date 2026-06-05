@@ -85,12 +85,17 @@ class OnboardingViewModel @Inject constructor(
     val restoreNeedsPassword = MutableStateFlow(false)
     private var pendingRestoreUri: Uri? = null
 
+    /** Flips true once a restore finishes successfully, so onboarding can resume at permission setup. */
+    val restoreSucceeded = MutableStateFlow(false)
+
     init {
-        // A successful restore completes onboarding and drops the user into the app.
+        // A successful restore brings back the history, but the user still needs to grant the
+        // recording permissions — so resume onboarding at the permission steps rather than skipping
+        // straight into the app.
         viewModelScope.launch {
             controller.state.collect { s ->
                 if (s?.kind == ManagedKind.RESTORE && s.finished && s.success) {
-                    settingsRepository.setOnboardingComplete(true)
+                    restoreSucceeded.value = true
                 }
             }
         }
@@ -164,6 +169,7 @@ fun OnboardingScreen(
 
     val activity = androidx.compose.ui.platform.LocalContext.current
     val restoreNeedsPassword by viewModel.restoreNeedsPassword.collectAsState()
+    val restoreSucceeded by viewModel.restoreSucceeded.collectAsState()
     val managed by viewModel.managed.collectAsState()
     val pickRestoreFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
@@ -178,6 +184,11 @@ fun OnboardingScreen(
         )
     }
     managed?.let { ManagedOperationSheet(it, onClose = viewModel::dismissManaged) }
+
+    // A successful restore drops the user into the permission steps so recording can work going forward.
+    LaunchedEffect(restoreSucceeded) {
+        if (restoreSucceeded) step = OnboardingStep.PERMISSIONS
+    }
 
     // Advance automatically as each permission phase is granted.
     LaunchedEffect(permissions.granted) {
