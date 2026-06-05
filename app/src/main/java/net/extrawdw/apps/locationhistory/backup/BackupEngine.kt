@@ -40,18 +40,27 @@ data class RestoreReport(val partitionsRestored: Int, val rowsRestored: Int)
  *
  * Two write modes:
  *  - **incremental** ([runIncremental]) — claims the dirty-partition set the triggers maintain and
- *    re-emits only those (stream, week) files, merging into the existing manifest. This is the
- *    standard periodic path; only the latest week(s) change for an active recorder.
- *  - **full** ([runFull]) — re-emits every populated week and rewrites the manifest from scratch,
- *    pruning orphan files. Used for the one-time database dump and for reclaim reconciliation when
- *    a SAF grant was lost and we must guarantee the destination matches the database.
+ *    re-emits only those (stream, week) files, merging into the existing inventory. The standard
+ *    periodic path; only the latest week(s) change for an active recorder.
+ *  - **full** ([runFull]) — re-emits every populated week. Used for the one-time database dump and
+ *    for reclaim reconciliation when a SAF grant was lost.
+ *
+ * **Crash-atomic, write-once layout.** SAF/cloud (notably Drive) has no atomic file replace, so we
+ * never mutate a file the current manifest still references. Every partition/snapshot/inventory file
+ * is **content-addressed** — its name embeds a hash of its on-disk bytes (`week.<hash>.jsonl.gz.enc`)
+ * — and therefore immutable. A run only *adds* files (unchanged content is reused, never re-uploaded);
+ * the fixed-name `manifest.json`, written **last**, is the single commit point that atomically swaps to
+ * the new backup. Superseded files are [pruneOrphans]'d *after* the commit. An interrupted run thus
+ * leaves either the previous backup or the new one fully restorable — never a half-mutated one. The
+ * unique names also make duplicate same-name files impossible by construction.
  *
  * The manifest is split in two: a minimal **public** `manifest.json` (versions + crypto header +
  * a hash-checked pointer to the inventory) and an **encrypted** [BackupInventory] listing every
  * file, so an encrypted backup leaks nothing about its contents from plaintext. Each inventory entry
  * carries two hashes: a `sha256` over the *uncompressed, unencrypted* serialized bytes (deterministic
  * and recomputable from the DB, for reclaim) and an `encSha256` over the on-disk gzip-then-encrypt
- * bytes (verified before a file is decrypted on restore). Files on disk are gzip-then-encrypt.
+ * bytes (verified before a file is decrypted on restore, and used as the content-address). Files on
+ * disk are gzip-then-encrypt.
  */
 @Singleton
 class BackupEngine @Inject constructor(
@@ -67,6 +76,9 @@ class BackupEngine @Inject constructor(
     class Material(val header: CryptoHeader, dek: ByteArray?) {
         val cipher = BackupCrypto.PartitionCipher(dek)
     }
+
+    /** [runIncremental] couldn't read the existing inventory; the caller should fall back to a full backup. */
+    class IncrementalInventoryUnavailable(cause: Throwable) : Exception(cause)
 
     // -- Public API ---------------------------------------------------------------------------
 
@@ -116,15 +128,21 @@ class BackupEngine @Inject constructor(
     suspend fun runIncremental(
         root: SafDir, material: Material, nowMs: Long, reporter: BackupReporter = BackupReporter.None,
     ): BackupReport {
-        val merged = LinkedHashMap<String, PartitionEntry>()
-        // Re-read the existing inventory (decrypting with this run's DEK) so unchanged weeks survive
-        // the merge. Best-effort: if it can't be read — first backup, or the encryption mode changed
-        // out from under it — start empty and let this run re-emit.
-        readManifest(root)?.let { existing ->
+        val existing = readManifest(root)
+        // The incremental merge must know the COMPLETE previous file set (so it neither drops nor
+        // prunes unchanged weeks). If the inventory can't be read, bail to a full backup instead of
+        // committing a lossy manifest. (Encryption-mode changes already route to full, so this is rare.)
+        val previous = if (existing == null) {
+            BackupInventory()
+        } else {
             runCatching { readInventory(root, existing, material.cipher) }
-                .onSuccess { inv -> inv.partitions.forEach { merged[it.stream + "/" + it.weekStart] = it } }
-                .onFailure { AppLog.w(TAG, "could not read existing inventory; rebuilding: ${it.message}") }
+                .getOrElse { throw IncrementalInventoryUnavailable(it) }
         }
+        val prevPartitions = previous.partitions.associateBy { it.stream + "/" + it.weekStart }
+        val prevSnapshots = previous.snapshots.associateBy { it.name }
+
+        val merged = LinkedHashMap<String, PartitionEntry>()
+        previous.partitions.forEach { merged[it.stream + "/" + it.weekStart] = it }
 
         val claimed = backupDao.claimDirty()
         val total = (claimed.size + 1).coerceAtLeast(1)
@@ -136,13 +154,13 @@ class BackupEngine @Inject constructor(
             val key = dirty.stream + "/" + dirty.weekStart
             val label = dirty.stream + "/" + TimeBuckets.weekKey(dirty.weekStart)
             try {
-                val entry = emitPartition(root, dirty.stream, dirty.weekStart, material)
+                val entry = emitPartition(root, dirty.stream, dirty.weekStart, material, prevPartitions[key])
                 if (entry == null) merged.remove(key) else merged[key] = entry
                 written++
                 reporter.log("Backed up $label (${entry?.rowCount ?: 0} rows)")
             } catch (t: Throwable) {
                 AppLog.w(TAG, "partition $label failed: ${t.message}")
-                backupDao.markDirty(listOf(dirty)) // retry next run
+                backupDao.markDirty(listOf(dirty)) // retry next run; previous entry stays referenced
                 failed++
                 reporter.log("FAILED $label: ${t.message}")
             }
@@ -150,17 +168,26 @@ class BackupEngine @Inject constructor(
         }
 
         reporter.log("Writing snapshots…")
-        val snapshots = writeSnapshots(root, material)
-        writeManifest(root, material, merged.values.toList(), snapshots, nowMs)
+        val snapshots = writeSnapshots(root, material, prevSnapshots)
+        val partitions = merged.values.toList()
+        val invName = writeManifest(root, material, partitions, snapshots, nowMs, existing?.inventory)
+        pruneOrphans(root, partitions, snapshots, invName)
         reporter.progress(1f)
-        AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${merged.size}")
-        return BackupReport(written, failed, merged.size)
+        AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${partitions.size}")
+        return BackupReport(written, failed, partitions.size)
     }
 
     suspend fun runFull(
         root: SafDir, material: Material, nowMs: Long, clearDirtyAfter: Boolean,
         reporter: BackupReporter = BackupReporter.None,
     ): BackupReport {
+        // Best-effort previous inventory: a full backup re-emits every week regardless, so an
+        // unreadable inventory just means "no reuse" (everything is rewritten), which is always safe.
+        val existing = readManifest(root)
+        val previous = existing?.let { runCatching { readInventory(root, it, material.cipher) }.getOrNull() } ?: BackupInventory()
+        val prevPartitions = previous.partitions.associateBy { it.stream + "/" + it.weekStart }
+        val prevSnapshots = previous.snapshots.associateBy { it.name }
+
         val weeksByStream = mapOf(
             STREAM_SAMPLES to backupDao.sampleWeeks(),
             STREAM_VISITS to backupDao.visitWeeks(),
@@ -174,7 +201,7 @@ class BackupEngine @Inject constructor(
         for ((stream, weeks) in weeksByStream) {
             for (week in weeks) {
                 try {
-                    emitPartition(root, stream, week, material)?.let {
+                    emitPartition(root, stream, week, material, prevPartitions["$stream/$week"])?.let {
                         entries.add(it)
                         reporter.log("Backed up $stream/${it.weekKey} (${it.rowCount} rows)")
                     }
@@ -188,9 +215,9 @@ class BackupEngine @Inject constructor(
             }
         }
         reporter.log("Writing snapshots…")
-        val snapshots = writeSnapshots(root, material)
-        writeManifest(root, material, entries, snapshots, nowMs)
-        pruneOrphans(root, entries, snapshots)
+        val snapshots = writeSnapshots(root, material, prevSnapshots)
+        val invName = writeManifest(root, material, entries, snapshots, nowMs, existing?.inventory)
+        pruneOrphans(root, entries, snapshots, invName)
         if (clearDirtyAfter) backupDao.clearAllDirty()
         reporter.progress(1f)
         AppLog.i(TAG, "full backup: wrote=${entries.size} failed=$failed")
@@ -273,7 +300,7 @@ class BackupEngine @Inject constructor(
     // -- Partition emit / restore -------------------------------------------------------------
 
     private suspend fun emitPartition(
-        root: SafDir, stream: String, weekStart: Long, material: Material,
+        root: SafDir, stream: String, weekStart: Long, material: Material, previous: PartitionEntry?,
     ): PartitionEntry? {
         val endDay = weekStart + 7
         val (bytes, rowCount) = when (stream) {
@@ -282,13 +309,16 @@ class BackupEngine @Inject constructor(
             STREAM_TRIPS -> encodeLines(backupDao.tripsForDays(weekStart, endDay))
             else -> error("unknown stream $stream")
         }
-        val dir = root.childDir(stream)
-        val weekKey = TimeBuckets.weekKey(weekStart)
-        val fileName = "$weekKey.jsonl.gz" + if (material.cipher.encrypted) ".enc" else ""
-        if (rowCount == 0) { dir.deleteFile(fileName); return null }
+        if (rowCount == 0) return null // now-empty week: drop from inventory; prune deletes the old file
         val disk = blobBytes(material, bytes)
+        val encHash = sha256(disk)
+        val dir = root.childDir(stream)
+        // Unchanged since the last committed backup → reuse the existing (known-good) file, no re-upload.
+        if (previous != null && previous.encSha256 == encHash && dir.exists(previous.fileName)) return previous
+        val weekKey = TimeBuckets.weekKey(weekStart)
+        val fileName = contentName(weekKey, "jsonl.gz", disk, material)
         dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
-        return PartitionEntry(stream, weekStart, weekKey, fileName, rowCount, sha256(bytes), sha256(disk))
+        return PartitionEntry(stream, weekStart, weekKey, fileName, rowCount, sha256(bytes), encHash)
     }
 
     private suspend fun restorePartition(
@@ -313,26 +343,28 @@ class BackupEngine @Inject constructor(
 
     // -- Snapshots (small whole-table / whole-blob data, rewritten every run) -----------------
 
-    private suspend fun writeSnapshots(root: SafDir, material: Material): List<SnapshotEntry> {
+    private suspend fun writeSnapshots(
+        root: SafDir, material: Material, previous: Map<String, SnapshotEntry>,
+    ): List<SnapshotEntry> {
         val dir = root.childDir(SNAPSHOT_DIR)
         val out = ArrayList<SnapshotEntry>()
 
-        out += snapshotLines(dir, material, SNAP_PLACES, backupDao.allPlaces())
-        out += snapshotLines(dir, material, SNAP_GEOFENCES, backupDao.allGeofences())
-        out += snapshotLines(dir, material, SNAP_STATE_EXAMPLES, backupDao.allStateExamples())
-        out += snapshotLines(dir, material, SNAP_TRANSPORT_EXAMPLES, backupDao.allTransportExamples())
+        out += snapshotLines(dir, material, SNAP_PLACES, backupDao.allPlaces(), previous[SNAP_PLACES])
+        out += snapshotLines(dir, material, SNAP_GEOFENCES, backupDao.allGeofences(), previous[SNAP_GEOFENCES])
+        out += snapshotLines(dir, material, SNAP_STATE_EXAMPLES, backupDao.allStateExamples(), previous[SNAP_STATE_EXAMPLES])
+        out += snapshotLines(dir, material, SNAP_TRANSPORT_EXAMPLES, backupDao.allTransportExamples(), previous[SNAP_TRANSPORT_EXAMPLES])
 
         // App settings
         val settings = BackupSettings(powerProfile = settingsRepository.settings.first().powerProfile.name)
         val settingsBytes = json.encodeToString(BackupSettings.serializer(), settings).encodeToByteArray()
-        out += snapshotBlob(dir, material, SNAP_SETTINGS, settingsBytes, rowCount = 1)
+        out += snapshotBlob(dir, material, SNAP_SETTINGS, settingsBytes, rowCount = 1, previous[SNAP_SETTINGS])
 
         // ML checkpoints (raw bytes)
         modelStore.stateCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(dir, material, SNAP_STATE_CKPT, it.readBytes(), rowCount = 1)
+            out += snapshotBlob(dir, material, SNAP_STATE_CKPT, it.readBytes(), rowCount = 1, previous[SNAP_STATE_CKPT])
         }
         modelStore.transportCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(dir, material, SNAP_TRANSPORT_CKPT, it.readBytes(), rowCount = 1)
+            out += snapshotBlob(dir, material, SNAP_TRANSPORT_CKPT, it.readBytes(), rowCount = 1, previous[SNAP_TRANSPORT_CKPT])
         }
         return out
     }
@@ -377,67 +409,84 @@ class BackupEngine @Inject constructor(
     }
 
     private inline fun <reified T> snapshotLines(
-        dir: SafDir, material: Material, name: String, rows: List<T>,
+        dir: SafDir, material: Material, name: String, rows: List<T>, previous: SnapshotEntry?,
     ): SnapshotEntry {
         val (bytes, count) = encodeLines(rows)
-        return snapshotBlob(dir, material, name, bytes, count)
+        return snapshotBlob(dir, material, name, bytes, count, previous)
     }
 
     private fun snapshotBlob(
-        dir: SafDir, material: Material, name: String, bytes: ByteArray, rowCount: Int,
+        dir: SafDir, material: Material, name: String, bytes: ByteArray, rowCount: Int, previous: SnapshotEntry?,
     ): SnapshotEntry {
-        val fileName = "$name.gz" + if (material.cipher.encrypted) ".enc" else ""
         val disk = blobBytes(material, bytes)
+        val encHash = sha256(disk)
+        // Unchanged since the last committed backup → reuse the existing file (most snapshots, every run).
+        if (previous != null && previous.encSha256 == encHash && dir.exists(previous.fileName)) return previous
+        val fileName = contentName(name, "gz", disk, material)
         dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
-        return SnapshotEntry(name, fileName, rowCount, sha256(bytes), sha256(disk))
+        return SnapshotEntry(name, fileName, rowCount, sha256(bytes), encHash)
     }
 
     // -- Manifest + pruning -------------------------------------------------------------------
 
+    /**
+     * Write the encrypted inventory (content-addressed, additive) and then — as the single atomic
+     * commit — the fixed-name public manifest. Returns the inventory file name so the caller can
+     * prune superseded inventories afterward. Never overwrites the inventory the *current* manifest
+     * still references: if the new inventory is byte-identical to the committed one, its file is reused.
+     */
     private fun writeManifest(
         root: SafDir, material: Material, partitions: List<PartitionEntry>,
-        snapshots: List<SnapshotEntry>, nowMs: Long,
-    ) {
-        // The sensitive listing goes into the encrypted inventory; the public manifest only points
-        // at it (by name + on-disk hash) so an encrypted backup leaks nothing in plaintext.
+        snapshots: List<SnapshotEntry>, nowMs: Long, previousInventory: InventoryRef?,
+    ): String {
         val inventory = BackupInventory(
             partitions = partitions.sortedWith(compareBy({ it.stream }, { it.weekStart })),
             snapshots = snapshots,
         )
-        val invName = inventoryName(material.cipher.encrypted)
         val invDisk = blobBytes(material, json.encodeToString(BackupInventory.serializer(), inventory).encodeToByteArray())
-        root.writeFile(invName, "application/octet-stream") { it.write(invDisk) }
-        // Drop a stale inventory left by a previous run under the other encryption mode.
-        root.fileNames().filter { it != invName && it in INVENTORY_NAMES }.forEach { root.deleteFile(it) }
+        val invHash = sha256(invDisk)
+        val invName = if (previousInventory != null && previousInventory.sha256 == invHash && root.exists(previousInventory.fileName)) {
+            previousInventory.fileName // identical inventory already committed → reuse, don't touch it
+        } else {
+            val name = contentName(INVENTORY_BASE, "json.gz", invDisk, material)
+            root.writeFile(name, "application/octet-stream") { it.write(invDisk) }
+            name
+        }
 
         val manifest = BackupManifest(
             formatVersion = Constants.BACKUP_FORMAT_VERSION,
             schemaVersion = AppDatabase.SCHEMA_VERSION,
             createdAtMs = nowMs,
             crypto = material.header,
-            inventory = InventoryRef(invName, sha256(invDisk)),
+            inventory = InventoryRef(invName, invHash),
         )
         val checksummed = manifest.copy(checksum = manifestChecksum(manifest))
+        // THE commit point: overwriting the fixed-name manifest atomically swaps to the new backup.
         val bytes = json.encodeToString(BackupManifest.serializer(), checksummed).encodeToByteArray()
         root.writeFile(MANIFEST, "application/json") { it.write(bytes) }
+        return invName
     }
 
-    private fun inventoryName(encrypted: Boolean) = INVENTORY_GZ + if (encrypted) ".enc" else ""
-
-    /** Delete partition + snapshot files that the new manifest no longer references. */
-    private fun pruneOrphans(root: SafDir, entries: List<PartitionEntry>, snapshots: List<SnapshotEntry>) {
-        val keep = entries.groupBy({ it.stream }, { it.fileName })
+    /**
+     * Delete files the just-committed manifest no longer references — superseded generations of
+     * changed weeks/snapshots, stale inventories, and any duplicate-name copies. Runs AFTER the
+     * manifest commit, so an interruption here only leaves harmless orphans (cleaned next run).
+     */
+    private fun pruneOrphans(
+        root: SafDir, partitions: List<PartitionEntry>, snapshots: List<SnapshotEntry>, invName: String,
+    ) {
+        val keep = partitions.groupBy({ it.stream }, { it.fileName })
         for (stream in listOf(STREAM_SAMPLES, STREAM_VISITS, STREAM_TRIPS)) {
             val dir = root.childDir(stream)
             val keepSet = keep[stream]?.toSet() ?: emptySet()
             dir.fileNames().filterNot { it in keepSet }.forEach { dir.deleteFile(it) }
         }
-        // Snapshot dir: keep only the files just written. This is what removes stale plaintext
-        // snapshots (e.g. "places.gz") after switching the backup to encrypted ("places.gz.enc"),
-        // and vice-versa.
         val snapDir = root.childDir(SNAPSHOT_DIR)
         val keepSnap = snapshots.map { it.fileName }.toSet()
         snapDir.fileNames().filterNot { it in keepSnap }.forEach { snapDir.deleteFile(it) }
+        // Root: drop every superseded inventory file (manifest.json and the stream/snapshot subdirs
+        // don't start with the inventory prefix, so they're untouched).
+        root.fileNames().filter { it != invName && it.startsWith("$INVENTORY_BASE.") }.forEach { root.deleteFile(it) }
     }
 
     // -- Serialization / framing helpers ------------------------------------------------------
@@ -477,6 +526,17 @@ class BackupEngine @Inject constructor(
     private fun sha256(bytes: ByteArray): String =
         Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes))
 
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * Content-addressed file name: `<base>.<16-hex-of-on-disk-hash>.<ext>[.enc]`. Embedding the hash
+     * makes the file immutable (distinct content → distinct name), which is what gives the backup its
+     * write-once / crash-atomic property and makes duplicate names impossible.
+     */
+    private fun contentName(base: String, ext: String, disk: ByteArray, material: Material): String =
+        "$base.${sha256Hex(disk).take(16)}.$ext" + if (material.cipher.encrypted) ".enc" else ""
+
     private fun verifyHash(fileName: String, bytes: ByteArray, expected: String) {
         val actual = sha256(bytes)
         if (actual != expected) error("backup file '$fileName' failed integrity check (hash mismatch)")
@@ -488,8 +548,7 @@ class BackupEngine @Inject constructor(
         const val STREAM_TRIPS = "trips"
 
         private const val MANIFEST = "manifest.json"
-        private const val INVENTORY_GZ = "inventory.json.gz"
-        private val INVENTORY_NAMES = setOf(INVENTORY_GZ, "$INVENTORY_GZ.enc")
+        private const val INVENTORY_BASE = "inventory"
         private const val SNAPSHOT_DIR = "snapshot"
         private const val SNAP_PLACES = "places"
         private const val SNAP_GEOFENCES = "geofences"

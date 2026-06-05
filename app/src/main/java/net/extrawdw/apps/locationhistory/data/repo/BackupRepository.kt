@@ -148,7 +148,13 @@ class BackupRepository @Inject constructor(
             val report = if (needsFull) {
                 engine.runFull(root, material, now, clearDirtyAfter = true, reporter = reporter)
             } else {
-                engine.runIncremental(root, material, now, reporter = reporter)
+                try {
+                    engine.runIncremental(root, material, now, reporter = reporter)
+                } catch (e: BackupEngine.IncrementalInventoryUnavailable) {
+                    AppLog.w(TAG, "incremental inventory unreadable; falling back to full backup")
+                    reporter.log("Existing inventory unreadable — running a full backup")
+                    engine.runFull(root, material, now, clearDirtyAfter = true, reporter = reporter)
+                }
             }
             settings.setLastBackup(now)
             BackupResult.Backed(report)
