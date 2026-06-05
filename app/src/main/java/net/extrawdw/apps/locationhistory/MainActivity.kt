@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Place
@@ -51,7 +50,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableTransparentEdgeToEdge()
         // Self-heal: if tracking was previously enabled, make sure the heartbeat is armed.
         lifecycleScope.launch {
             recordingController.onAppForegrounded()

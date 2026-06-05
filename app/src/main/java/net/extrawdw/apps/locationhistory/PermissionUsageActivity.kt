@@ -4,7 +4,6 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,7 +39,7 @@ import net.extrawdw.apps.locationhistory.ui.theme.PathlineTheme
 class PermissionUsageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableTransparentEdgeToEdge()
 
         // Which permission group the user tapped (e.g. "android.permission-group.LOCATION"); may be
         // null. Kept for context/telemetry — the overview below covers every permission either way.
