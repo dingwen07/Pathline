@@ -46,6 +46,7 @@ class GeofenceManager @Inject constructor(
             .setCircularRegion(latitude, longitude, Constants.DWELL_GEOFENCE_RADIUS_METERS)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
             .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_EXIT)
+            .setNotificationResponsiveness(Constants.DWELL_GEOFENCE_RESPONSIVENESS_MS)
             .build()
         val request = GeofencingRequest.Builder()
             .setInitialTrigger(0)
@@ -82,6 +83,7 @@ class GeofenceManager @Inject constructor(
                 .setCircularRegion(it.latitude, it.longitude, it.radiusMeters)
                 .setExpirationDuration(Geofence.NEVER_EXPIRE)
                 .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_EXIT)
+                .setNotificationResponsiveness(Constants.DWELL_GEOFENCE_RESPONSIVENESS_MS)
                 .build()
         }
         val request = GeofencingRequest.Builder().setInitialTrigger(0).addGeofences(geofences).build()

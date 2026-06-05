@@ -26,6 +26,11 @@ object Constants {
     /** Radius (m) used when matching a visit centroid against the local place database. */
     const val PLACE_MATCH_RADIUS_METERS = 80.0
 
+    /** Initial radius (m) for a place created from a Google Maps suggestion — Google gives a point, so
+     *  this is the displayed "yellow ring". Tighter than the match radius (matching still uses
+     *  [PLACE_MATCH_RADIUS_METERS]); the ring then adapts as visits accumulate. */
+    const val GOOGLE_PLACE_RADIUS_METERS = 50.0
+
     /** Bounds for an auto-computed place radius (derived from sample spread + GPS accuracy). */
     const val PLACE_MIN_RADIUS_METERS = 25.0
     const val PLACE_MAX_RADIUS_METERS = 150.0
@@ -56,11 +61,32 @@ object Constants {
     const val PLACE_GOOGLE_ANCHOR_WEIGHT = 10.0
     const val PLACE_LOCAL_ANCHOR_WEIGHT = 3.0
 
-    /** A "trip" whose net displacement is under this (m) is treated as GPS drift, not real movement. */
+    /** A near-anchor fix under this displacement (m) is treated as GPS drift, not real movement.
+     *  This is the FLOOR of the stationary drift radius, which widens up to [PLACE_MAX_RADIUS_METERS]
+     *  to match the GPS noise actually observed at the current spot (see RecordingController). */
     const val DRIFT_DISPLACEMENT_METERS = 80.0
+
+    /** GPS speed (m/s) at or above which a near-anchor fix counts as real movement, not drift. */
+    const val DRIFT_MOVING_SPEED_MPS = 1.2f
+
+    /**
+     * Accelerometer motion-energy (variance) at or above which the phone is physically moving, so a
+     * near-anchor fix is a real walk rather than GPS drift (which happens while the device sits still).
+     * Weighted heavily so a short walk — even at a noisy-GPS place with no GPS speed — is never
+     * mistaken for drift. Tuning knob; verify on-device.
+     */
+    const val DRIFT_MOTION_VARIANCE_CEILING = 1.0f
 
     /** Radius (m) of the geofence dropped when the device becomes stationary. */
     const val DWELL_GEOFENCE_RADIUS_METERS = 100f
+
+    /**
+     * How responsive (ms) the dwell-geofence EXIT should be. Left at the default 0, the system
+     * optimizes for power and can take minutes to report an exit — long enough that a short walk to
+     * the bus/train is missed entirely (the exit is the only departure signal that survives Doze).
+     * 30s trades a little battery for catching departures promptly.
+     */
+    const val DWELL_GEOFENCE_RESPONSIVENESS_MS = 0
 
     // --- Trip segmentation --------------------------------------------------------------------
     /** Sliding window (number of samples) used when classifying transport mode along a trip. */

@@ -37,25 +37,32 @@ class PlaceRepository @Inject constructor(
         address: String?,
         category: String?,
         source: PlaceSource = PlaceSource.USER,
-    ): Long = dao.insert(
-        PlaceEntity(
-            name = name,
-            latitude = latitude,
-            longitude = longitude,
-            radiusMeters = Constants.PLACE_MATCH_RADIUS_METERS,
-            category = category,
-            source = source,
-            googlePlaceId = googlePlaceId,
-            address = address,
-            confirmed = true,
-            createdAtMs = System.currentTimeMillis(),
-            // Capture the creation center/radius as the immutable anchor (Google's coordinates for a
-            // MAPS place, else the founding visit centroid). Folded into every later recompute.
-            anchorLatitude = latitude,
-            anchorLongitude = longitude,
-            anchorRadiusMeters = Constants.PLACE_MATCH_RADIUS_METERS,
-        ),
-    )
+    ): Long {
+        // A Google (MAPS) place is a point Google picked, so start it as a tight ring; a local place
+        // is founded on the visit's own spread. Either way the radius adapts as visits accumulate.
+        val initialRadius =
+            if (source == PlaceSource.MAPS) Constants.GOOGLE_PLACE_RADIUS_METERS
+            else Constants.PLACE_MATCH_RADIUS_METERS
+        return dao.insert(
+            PlaceEntity(
+                name = name,
+                latitude = latitude,
+                longitude = longitude,
+                radiusMeters = initialRadius,
+                category = category,
+                source = source,
+                googlePlaceId = googlePlaceId,
+                address = address,
+                confirmed = true,
+                createdAtMs = System.currentTimeMillis(),
+                // Capture the creation center/radius as the immutable anchor (Google's coordinates for a
+                // MAPS place, else the founding visit centroid). Folded into every later recompute.
+                anchorLatitude = latitude,
+                anchorLongitude = longitude,
+                anchorRadiusMeters = initialRadius,
+            ),
+        )
+    }
 
     suspend fun update(place: PlaceEntity) = dao.update(place)
 

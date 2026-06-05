@@ -259,11 +259,24 @@ class RecordingController @Inject constructor(
         lastArConfidence = 90
         AppLog.i(TAG, "AR transition ENTER ${arName(activityType)}")
         when (activityType) {
-            DetectedActivity.STILL -> becameStationary()
+            // A bare AR STILL must not collapse us to the low-power cadence while we're actually
+            // travelling — a smooth light-rail ride makes AR flap STILL/WALKING/RUNNING, and each
+            // STILL would otherwise undersample the whole leg. Trust STILL only when recent fixes
+            // show we've settled; a genuine stop is still caught here once the fixes stop moving (and
+            // by the stationary-cluster detector in handleLocations).
+            DetectedActivity.STILL -> if (recentlyMoving()) {
+                AppLog.i(TAG, "AR STILL ignored — recent fixes still moving")
+            } else {
+                becameStationary()
+            }
+            // Walking can be in-place jitter at a dwell, so it still goes through the drift guard.
             DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> becameMoving(DevicePhysicalState.WALKING)
-            DetectedActivity.RUNNING -> becameMoving(DevicePhysicalState.RUNNING)
-            DetectedActivity.ON_BICYCLE -> becameMoving(DevicePhysicalState.CYCLING)
-            DetectedActivity.IN_VEHICLE -> becameMoving(DevicePhysicalState.IN_VEHICLE)
+            // Running/cycling/vehicle are unambiguous motion (not plausible as dwell jitter): trust AR
+            // and leave the stay immediately. Otherwise boarding is suppressed by the stale stationary
+            // fix (the device hasn't moved 80m *yet*), so the whole moving leg is undersampled.
+            DetectedActivity.RUNNING -> becameMoving(DevicePhysicalState.RUNNING, force = true)
+            DetectedActivity.ON_BICYCLE -> becameMoving(DevicePhysicalState.CYCLING, force = true)
+            DetectedActivity.IN_VEHICLE -> becameMoving(DevicePhysicalState.IN_VEHICLE, force = true)
         }
     }
 
@@ -322,7 +335,7 @@ class RecordingController @Inject constructor(
                 if (currentState == DevicePhysicalState.STATIONARY) {
                     // Non-drift already checked against this fresh delivered fix; force past the
                     // stale-fix re-check inside becameMoving so it isn't re-suppressed.
-                    if (!isLikelyDrift(location)) becameMoving(classification.state, force = true)
+                    if (!isLikelyDrift(location, motionVariance)) becameMoving(classification.state, force = true)
                 } else {
                     currentState = classification.state
                 }
@@ -368,6 +381,27 @@ class RecordingController @Inject constructor(
         )
         val cutoff = location.time - FIX_WINDOW_MS
         while (recentFixes.isNotEmpty() && recentFixes.first().t < cutoff) recentFixes.removeFirst()
+    }
+
+    /**
+     * True when fixes in the last [RECENT_MOTION_WINDOW_MS] show real movement (GPS speed or a spread
+     * beyond the stay radius) — used to reject a premature AR STILL while travelling, e.g. a light-rail
+     * ride that AR keeps mislabelling as STILL. Looks at a short recent window (not the full fix buffer)
+     * so a genuine stop still flips this false within ~the window once the device settles.
+     */
+    private fun recentlyMoving(): Boolean = synchronized(fixLock) {
+        if (recentFixes.isEmpty()) return false
+        val cutoff = recentFixes.last().t - RECENT_MOTION_WINDOW_MS
+        val recent = recentFixes.filter { it.t >= cutoff }
+        if (recent.size < 2) return false
+        val maxSpeed = recent.mapNotNull { it.speedMps }.maxOrNull() ?: 0f
+        if (maxSpeed >= 1.5f) return true
+        val spread = recent.maxOf { a ->
+            recent.maxOf { b ->
+                net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(a.lat, a.lon, b.lat, b.lon)
+            }
+        }
+        spread > net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
     }
 
     /** Returns a visit candidate when recent fixes have settled in one spot long enough, even if
@@ -465,17 +499,21 @@ class RecordingController @Inject constructor(
     private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false) {
         // Drift guard: while inside the dwell geofence, an Activity Recognition "walking" is
         // probably jitter. A real departure is caught by the geofence exit (force = true).
-        if (!force && isLikelyDrift()) {
-            // isLikelyDrift() measures against the last *stored* fix, but on the low-power stationary
-            // cadence that fix can be minutes old and still sitting at the anchor — so a genuine
-            // walk-away reads as "drift" and we stay pinned at slow sampling (AR keeps reporting
-            // WALKING but it gets dropped). Confirm against a fresh fix before suppressing.
-            val fresh = getCurrentLocation()
-            if (fresh == null || isLikelyDrift(fresh)) {
-                AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
-                return
+        if (!force) {
+            // Weight device movement heavily: a real walk shakes the phone, GPS drift happens while it
+            // sits still. Sample the accelerometer once so any physical motion (or GPS speed) overrides
+            // the position-based drift check — a short walk at a noisy-GPS place must not read as drift.
+            val motionVariance = motionSensorReader.motionVariance()
+            if (isLikelyDrift(motionVariance)) {
+                // The stored fix can be minutes stale on the low-power cadence and still at the anchor,
+                // so confirm a possible departure against a fresh fix before suppressing.
+                val fresh = getCurrentLocation()
+                if (fresh == null || isLikelyDrift(fresh, motionVariance)) {
+                    AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
+                    return
+                }
+                AppLog.i(TAG, "becameMoving($state): fresh fix confirms real departure (stale drift overridden)")
             }
-            AppLog.i(TAG, "becameMoving($state): fresh fix confirms real departure (stale drift overridden)")
         }
         currentState = state
         AppLog.i(TAG, "becameMoving: $state (force=$force)")
@@ -489,25 +527,58 @@ class RecordingController @Inject constructor(
         serviceState = state
     }
 
-    /** True when the latest fix is still near the in-memory stationary anchor. */
-    private suspend fun isLikelyDrift(): Boolean {
+    /**
+     * GPS drift = a near-anchor fix while the phone is **physically still**; a real departure either
+     * displaces beyond the (noise-widened) stay radius, carries GPS speed, or shakes the phone. This
+     * is the gate on leaving the low-power stationary cadence, so a false positive keeps us
+     * undersampling — hence physical movement ([motionVariance]) is weighted heavily: any real walk
+     * shakes the device and is never suppressed, even at a noisy-GPS place with no GPS speed.
+     */
+    private fun isDriftAt(lat: Double, lon: Double, speedMps: Float, motionVariance: Float): Boolean {
         if (currentState != DevicePhysicalState.STATIONARY) return false
         val anchor = stationaryAnchor ?: return true
-        val last = locationRepository.mostRecent() ?: return false
-        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-            anchor.first, anchor.second, last.latitude, last.longitude,
-        )
-        return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
+        if (speedMps >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOVING_SPEED_MPS) return false
+        if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
+        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(anchor.first, anchor.second, lat, lon)
+        return d < stationaryNoiseRadius()
     }
 
-    private fun isLikelyDrift(location: Location): Boolean {
+    /** Drift check against the last *stored* fix (may be stale on the low-power cadence). */
+    private suspend fun isLikelyDrift(motionVariance: Float): Boolean {
         if (currentState != DevicePhysicalState.STATIONARY) return false
-        val anchor = stationaryAnchor ?: return true
-        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-            anchor.first, anchor.second, location.latitude, location.longitude,
+        if (stationaryAnchor == null) return true
+        val last = locationRepository.mostRecent() ?: return false
+        return isDriftAt(last.latitude, last.longitude, last.speed ?: 0f, motionVariance)
+    }
+
+    /** Drift check against a specific (fresh) fix. */
+    private fun isLikelyDrift(location: Location, motionVariance: Float): Boolean =
+        isDriftAt(
+            location.latitude, location.longitude,
+            if (location.hasSpeed()) location.speed else 0f, motionVariance,
         )
-        val speed = if (location.hasSpeed()) location.speed else 0f
-        return d < net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS && speed < 1.2f
+
+    /**
+     * Radius (m) within which a near-anchor fix counts as jitter, widened to the GPS noise actually
+     * observed here (RMS spread of recent stationary fixes) so a noisy place tolerates more wobble —
+     * floored at [Constants.DRIFT_DISPLACEMENT_METERS] and capped at [Constants.PLACE_MAX_RADIUS_METERS]
+     * so a pathological place can't open a huge dead zone. Only stationary-flagged fixes are used, so a
+     * departure trajectory never inflates it.
+     */
+    private fun stationaryNoiseRadius(): Double = synchronized(fixLock) {
+        val base = net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
+        val cap = net.extrawdw.apps.locationhistory.core.Constants.PLACE_MAX_RADIUS_METERS
+        val stat = recentFixes.filter { it.stationary }
+        if (stat.size < 3) return base
+        val cLat = stat.sumOf { it.lat } / stat.size
+        val cLon = stat.sumOf { it.lon } / stat.size
+        val rms = kotlin.math.sqrt(
+            stat.sumOf {
+                val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon)
+                d * d
+            } / stat.size,
+        )
+        (rms * NOISE_RMS_FACTOR).coerceIn(base, cap)
     }
 
     // --- helpers ------------------------------------------------------------------------------
@@ -576,5 +647,7 @@ class RecordingController @Inject constructor(
         const val SPEED_WINDOW = 10
         const val TAG = "Recorder"
         const val FIX_WINDOW_MS = 6 * 60_000L
+        const val RECENT_MOTION_WINDOW_MS = 90_000L
+        const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius
     }
 }
