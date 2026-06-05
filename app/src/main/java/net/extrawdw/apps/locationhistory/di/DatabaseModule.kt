@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
+import net.extrawdw.apps.locationhistory.data.db.AppMigrations
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
 import net.extrawdw.apps.locationhistory.data.db.GeofenceDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
@@ -48,9 +49,12 @@ object DatabaseModule {
             // WAL keeps writes fast and is the right journal mode for an append-heavy fact table.
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addCallback(TriggerCallback)
-            // No migrations: the schema baseline is v1 (pre-release). Should the version ever bump
-            // before the first migration is written, rebuild rather than crash.
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            // Real migrations from the first public release on (v1 baseline is frozen). A missing
+            // upgrade migration FAILS FAST (Room throws) rather than silently wiping user data — that
+            // is intentional, so it's caught in testing/CI. Only a version *downgrade* (rare) still
+            // rebuilds rather than crash. See [AppMigrations].
+            .addMigrations(*AppMigrations.ALL)
+            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
             .build()
     }
 

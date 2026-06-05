@@ -36,7 +36,7 @@ class ModelTrainingWorker @AssistedInject constructor(
         models.stateModel()?.takeIf { it.supportsTraining() }?.let { model ->
             val examples = trainingRepository.allStateExamples()
                 .map { TrainingRepository.decode(it.features) to it.label }
-                .filter { it.first.size == model.featureDim }
+                .filter { it.first.size == model.featureDim && it.second in 0 until model.numClasses }
             net.extrawdw.apps.locationhistory.core.AppLog.i(
                 "TrainingWorker",
                 "state examples=${examples.size}",
@@ -52,7 +52,7 @@ class ModelTrainingWorker @AssistedInject constructor(
         models.transportModel()?.takeIf { it.supportsTraining() }?.let { model ->
             val examples = trainingRepository.allTransportExamples()
                 .map { TrainingRepository.decode(it.features) to it.label }
-                .filter { it.first.size == model.featureDim }
+                .filter { it.first.size == model.featureDim && it.second in 0 until model.numClasses }
             net.extrawdw.apps.locationhistory.core.AppLog.i(
                 "TrainingWorker",
                 "transport examples=${examples.size}",

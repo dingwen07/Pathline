@@ -204,8 +204,8 @@
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">Backup</string>
     <string name="backup_intro">Back up your full timeline, places and trained models to a folder you choose (Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.</string>
-    <string name="dest_internal_storage">Internal storage</string>
-    <string name="dest_external_storage">External storage</string>
+    <string name="dest_internal_storage">Internal Storage</string>
+    <string name="dest_external_storage">External Storage</string>
     <string name="dest_unknown">Backup folder</string>
     <string name="backup_dest">Backing up to: %1$s</string>
     <string name="backup_last">Last backup: %1$s</string>

@@ -261,9 +261,18 @@ class BackupEngine @Inject constructor(
     ): RestoreReport {
         val manifest = parseManifest(root) ?: error("no backup found in the selected folder")
         require(checksumMatches(manifest)) { "backup manifest failed integrity check (checksum mismatch)" }
+        require(manifest.formatVersion <= Constants.BACKUP_FORMAT_VERSION) {
+            "backup uses a newer on-disk format (v${manifest.formatVersion}); update the app to restore it"
+        }
         require(manifest.schemaVersion <= AppDatabase.SCHEMA_VERSION) {
             "backup was made by a newer app version (schema ${manifest.schemaVersion}); update first"
         }
+        // FORWARD-COMPAT SEAM: today restore deserializes JSONL straight into the *current* entity
+        // classes (ignoreUnknownKeys + per-field defaults absorb minor older-backup drift; undecodable
+        // rows are skipped, see decodeLines). Once the schema bumps past v1, an OLDER backup
+        // (manifest.schemaVersion < SCHEMA_VERSION) should instead be rebuilt at its own version from
+        // app/schemas/<N>.json and run through AppMigrations (restore-then-migrate) — implement that
+        // branch here alongside the first migration; the same-version path below stays as-is.
         val dek = BackupCrypto.openDek(manifest.crypto, password, prfSecret)
         val cipher = BackupCrypto.PartitionCipher(dek)
         // The inventory's on-disk hash and (when encrypted) its GCM tag are both verified here,
@@ -501,11 +510,17 @@ class BackupEngine @Inject constructor(
         return sb.toString().encodeToByteArray() to rows.size
     }
 
-    private fun <T> decodeLines(bytes: ByteArray, serializer: kotlinx.serialization.KSerializer<T>): List<T> =
-        bytes.decodeToString().lineSequence()
+    private fun <T> decodeLines(bytes: ByteArray, serializer: kotlinx.serialization.KSerializer<T>): List<T> {
+        var skipped = 0
+        val rows = bytes.decodeToString().lineSequence()
             .filter { it.isNotBlank() }
-            .map { json.decodeFromString(serializer, it) }
+            // Skip (don't abort on) a single undecodable row, so one bad/old line can't sink the whole
+            // restore. Forward-compat safety net alongside per-field defaults + ignoreUnknownKeys.
+            .mapNotNull { line -> runCatching { json.decodeFromString(serializer, line) }.getOrElse { skipped++; null } }
             .toList()
+        if (skipped > 0) AppLog.w(TAG, "restore: skipped $skipped undecodable row(s)")
+        return rows
+    }
 
     /** gzip then (optionally) encrypt: [enc([gzip(plaintext)])]. */
     private fun writeBlob(out: java.io.OutputStream, material: Material, plaintext: ByteArray) {

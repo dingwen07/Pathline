@@ -36,8 +36,10 @@ object Features {
      * Layout version of each feature vector, stamped onto every training example
      * ([net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity.featureSchemaVersion]).
      * **Bump the relevant one whenever you change the order, meaning, normalization, or dimension of
-     * that feature set** — examples from an older version are then purged instead of mis-trained, since
-     * the stored CSV carries no names to reconcile against.
+     * that feature set, OR the order/length of the model's class list**
+     * (`DevicePhysicalState.MODEL_CLASSES` / `TransportMode.MODEL_CLASSES`) — each example's stored
+     * `label` is an index into that list, so reordering it silently remaps old labels. Examples from an
+     * older version are then purged instead of mis-trained, since the stored CSV/label carry no names.
      */
     const val STATE_FEATURE_SCHEMA_VERSION = 1
     const val TRANSPORT_FEATURE_SCHEMA_VERSION = 1
