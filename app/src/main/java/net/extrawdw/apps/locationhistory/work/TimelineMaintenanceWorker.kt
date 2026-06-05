@@ -109,6 +109,11 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         buildOngoingTrip(loadStart, loadEnd, dayStart, dayEnd, latest)
         merger.merge(loadStart, loadEnd)
 
+        // Deleting/rebuilding unconfirmed visits and merging can leave a surviving confirmed trip
+        // pointing at a visit id that no longer exists. Sweep the whole table (this also cleans
+        // orphans inherited from older data) so the trip graph stays reconstructable from a backup.
+        tripDao.detachDanglingVisits()
+
         // Let matched places drift toward where the user actually goes. recordVisitToPlace weights
         // confirmed visits 4x and decays old ones, so auto-detected visits nudge the center/radius
         // while confirmations anchor it. Fixed places are skipped inside recordVisitToPlace.

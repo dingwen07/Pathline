@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -84,6 +85,12 @@ data class PlaceEntity(
     val address: String?,
     val confirmed: Boolean,
     val createdAtMs: Long,
+    /**
+     * Deprecated, derived. Never written (the authoritative count is a live `COUNT(*)` over visits,
+     * see [TimelineDao.observePlaceVisitCounts]), so it would only ever export as a stale 0.
+     * [Transient] keeps it out of backups; the column stays to avoid a destructive schema migration.
+     */
+    @Transient
     val visitCount: Int = 0,
     /** When true the user has pinned the center/radius — the app must not auto-update them. */
     val fixed: Boolean = false,

@@ -97,6 +97,40 @@ interface TripDao {
     @Query("DELETE FROM trips WHERE id = :id")
     suspend fun deleteTrip(id: Long)
 
+    /**
+     * Null out any trip endpoint that referenced [visitId]. [TripEntity.fromVisitId]/[TripEntity.toVisitId]
+     * are journey-grouping hints with no FK or cascade, so when a visit is deleted (editor) or replaced
+     * by a rebuild (maintenance reinserts unconfirmed visits with fresh ids), a surviving confirmed trip
+     * would otherwise keep pointing at a row that no longer exists. Detach instead of dangle.
+     */
+    @Query("UPDATE trips SET fromVisitId = NULL WHERE fromVisitId = :visitId")
+    suspend fun detachFromVisit(visitId: Long)
+
+    @Query("UPDATE trips SET toVisitId = NULL WHERE toVisitId = :visitId")
+    suspend fun detachToVisit(visitId: Long)
+
+    /** Detach both endpoints of every trip that pointed at [visitId]. Call right after deleting a visit. */
+    suspend fun detachVisit(visitId: Long) {
+        detachFromVisit(visitId)
+        detachToVisit(visitId)
+    }
+
+    @Query("UPDATE trips SET fromVisitId = NULL WHERE fromVisitId IS NOT NULL AND fromVisitId NOT IN (SELECT id FROM visits)")
+    suspend fun detachDanglingFromVisits()
+
+    @Query("UPDATE trips SET toVisitId = NULL WHERE toVisitId IS NOT NULL AND toVisitId NOT IN (SELECT id FROM visits)")
+    suspend fun detachDanglingToVisits()
+
+    /**
+     * Whole-table sweep: detach every trip endpoint whose referenced visit no longer exists. Used after
+     * a rebuild/merge (where deleted visits aren't enumerated one by one) and to clean orphans inherited
+     * from an older app version or imported data.
+     */
+    suspend fun detachDanglingVisits() {
+        detachDanglingFromVisits()
+        detachDanglingToVisits()
+    }
+
     @Query("SELECT COUNT(*) FROM trips")
     suspend fun count(): Int
 }

@@ -74,7 +74,11 @@ class TimelineEditor @Inject constructor(
 
     private suspend fun deleteItem(item: TimelineItem) {
         when (item) {
-            is TimelineItem.VisitItem -> visitDao.delete(item.visit.id)
+            is TimelineItem.VisitItem -> {
+                visitDao.delete(item.visit.id)
+                // Detach trips that bounded this visit so they don't keep a dangling fromVisitId/toVisitId.
+                tripDao.detachVisit(item.visit.id)
+            }
             is TimelineItem.TripItem -> tripDao.deleteTrip(item.trip.id)
         }
     }

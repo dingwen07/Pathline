@@ -116,6 +116,23 @@ interface BackupDao {
         clearAllDirty()
     }
 
+    /**
+     * After an as-is restore, detach any trip endpoint whose referenced visit was not in the backup,
+     * so a snapshot written by an older app version (or with already-broken links) can't leave trips
+     * pointing at visits that were never imported. fromVisitId/toVisitId are grouping hints, so nulling
+     * is the correct repair; without it a restore reproduces the dangling references verbatim.
+     */
+    @Transaction
+    suspend fun detachDanglingTripVisits() {
+        detachDanglingTripFromVisits(); detachDanglingTripToVisits()
+    }
+
+    @Query("UPDATE trips SET fromVisitId = NULL WHERE fromVisitId IS NOT NULL AND fromVisitId NOT IN (SELECT id FROM visits)")
+    suspend fun detachDanglingTripFromVisits()
+
+    @Query("UPDATE trips SET toVisitId = NULL WHERE toVisitId IS NOT NULL AND toVisitId NOT IN (SELECT id FROM visits)")
+    suspend fun detachDanglingTripToVisits()
+
     @Query("DELETE FROM trips") suspend fun clearTrips()
     @Query("DELETE FROM visits") suspend fun clearVisits()
     @Query("DELETE FROM location_samples") suspend fun clearSamples()

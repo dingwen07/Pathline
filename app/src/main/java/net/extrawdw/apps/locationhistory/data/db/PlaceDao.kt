@@ -15,7 +15,12 @@ interface PlaceDao {
     @Update
     suspend fun update(place: PlaceEntity)
 
-    @Query("SELECT * FROM places ORDER BY visitCount DESC, name ASC")
+    // Most-visited first, using the live count over visits. (Previously ordered by the stored
+    // `visitCount`, which is never written and so was always 0 — i.e. effectively name-only.)
+    @Query(
+        "SELECT * FROM places ORDER BY " +
+            "(SELECT COUNT(*) FROM visits WHERE visits.placeId = places.id) DESC, name ASC"
+    )
     fun observeAll(): Flow<List<PlaceEntity>>
 
     @Query("SELECT * FROM places WHERE id = :id")
@@ -35,9 +40,6 @@ interface PlaceDao {
     suspend fun inBoundingBox(
         minLat: Double, minLon: Double, maxLat: Double, maxLon: Double,
     ): List<PlaceEntity>
-
-    @Query("UPDATE places SET visitCount = visitCount + 1 WHERE id = :id")
-    suspend fun incrementVisitCount(id: Long)
 
     @Query("UPDATE places SET latitude = :lat, longitude = :lon, radiusMeters = :radius WHERE id = :id")
     suspend fun updateCenterRadius(id: Long, lat: Double, lon: Double, radius: Double)

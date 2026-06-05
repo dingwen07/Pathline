@@ -287,6 +287,10 @@ class BackupEngine @Inject constructor(
                 }
             }
             restoreSnapshots(root, inventory.snapshots, cipher)
+            // Repair trip->visit links that the backup itself carried broken (older exports, or data
+            // imported from a previous app version): detach any trip endpoint whose visit is absent so
+            // the restored DB is self-consistent rather than reproducing the dangling references.
+            backupDao.detachDanglingTripVisits()
             // The REPLACE inserts re-fire the dirty triggers; clear so we don't immediately
             // re-upload the whole history we just pulled down.
             backupDao.clearAllDirty()

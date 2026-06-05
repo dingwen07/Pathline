@@ -119,7 +119,19 @@ class TimelineRepository @Inject constructor(
         }
         // Link + confirm the visit first so the place recompute counts it as a (weighted) ground-truth
         // visit, then recompute the place center/radius as a recency/confirmation-weighted mean.
-        visitDao.update(visit.copy(placeId = placeId, confirmed = true, confidence = 1f))
+        // Clear the candidate (the geocoder's pre-confirmation guess) so a confirmed visit can't keep a
+        // name/coords that diverge from the place the user actually chose — placeId is now authoritative.
+        visitDao.update(
+            visit.copy(
+                placeId = placeId,
+                confirmed = true,
+                confidence = 1f,
+                candidateName = null,
+                candidateGooglePlaceId = null,
+                candidateLatitude = null,
+                candidateLongitude = null,
+            ),
+        )
         placeRepository.recordVisitToPlace(placeId)
         // Mark fixes outside the (updated) place circle as GPS drift (bogus).
         placeRepository.byId(placeId)?.let { p ->

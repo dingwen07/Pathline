@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
 private val TRACK_RED = ComposeColor(0x66FF1744) // translucent
 private const val DOT_DP = 3f
+private const val DOT_DP_NO_TRACK = 1.5f // dots stand alone without a track line, so draw them tinier
 private const val MARKER_BATCH = 400 // markers added per UI-thread slice before yielding
 
 @OptIn(MapsComposeExperimentalApi::class)
@@ -84,9 +85,13 @@ fun MapExplorerScreen(viewModel: MapExplorerViewModel = hiltViewModel()) {
     val cameraPositionState = viewModel.cameraPositionState
     val showPicker = remember { mutableStateOf(false) }
 
-    val dotSizePx = with(LocalDensity.current) { DOT_DP.dp.toPx() }
-    // Built lazily once the map (and thus BitmapDescriptorFactory) is initialized, then reused.
+    // Without a track line the dots stand on their own, so shrink them further to cut clutter.
+    val drawingTrack = state.trackPoints.size >= 2
+    val dotSizePx = with(LocalDensity.current) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
+    // Built lazily once the map (and thus BitmapDescriptorFactory) is initialized; rebuilt when the
+    // dot size changes (the array also caches the size it was built for).
     val dotIcon = remember { arrayOfNulls<BitmapDescriptor>(1) }
+    val dotIconSizePx = remember { floatArrayOf(-1f) }
     val markers = remember { mutableListOf<Marker>() }
 
     // Open near the user's data (last recorded sample) instead of the global world view — only the
@@ -127,12 +132,16 @@ fun MapExplorerScreen(viewModel: MapExplorerViewModel = hiltViewModel()) {
             }
             // Red dots are plain map markers sharing a single bitmap icon (far cheaper than
             // MarkerComposable), added in batches that yield so the UI thread never stalls.
-            MapEffect(state.dotPoints) { map ->
+            MapEffect(state.dotPoints, dotSizePx) { map ->
                 markers.forEach { it.remove() }
                 markers.clear()
                 val pts = state.dotPoints
                 if (pts.isEmpty()) return@MapEffect
-                val icon = dotIcon[0] ?: redDotDescriptor(dotSizePx).also { dotIcon[0] = it }
+                if (dotIcon[0] == null || dotIconSizePx[0] != dotSizePx) {
+                    dotIcon[0] = redDotDescriptor(dotSizePx)
+                    dotIconSizePx[0] = dotSizePx
+                }
+                val icon = dotIcon[0]!!
                 var i = 0
                 for (p in pts) {
                     map.addMarker(

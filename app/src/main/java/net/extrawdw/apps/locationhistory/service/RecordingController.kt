@@ -320,7 +320,9 @@ class RecordingController @Inject constructor(
                 // Stationary exits should not wait solely for AR/geofence when the fixes themselves
                 // show real motion; the drift guard still blocks jitter inside the dwell radius.
                 if (currentState == DevicePhysicalState.STATIONARY) {
-                    if (!isLikelyDrift(location)) becameMoving(classification.state)
+                    // Non-drift already checked against this fresh delivered fix; force past the
+                    // stale-fix re-check inside becameMoving so it isn't re-suppressed.
+                    if (!isLikelyDrift(location)) becameMoving(classification.state, force = true)
                 } else {
                     currentState = classification.state
                 }
@@ -464,8 +466,16 @@ class RecordingController @Inject constructor(
         // Drift guard: while inside the dwell geofence, an Activity Recognition "walking" is
         // probably jitter. A real departure is caught by the geofence exit (force = true).
         if (!force && isLikelyDrift()) {
-            AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
-            return
+            // isLikelyDrift() measures against the last *stored* fix, but on the low-power stationary
+            // cadence that fix can be minutes old and still sitting at the anchor — so a genuine
+            // walk-away reads as "drift" and we stay pinned at slow sampling (AR keeps reporting
+            // WALKING but it gets dropped). Confirm against a fresh fix before suppressing.
+            val fresh = getCurrentLocation()
+            if (fresh == null || isLikelyDrift(fresh)) {
+                AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
+                return
+            }
+            AppLog.i(TAG, "becameMoving($state): fresh fix confirms real departure (stale drift overridden)")
         }
         currentState = state
         AppLog.i(TAG, "becameMoving: $state (force=$force)")
