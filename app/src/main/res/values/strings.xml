@@ -187,6 +187,7 @@
     <string name="action_finish">Finish</string>
     <string name="action_allow_all_time">Allow all the time</string>
     <string name="action_maybe_later">Maybe later</string>
+    <string name="action_ok">OK</string>
 
     <!-- ============================ Map explorer ============================ -->
     <string name="range_today">Today</string>

@@ -58,6 +58,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Show rationale for data access -->
+        <activity
+            android:name=".PermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:theme="@style/Theme.Pathline">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Google Maps / Places API key, injected from local.properties (see build.gradle.kts) -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"

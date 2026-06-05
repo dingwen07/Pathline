@@ -176,6 +176,7 @@
     <string name="action_finish">完成</string>
     <string name="action_allow_all_time">始终允许</string>
     <string name="action_maybe_later">以后再说</string>
+    <string name="action_ok">确定</string>
 
     <!-- ============================ Map explorer ============================ -->
     <string name="range_today">今天</string>

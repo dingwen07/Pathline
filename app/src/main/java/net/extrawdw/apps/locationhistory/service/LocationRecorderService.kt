@@ -4,13 +4,16 @@ import android.annotation.SuppressLint
 import android.Manifest
 import android.app.PendingIntent
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -49,6 +52,19 @@ class LocationRecorderService : LifecycleService() {
         ) = onNetworkChanged("capabilities")
     }
 
+    // Doze idle-mode transitions feed the controller's Doze-aware departure logic. The deep-Doze
+    // verdict is motion-gated by the platform, so it complements our (verified) significant-motion
+    // sensor: enter -> durably stationary (disarm), exit -> likely real motion (verify + wake).
+    private var idleReceiverRegistered = false
+    private val idleReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED) return
+            val idle = getSystemService(PowerManager::class.java)?.isDeviceIdleMode ?: return
+            AppLog.i(TAG, "device idle mode changed: idle=$idle")
+            lifecycleScope.launch { controller.handleDeviceIdleModeChanged(idle) }
+        }
+    }
+
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
         return null
@@ -85,6 +101,7 @@ class LocationRecorderService : LifecycleService() {
             return false
         }
         registerNetworkCallback()
+        registerIdleReceiver()
 
         if (!hasLocationPermission()) {
             AppLog.w(TAG, "no location permission — stopping")
@@ -126,6 +143,7 @@ class LocationRecorderService : LifecycleService() {
         AppLog.i(TAG, "stopUpdatesAndSelf")
         runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
         unregisterNetworkCallback()
+        unregisterIdleReceiver()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -145,6 +163,7 @@ class LocationRecorderService : LifecycleService() {
         if (paused) {
             runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
             unregisterNetworkCallback()
+            unregisterIdleReceiver()
             Notifications.notifyRecordingStopped(this)
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -156,6 +175,7 @@ class LocationRecorderService : LifecycleService() {
         AppLog.w(TAG, "onDestroy (service stopping)")
         runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
         unregisterNetworkCallback()
+        unregisterIdleReceiver()
         super.onDestroy()
     }
 
@@ -174,6 +194,20 @@ class LocationRecorderService : LifecycleService() {
             runCatching { cm.unregisterNetworkCallback(networkCallback) }
         }
         networkCallbackRegistered = false
+    }
+
+    private fun registerIdleReceiver() {
+        if (idleReceiverRegistered) return
+        runCatching {
+            registerReceiver(idleReceiver, IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED))
+            idleReceiverRegistered = true
+        }.onFailure { AppLog.w(TAG, "idle receiver registration failed: ${it.message}") }
+    }
+
+    private fun unregisterIdleReceiver() {
+        if (!idleReceiverRegistered) return
+        runCatching { unregisterReceiver(idleReceiver) }
+        idleReceiverRegistered = false
     }
 
     private fun onNetworkChanged(reason: String) {

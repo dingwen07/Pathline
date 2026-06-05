@@ -28,6 +28,13 @@ class TrainableTfliteModel(
 
     private val interpreter = Interpreter(modelBytes, Interpreter.Options())
 
+    /**
+     * Serializes every native interpreter call. TFLite's Interpreter is not thread-safe, and infer
+     * (recording coroutines), train (the charging-gated worker) and close (reload) would otherwise
+     * invoke it concurrently -> a data race that crashes inside libLiteRt rather than throwing.
+     */
+    private val lock = Any()
+
     private val signatures: Set<String> = interpreter.signatureKeys?.toSet() ?: emptySet()
 
     private val inferOutputKey: String =
@@ -48,7 +55,9 @@ class TrainableTfliteModel(
                 val w = Array(rows) { FloatArray(cols) { input.readFloat() } }
                 val b = FloatArray(input.readInt()) { input.readFloat() }
                 val outputs = HashMap<String, Any>().apply { put("ok", FloatArray(1)) }
-                interpreter.runSignature(mapOf<String, Any>("w" to w, "b" to b), outputs, "set_weights")
+                synchronized(lock) {
+                    interpreter.runSignature(mapOf<String, Any>("w" to w, "b" to b), outputs, "set_weights")
+                }
             }
         }
     }
@@ -59,7 +68,9 @@ class TrainableTfliteModel(
         val input = arrayOf(features)
         val output = Array(1) { FloatArray(numClasses) }
         val outputs = HashMap<String, Any>().apply { put(inferOutputKey, output) }
-        interpreter.runSignature(mapOf<String, Any>("x" to input), outputs, "infer")
+        synchronized(lock) {
+            interpreter.runSignature(mapOf<String, Any>("x" to input), outputs, "infer")
+        }
         output[0]
     }.getOrNull()
 
@@ -67,12 +78,14 @@ class TrainableTfliteModel(
     fun train(x: Array<FloatArray>, y: Array<FloatArray>, epochs: Int): Float {
         if (!supportsTraining() || x.isEmpty()) return Float.NaN
         var lastLoss = Float.NaN
-        repeat(epochs) {
-            val loss = FloatArray(1)
-            val outputs = HashMap<String, Any>().apply { put("loss", loss) }
-            runCatching {
-                interpreter.runSignature(mapOf<String, Any>("x" to x, "y" to y), outputs, "train")
-                lastLoss = loss[0]
+        synchronized(lock) {
+            repeat(epochs) {
+                val loss = FloatArray(1)
+                val outputs = HashMap<String, Any>().apply { put("loss", loss) }
+                runCatching {
+                    interpreter.runSignature(mapOf<String, Any>("x" to x, "y" to y), outputs, "train")
+                    lastLoss = loss[0]
+                }
             }
         }
         return lastLoss
@@ -85,7 +98,9 @@ class TrainableTfliteModel(
             val w = Array(featureDim) { FloatArray(numClasses) }
             val b = FloatArray(numClasses)
             val outputs = HashMap<String, Any>().apply { put("w", w); put("b", b) }
-            interpreter.runSignature(emptyMap<String, Any>(), outputs, "get_weights")
+            synchronized(lock) {
+                interpreter.runSignature(emptyMap<String, Any>(), outputs, "get_weights")
+            }
             DataOutputStream(checkpoint.outputStream().buffered()).use { out ->
                 out.writeInt(featureDim)
                 out.writeInt(numClasses)
@@ -96,7 +111,7 @@ class TrainableTfliteModel(
         }
     }
 
-    override fun close() = interpreter.close()
+    override fun close() = synchronized(lock) { interpreter.close() }
 
     companion object {
         /** Copies model bytes into a direct, native-order buffer as required by the interpreter. */

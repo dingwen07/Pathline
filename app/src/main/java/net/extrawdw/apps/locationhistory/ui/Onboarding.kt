@@ -106,13 +106,14 @@ class OnboardingViewModel @Inject constructor(
      * timeline starts populating right away.
      */
     fun finish(startTracking: Boolean) = viewModelScope.launch {
+        // Flip the gate first so the main UI appears immediately
+        settingsRepository.setOnboardingComplete(true)
         if (startTracking) {
             settingsRepository.setTrackingEnabled(true)
             recordingController.startTracking()
             workScheduler.schedulePeriodicTimelineMaintenance()
             workScheduler.schedulePeriodicBackup()
         }
-        settingsRepository.setOnboardingComplete(true)
     }
 
     /** Inspect the chosen folder, then restore — prompting for password / running passkey as needed. */
@@ -210,33 +211,7 @@ fun OnboardingScreen(
             ) {
                 when (step) {
                     OnboardingStep.WELCOME -> WelcomeContent()
-                    OnboardingStep.PERMISSIONS -> PermissionContent(
-                        icon = Icons.Filled.LocationOn,
-                        title = stringResource(R.string.onboarding_permissions_title),
-                        body = stringResource(R.string.onboarding_permissions_body),
-                        rows = listOf(
-                            PermissionRow(
-                                Icons.Filled.Notifications,
-                                stringResource(R.string.perm_notifications_title),
-                                stringResource(R.string.perm_notifications_desc),
-                            ),
-                            PermissionRow(
-                                Icons.Filled.LocationOn,
-                                stringResource(R.string.perm_location_title),
-                                stringResource(R.string.perm_location_desc),
-                            ),
-                            PermissionRow(
-                                Icons.AutoMirrored.Filled.DirectionsRun,
-                                stringResource(R.string.perm_activity_title),
-                                stringResource(R.string.perm_activity_desc),
-                            ),
-                            PermissionRow(
-                                Icons.Filled.Phone,
-                                stringResource(R.string.perm_phone_title),
-                                stringResource(R.string.perm_phone_desc),
-                            ),
-                        ),
-                    )
+                    OnboardingStep.PERMISSIONS -> PermissionsStepContent()
                     OnboardingStep.BACKGROUND -> PermissionContent(
                         icon = Icons.Filled.LocationOn,
                         title = stringResource(R.string.onboarding_background_title),
@@ -301,6 +276,45 @@ private fun WelcomeContent() {
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
+    )
+}
+
+/**
+ * The permissions overview shown as the second onboarding step: the icon, heading, blurb, and the
+ * per-permission rationale rows. Extracted so the same explanation can be reused outside onboarding
+ * — notably by [net.extrawdw.apps.locationhistory.PermissionUsageActivity], which the system launches
+ * from the "i" button next to Pathline's permissions in Android's permission manager. The buttons are
+ * intentionally left to the caller, since onboarding grants permissions while the usage screen only
+ * dismisses.
+ */
+@Composable
+internal fun PermissionsStepContent() {
+    PermissionContent(
+        icon = Icons.Filled.LocationOn,
+        title = stringResource(R.string.onboarding_permissions_title),
+        body = stringResource(R.string.onboarding_permissions_body),
+        rows = listOf(
+            PermissionRow(
+                Icons.Filled.Notifications,
+                stringResource(R.string.perm_notifications_title),
+                stringResource(R.string.perm_notifications_desc),
+            ),
+            PermissionRow(
+                Icons.Filled.LocationOn,
+                stringResource(R.string.perm_location_title),
+                stringResource(R.string.perm_location_desc),
+            ),
+            PermissionRow(
+                Icons.AutoMirrored.Filled.DirectionsRun,
+                stringResource(R.string.perm_activity_title),
+                stringResource(R.string.perm_activity_desc),
+            ),
+            PermissionRow(
+                Icons.Filled.Phone,
+                stringResource(R.string.perm_phone_title),
+                stringResource(R.string.perm_phone_desc),
+            ),
+        ),
     )
 }
 

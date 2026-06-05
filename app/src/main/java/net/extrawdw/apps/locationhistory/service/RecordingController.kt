@@ -11,8 +11,15 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
@@ -68,6 +75,12 @@ class RecordingController @Inject constructor(
     private val fixLock = Any()
     @Volatile private var stationaryAnchor: Pair<Double, Double>? = null
 
+    /** Long-lived scope for the significant-motion backoff re-arm (process-lifetime singleton). */
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** Consecutive unconfirmed significant-motion triggers in the current stay -> backoff growth. */
+    @Volatile private var sigMotionFalseStreak = 0
+    @Volatile private var sigMotionRearmJob: Job? = null
+
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
     /** Begin the always-on, low-power heartbeat (Activity Recognition transitions). */
@@ -83,7 +96,9 @@ class RecordingController @Inject constructor(
      * — when the device is still we drop to a low-power location cadence rather than stopping the
      * service, so it never silently exits.
      */
-    suspend fun startTracking() {
+    suspend fun startTracking() = withContext(Dispatchers.Default) {
+        // The bootstrap fix is classified here (ML inference), and the UI calls this from the main
+        // dispatcher — so keep the whole sequence off the main thread.
         AppLog.i(TAG, "startTracking")
         enableTracking()
         val profile = settingsRepository.settings.first().powerProfile
@@ -294,10 +309,19 @@ class RecordingController @Inject constructor(
     }
 
     /**
-     * The significant-motion trigger fired while stationary — a fast, low-power hint that the user has
-     * started location-changing motion. Treated like a geofence exit (a forced departure) so accurate
-     * recording starts in seconds; mode is refined to WALKING/IN_VEHICLE/… by the next AR/classifier
-     * signal. A rare false positive self-corrects when the fixes settle back into a stationary cluster.
+     * The significant-motion trigger fired while stationary — a fast, low-power *hint* that the user
+     * may have started location-changing motion. It is NOT trusted as a confirmed departure: the
+     * one-shot hardware sensor fires on transients (a phone bumped on a desk, HVAC, a passing truck)
+     * that don't actually move the user, and blindly ramping GPS on each one pins the recorder in the
+     * costly UNKNOWN network-scanning cadence (the idle-battery drain seen in the 06-05 dump).
+     *
+     * Instead we *verify* before leaving low power, via the same drift guard used elsewhere
+     * ([becameMoving] with `force = false`): a real walk shakes the phone (`motionVariance`) or, for a
+     * smoother ride, a fresh fix shows GPS speed/displacement. A transient shows neither and is
+     * suppressed. An unconfirmed trigger re-arms the sensor with a growing backoff so a chronically
+     * noisy surface can't flap us awake. ~1 min to wake on a real departure is acceptable; the
+     * Doze-exit path ([handleDeviceIdleModeChanged]) and the next classified fix are additional
+     * backstops.
      */
     suspend fun handleSignificantMotion() {
         if (isAutostartSuppressed()) {
@@ -305,8 +329,43 @@ class RecordingController @Inject constructor(
             return
         }
         if (currentState != DevicePhysicalState.STATIONARY) return // already moving; stale trigger
-        AppLog.i(TAG, "significant motion — treating as departure")
-        becameMoving(DevicePhysicalState.UNKNOWN, force = true)
+        AppLog.i(TAG, "significant motion — verifying departure")
+        if (!becameMoving(DevicePhysicalState.UNKNOWN, force = false)) {
+            // Unconfirmed: stay in the low-power stationary cadence and re-arm with backoff.
+            rearmSignificantMotionWithBackoff()
+        }
+    }
+
+    /**
+     * Doze idle-mode changed (`PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED`, delivered by the FGS).
+     * Deep Doze is motion-gated by the platform's own significant-motion logic, so its verdict is a
+     * higher-quality signal than our raw sensor:
+     * - **Entering** idle = the system confirms durable stationarity. Our sensor is redundant (a real
+     *   departure will break Doze and arrive on the exit branch), so disarm it to drop wakeups.
+     * - **Exiting** idle is *usually* real motion, but maintenance windows and screen-on also exit, so
+     *   confirm with a cheap accelerometer burst (no GPS): travel shakes the phone -> wake; otherwise
+     *   just re-arm the sensor fresh so the next genuine move is caught immediately.
+     */
+    suspend fun handleDeviceIdleModeChanged(idle: Boolean) {
+        if (isAutostartSuppressed()) return
+        if (idle) {
+            AppLog.i(TAG, "device idle (Doze) — durably stationary; disarming significant motion")
+            cancelSigMotionRearm()
+            significantMotionManager.disarm()
+            return
+        }
+        AppLog.i(TAG, "device exited Doze idle")
+        if (currentState != DevicePhysicalState.STATIONARY) return
+        val motionVariance = motionSensorReader.motionVariance()
+        if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) {
+            AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) — treating as departure")
+            becameMoving(DevicePhysicalState.UNKNOWN, force = true)
+        } else {
+            // Likely a maintenance-window / screen-on exit, not a departure. Restore the fast sensor.
+            resetSigMotionBackoff()
+            cancelSigMotionRearm()
+            significantMotionManager.arm { handleSignificantMotion() }
+        }
     }
 
     /** Network changes are recorded as context on the next fix and may be a movement cue. */
@@ -511,13 +570,17 @@ class RecordingController @Inject constructor(
             geofenceManager.armDwellGeofence(candidate.centroidLatitude, candidate.centroidLongitude)
             // Fast, Doze-surviving departure trigger alongside the (laggy) geofence — fires the moment
             // the user starts location-changing motion. One-shot; re-armed on the next stationary entry.
+            // A genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
+            cancelSigMotionRearm()
+            resetSigMotionBackoff()
             significantMotionManager.arm { handleSignificantMotion() }
             stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
             workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.timestampMs), "became_stationary")
         }
     }
 
-    private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false) {
+    /** @return true if the state actually transitioned to moving; false if suppressed as drift. */
+    private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false): Boolean {
         // Drift guard: while inside the dwell geofence, an Activity Recognition "walking" is
         // probably jitter. A real departure is caught by the geofence exit (force = true).
         if (!force) {
@@ -531,7 +594,7 @@ class RecordingController @Inject constructor(
                 val fresh = getCurrentLocation()
                 if (fresh == null || isLikelyDrift(fresh, motionVariance)) {
                     AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
-                    return
+                    return false
                 }
                 AppLog.i(TAG, "becameMoving($state): fresh fix confirms real departure (stale drift overridden)")
             }
@@ -541,12 +604,49 @@ class RecordingController @Inject constructor(
         val maintenanceDay = locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
             ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
         stationaryAnchor = null
+        cancelSigMotionRearm()
+        resetSigMotionBackoff()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
         workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay, "became_moving")
         val profile = settingsRepository.settings.first().powerProfile
         recorderService.start(state, profile)
         serviceState = state
+        return true
+    }
+
+    // --- significant-motion backoff -----------------------------------------------------------
+
+    private fun resetSigMotionBackoff() {
+        sigMotionFalseStreak = 0
+    }
+
+    private fun cancelSigMotionRearm() {
+        sigMotionRearmJob?.cancel()
+        sigMotionRearmJob = null
+    }
+
+    /**
+     * Re-arm the one-shot significant-motion sensor after a delay that doubles with each consecutive
+     * unconfirmed trigger in the current stay (30s -> 1m -> 2m -> ... capped at 30m). A phone resting
+     * on a vibrating surface keeps tripping the sensor; without this it would flap us out of the
+     * low-power cadence every ~40s all night. The streak resets on a confirmed departure, a new
+     * stationary anchor, or a Doze-exit verdict. The delay coroutine is naturally deferred by Doze
+     * (CPU suspended) — fine, since deep Doze hands departure detection to the idle-exit path anyway.
+     */
+    private fun rearmSignificantMotionWithBackoff() {
+        val streak = sigMotionFalseStreak
+        val delayMs = (SIG_MOTION_BASE_BACKOFF_MS shl streak.coerceAtMost(SIG_MOTION_MAX_BACKOFF_SHIFTS))
+            .coerceAtMost(SIG_MOTION_MAX_BACKOFF_MS)
+        sigMotionFalseStreak = streak + 1
+        cancelSigMotionRearm()
+        sigMotionRearmJob = controllerScope.launch {
+            delay(delayMs)
+            if (currentState == DevicePhysicalState.STATIONARY) {
+                AppLog.i(TAG, "re-arming significant motion after ${delayMs}ms (unconfirmed streak=$streak)")
+                significantMotionManager.arm { handleSignificantMotion() }
+            }
+        }
     }
 
     /**
@@ -671,5 +771,9 @@ class RecordingController @Inject constructor(
         const val FIX_WINDOW_MS = 6 * 60_000L
         const val RECENT_MOTION_WINDOW_MS = 90_000L
         const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius
+        // Significant-motion re-arm backoff: base << streak, capped. 30s,1m,2m,4m,8m,16m,30m(cap).
+        const val SIG_MOTION_BASE_BACKOFF_MS = 30_000L
+        const val SIG_MOTION_MAX_BACKOFF_SHIFTS = 6
+        const val SIG_MOTION_MAX_BACKOFF_MS = 30 * 60_000L
     }
 }
