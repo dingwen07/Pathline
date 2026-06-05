@@ -60,35 +60,58 @@ class BackupRepository @Inject constructor(
 
     // --- Destination + encryption configuration ----------------------------------------------
 
-    /** Persist a newly-picked backup tree + optional subdir and write an initial full backup. */
-    suspend fun configureDestination(treeUri: Uri, subdir: String?, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    /**
+     * Persist a newly-picked backup tree + optional subdir and write an initial full backup. When
+     * [choice] is non-null (fresh setup) it establishes the encryption first, so the very first
+     * backup is already protected; when null (changing/reconnecting an existing destination) the
+     * current encryption + cached DEK are kept as-is.
+     */
+    suspend fun configureDestination(treeUri: Uri, subdir: String?, choice: EncryptionChoice?, reporter: BackupReporter = BackupReporter.None): BackupResult {
         persistPermission(treeUri, write = true)
         settings.setBackupTree(treeUri.toString(), subdir)
+        if (choice != null) applyEncryptionChoice(choice)
         return performBackup(full = true, reporter = reporter)
     }
 
     suspend fun disableEncryption(reporter: BackupReporter = BackupReporter.None): BackupResult {
-        keyVault.clear()
-        settings.setBackupEncryption(BackupEncryption.NONE, null)
+        applyEncryptionChoice(EncryptionChoice.None)
         return performBackup(full = true, reporter = reporter) // rewrite everything as plaintext
     }
 
     /** Turn on password encryption: mint a DEK, wrap it for the password + cache both locally. */
     suspend fun enablePasswordEncryption(password: CharArray, reporter: BackupReporter = BackupReporter.None): BackupResult {
-        val (header, dek) = BackupCrypto.createPasswordHeader(password)
-        keyVault.store(dek)
-        keyVault.storePassword(password)
-        settings.setBackupEncryption(BackupEncryption.PASSWORD, json.encodeToString(CryptoHeader.serializer(), header))
+        applyEncryptionChoice(EncryptionChoice.Password(password))
         return performBackup(full = true, reporter = reporter) // re-encrypt under the new DEK
     }
 
     /** Turn on passkey (PRF) encryption from a secret the UI already obtained via the passkey ceremony. */
     suspend fun enablePasskeyEncryption(choice: EncryptionChoice.Passkey, reporter: BackupReporter = BackupReporter.None): BackupResult {
-        val (header, dek) = BackupCrypto.createPasskeyHeader(choice.secret, choice.salt, choice.credentialId)
-        keyVault.store(dek)
-        keyVault.clearPasswordOnly()
-        settings.setBackupEncryption(BackupEncryption.PASSKEY, json.encodeToString(CryptoHeader.serializer(), header))
+        applyEncryptionChoice(choice)
         return performBackup(full = true, reporter = reporter)
+    }
+
+    /**
+     * Establish the key material + persisted crypto header for [choice], without running a backup —
+     * callers follow with their own full backup that writes everything under the new protection.
+     * Minting a fresh DEK here means switching modes always re-keys (the old DEK is discarded).
+     */
+    private suspend fun applyEncryptionChoice(choice: EncryptionChoice) = when (choice) {
+        EncryptionChoice.None -> {
+            keyVault.clear()
+            settings.setBackupEncryption(BackupEncryption.NONE, null)
+        }
+        is EncryptionChoice.Password -> {
+            val (header, dek) = BackupCrypto.createPasswordHeader(choice.password)
+            keyVault.store(dek)
+            keyVault.storePassword(choice.password)
+            settings.setBackupEncryption(BackupEncryption.PASSWORD, json.encodeToString(CryptoHeader.serializer(), header))
+        }
+        is EncryptionChoice.Passkey -> {
+            val (header, dek) = BackupCrypto.createPasskeyHeader(choice.secret, choice.salt, choice.credentialId)
+            keyVault.store(dek)
+            keyVault.clearPasswordOnly()
+            settings.setBackupEncryption(BackupEncryption.PASSKEY, json.encodeToString(CryptoHeader.serializer(), header))
+        }
     }
 
     suspend fun setGpxEnabled(enabled: Boolean) = settings.setGpxEnabled(enabled)

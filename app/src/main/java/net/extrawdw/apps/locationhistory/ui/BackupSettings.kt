@@ -88,8 +88,24 @@ class BackupViewModel @Inject constructor(
 
     suspend fun backupExists(uri: Uri, subdir: String?): Boolean = backupRepository.backupExistsAt(uri, subdir)
 
-    fun configure(uri: Uri, subdir: String?) {
-        controller.startConfigure(uri, subdir)
+    /** Fresh setup: persist the destination with the chosen encryption applied to the first backup. */
+    fun configure(uri: Uri, subdir: String?, choice: EncryptionChoice) {
+        controller.startConfigure(uri, subdir, choice)
+        workScheduler.schedulePeriodicBackup()
+    }
+
+    fun configureWithPasskey(activityContext: Context, uri: Uri, subdir: String?) = viewModelScope.launch {
+        runCatching { passkeyManager.obtainForSetup(activityContext) }
+            .onSuccess {
+                controller.startConfigure(uri, subdir, EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId))
+                workScheduler.schedulePeriodicBackup()
+            }
+            .onFailure { controller.fail(ManagedKind.BACKUP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
+    }
+
+    /** Change destination / reconnect an existing backup, keeping its current encryption. */
+    fun reconfigure(uri: Uri, subdir: String?) {
+        controller.startConfigure(uri, subdir, null)
         workScheduler.schedulePeriodicBackup()
     }
 
@@ -201,15 +217,32 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
         }
     }
 
-    // Subdir prompt after choosing the backup destination.
     pendingBackupUri?.let { uri ->
-        SubdirDialog(
-            treeUri = uri,
-            defaultLooksLikePathline = viewModel.folderLooksLikePathline(uri),
-            checkExists = { sub -> viewModel.backupExists(uri, sub) },
-            onConfirm = { subdir -> pendingBackupUri = null; viewModel.configure(uri, subdir) },
-            onDismiss = { pendingBackupUri = null },
-        )
+        if (config?.treeUri == null) {
+            // Fresh setup: pick a subdir, then choose encryption for the very first backup.
+            EncryptionSetupFlow(
+                uri = uri,
+                looksLikePathline = viewModel.folderLooksLikePathline(uri),
+                checkExists = { sub -> viewModel.backupExists(uri, sub) },
+                encryptTitle = stringResource(R.string.encrypt_title),
+                encryptText = stringResource(R.string.encrypt_chooser_text),
+                passwordTitle = stringResource(R.string.backup_set_password_title),
+                passwordConfirmLabel = stringResource(R.string.action_encrypt),
+                onNone = { subdir -> pendingBackupUri = null; viewModel.configure(uri, subdir, EncryptionChoice.None) },
+                onPassword = { subdir, pw -> pendingBackupUri = null; viewModel.configure(uri, subdir, EncryptionChoice.Password(pw)) },
+                onPasskey = { subdir -> pendingBackupUri = null; viewModel.configureWithPasskey(activity, uri, subdir) },
+                onDismiss = { pendingBackupUri = null },
+            )
+        } else {
+            // Changing destination / reconnecting: keep the existing encryption, just confirm subdir.
+            SubdirDialog(
+                treeUri = uri,
+                defaultLooksLikePathline = viewModel.folderLooksLikePathline(uri),
+                checkExists = { sub -> viewModel.backupExists(uri, sub) },
+                onConfirm = { subdir -> pendingBackupUri = null; viewModel.reconfigure(uri, subdir) },
+                onDismiss = { pendingBackupUri = null },
+            )
+        }
     }
 
     // Encryption method chooser (turning encryption on).
@@ -232,10 +265,14 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
 
     // Dump flow: subdir → encryption choice.
     pendingDumpUri?.let { uri ->
-        DumpFlowDialogs(
+        EncryptionSetupFlow(
             uri = uri,
             looksLikePathline = viewModel.folderLooksLikePathline(uri),
             checkExists = { sub -> viewModel.backupExists(uri, sub) },
+            encryptTitle = stringResource(R.string.dump_encrypt_title),
+            encryptText = stringResource(R.string.dump_encrypt_text),
+            passwordTitle = stringResource(R.string.dump_password_title),
+            passwordConfirmLabel = stringResource(R.string.action_dump),
             onNone = { subdir -> pendingDumpUri = null; viewModel.dump(uri, subdir, EncryptionChoice.None) },
             onPassword = { subdir, pw -> pendingDumpUri = null; viewModel.dump(uri, subdir, EncryptionChoice.Password(pw)) },
             onPasskey = { subdir -> pendingDumpUri = null; viewModel.dumpWithPasskey(activity, uri, subdir) },
@@ -291,11 +328,21 @@ private fun EncryptionChooserDialog(onPassword: () -> Unit, onPasskey: () -> Uni
     )
 }
 
+/**
+ * Shared setup flow for both the recurring backup and the one-time dump: pick a subdirectory, then
+ * choose protection (password / passkey / none). The caller supplies its own copy for the encryption
+ * prompt and password dialog so the wording fits the context. [onPasskey] hands back the chosen
+ * subdir; the caller runs the passkey ceremony (it needs an Activity).
+ */
 @Composable
-private fun DumpFlowDialogs(
+private fun EncryptionSetupFlow(
     uri: Uri,
     looksLikePathline: Boolean,
     checkExists: suspend (String?) -> Boolean,
+    encryptTitle: String,
+    encryptText: String,
+    passwordTitle: String,
+    passwordConfirmLabel: String,
     onNone: (String?) -> Unit,
     onPassword: (String?, CharArray) -> Unit,
     onPasskey: (String?) -> Unit,
@@ -314,16 +361,16 @@ private fun DumpFlowDialogs(
             onDismiss = onDismiss,
         )
         passwordFor -> PasswordDialog(
-            title = stringResource(R.string.dump_password_title),
-            confirmLabel = stringResource(R.string.action_dump),
+            title = passwordTitle,
+            confirmLabel = passwordConfirmLabel,
             requireConfirm = true,
             onConfirm = { pw -> onPassword(subdir, pw) },
             onDismiss = onDismiss,
         )
         else -> AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text(stringResource(R.string.dump_encrypt_title)) },
-            text = { Text(stringResource(R.string.dump_encrypt_text)) },
+            title = { Text(encryptTitle) },
+            text = { Text(encryptText) },
             confirmButton = { TextButton(onClick = { passwordFor = true }) { Text(stringResource(R.string.action_password)) } },
             dismissButton = {
                 Row {

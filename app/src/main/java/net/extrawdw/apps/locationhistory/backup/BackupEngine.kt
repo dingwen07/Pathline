@@ -48,8 +48,12 @@ data class RestoreReport(val partitionsRestored: Int, val rowsRestored: Int)
  *    pruning orphan files. Used for the one-time database dump and for reclaim reconciliation when
  *    a SAF grant was lost and we must guarantee the destination matches the database.
  *
- * Content hashes in the manifest are computed over the *uncompressed, unencrypted* serialized bytes
- * so they're deterministic and can be recomputed from the DB; files on disk are gzip-then-encrypt.
+ * The manifest is split in two: a minimal **public** `manifest.json` (versions + crypto header +
+ * a hash-checked pointer to the inventory) and an **encrypted** [BackupInventory] listing every
+ * file, so an encrypted backup leaks nothing about its contents from plaintext. Each inventory entry
+ * carries two hashes: a `sha256` over the *uncompressed, unencrypted* serialized bytes (deterministic
+ * and recomputable from the DB, for reclaim) and an `encSha256` over the on-disk gzip-then-encrypt
+ * bytes (verified before a file is decrypted on restore). Files on disk are gzip-then-encrypt.
  */
 @Singleton
 class BackupEngine @Inject constructor(
@@ -68,19 +72,61 @@ class BackupEngine @Inject constructor(
 
     // -- Public API ---------------------------------------------------------------------------
 
-    /** [root] is the directory that directly contains `manifest.json` (the resolved subdir). */
+    /**
+     * Read the public manifest. [root] is the directory that directly contains `manifest.json` (the
+     * resolved subdir). Returns null when there is no readable, integrity-valid manifest — a failed
+     * self-checksum is treated as "no usable backup" for the lenient callers (existence / merge);
+     * [restore] re-validates and surfaces a precise error instead.
+     */
     suspend fun readManifest(root: SafDir): BackupManifest? {
+        val manifest = parseManifest(root) ?: return null
+        if (!checksumMatches(manifest)) {
+            AppLog.w(TAG, "manifest failed integrity check (checksum mismatch); ignoring")
+            return null
+        }
+        return manifest
+    }
+
+    private fun parseManifest(root: SafDir): BackupManifest? {
         val bytes = root.readFile(MANIFEST)?.use { it.readBytes() } ?: return null
         return runCatching { json.decodeFromString(BackupManifest.serializer(), bytes.decodeToString()) }
             .getOrNull()
     }
 
+    /** Canonical bytes used both to compute and to verify the public manifest's self-checksum. */
+    private fun manifestChecksum(manifest: BackupManifest): String =
+        sha256(json.encodeToString(BackupManifest.serializer(), manifest.copy(checksum = "")).encodeToByteArray())
+
+    private fun checksumMatches(manifest: BackupManifest): Boolean =
+        manifest.checksum == manifestChecksum(manifest)
+
+    /**
+     * Read and decrypt the inventory referenced by [manifest], verifying the on-disk file hash first.
+     * [cipher] must be bound to the DEK recovered from the manifest's crypto header.
+     */
+    private fun readInventory(
+        root: SafDir, manifest: BackupManifest, cipher: BackupCrypto.PartitionCipher,
+    ): BackupInventory {
+        val ref = manifest.inventory
+        val raw = root.readFile(ref.fileName)?.use { it.readBytes() }
+            ?: error("missing inventory file ${ref.fileName}")
+        verifyHash(ref.fileName, raw, ref.sha256)
+        val plain = readBlob(raw.inputStream(), cipher)
+        return json.decodeFromString(BackupInventory.serializer(), plain.decodeToString())
+    }
+
     suspend fun runIncremental(
         root: SafDir, material: Material, nowMs: Long, reporter: BackupReporter = BackupReporter.None,
     ): BackupReport {
-        val existing = readManifest(root)
         val merged = LinkedHashMap<String, PartitionEntry>()
-        existing?.partitions?.forEach { merged[it.stream + "/" + it.weekStart] = it }
+        // Re-read the existing inventory (decrypting with this run's DEK) so unchanged weeks survive
+        // the merge. Best-effort: if it can't be read — first backup, or the encryption mode changed
+        // out from under it — start empty and let this run re-emit.
+        readManifest(root)?.let { existing ->
+            runCatching { readInventory(root, existing, material.cipher) }
+                .onSuccess { inv -> inv.partitions.forEach { merged[it.stream + "/" + it.weekStart] = it } }
+                .onFailure { AppLog.w(TAG, "could not read existing inventory; rebuilding: ${it.message}") }
+        }
 
         val claimed = backupDao.claimDirty()
         val total = (claimed.size + 1).coerceAtLeast(1)
@@ -109,7 +155,7 @@ class BackupEngine @Inject constructor(
 
         reporter.log("Writing snapshots…")
         val snapshots = writeSnapshots(root, material)
-        writeManifest(root, material.header, merged.values.toList(), snapshots, nowMs)
+        writeManifest(root, material, merged.values.toList(), snapshots, nowMs)
         reporter.progress(1f)
         AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${merged.size}")
         return BackupReport(written, failed, merged.size, sampleWeeks)
@@ -147,7 +193,7 @@ class BackupEngine @Inject constructor(
         }
         reporter.log("Writing snapshots…")
         val snapshots = writeSnapshots(root, material)
-        writeManifest(root, material.header, entries, snapshots, nowMs)
+        writeManifest(root, material, entries, snapshots, nowMs)
         pruneOrphans(root, entries, snapshots)
         if (clearDirtyAfter) backupDao.clearAllDirty()
         reporter.progress(1f)
@@ -183,15 +229,19 @@ class BackupEngine @Inject constructor(
         root: SafDir, password: CharArray?, prfSecret: ByteArray? = null,
         reporter: BackupReporter = BackupReporter.None,
     ): RestoreReport {
-        val manifest = readManifest(root) ?: error("no backup found in the selected folder")
+        val manifest = parseManifest(root) ?: error("no backup found in the selected folder")
+        require(checksumMatches(manifest)) { "backup manifest failed integrity check (checksum mismatch)" }
         require(manifest.schemaVersion <= AppDatabase.SCHEMA_VERSION) {
             "backup was made by a newer app version (schema ${manifest.schemaVersion}); update first"
         }
         val dek = BackupCrypto.openDek(manifest.crypto, password, prfSecret)
         val cipher = BackupCrypto.PartitionCipher(dek)
-        reporter.log("Restoring ${manifest.partitions.size} partition(s)…")
+        // The inventory's on-disk hash and (when encrypted) its GCM tag are both verified here,
+        // before any file it lists is touched.
+        val inventory = readInventory(root, manifest, cipher)
+        reporter.log("Restoring ${inventory.partitions.size} partition(s)…")
 
-        val total = (manifest.partitions.size + 1).coerceAtLeast(1)
+        val total = (inventory.partitions.size + 1).coerceAtLeast(1)
         var rows = 0
         var done = 0
         db.withTransaction {
@@ -200,21 +250,21 @@ class BackupEngine @Inject constructor(
             // geofences, models) below. No FK constraints are enforced today, so order is not
             // load-bearing; if FKs are ever added, places must be restored before visits/trips.
             for (stream in listOf(STREAM_VISITS, STREAM_TRIPS, STREAM_SAMPLES)) {
-                manifest.partitions.filter { it.stream == stream }.forEach { entry ->
+                inventory.partitions.filter { it.stream == stream }.forEach { entry ->
                     rows += restorePartition(root, entry, cipher)
                     reporter.log("Restored ${entry.stream}/${entry.weekKey} (${entry.rowCount} rows)")
                     reporter.progress(++done / total.toFloat())
                 }
             }
-            restoreSnapshots(root, manifest, cipher)
+            restoreSnapshots(root, inventory.snapshots, cipher)
             // The REPLACE inserts re-fire the dirty triggers; clear so we don't immediately
             // re-upload the whole history we just pulled down.
             backupDao.clearAllDirty()
         }
-        restoreSettingsAndModels(root, manifest, cipher)
+        restoreSettingsAndModels(root, inventory.snapshots, cipher)
         reporter.progress(1f)
-        AppLog.i(TAG, "restore complete: partitions=${manifest.partitions.size} rows=$rows")
-        return RestoreReport(manifest.partitions.size, rows)
+        AppLog.i(TAG, "restore complete: partitions=${inventory.partitions.size} rows=$rows")
+        return RestoreReport(inventory.partitions.size, rows)
     }
 
     // -- Partition emit / restore -------------------------------------------------------------
@@ -233,17 +283,20 @@ class BackupEngine @Inject constructor(
         val weekKey = TimeBuckets.weekKey(weekStart)
         val fileName = "$weekKey.jsonl.gz" + if (material.cipher.encrypted) ".enc" else ""
         if (rowCount == 0) { dir.deleteFile(fileName); return null }
-        dir.writeFile(fileName, "application/octet-stream") { out -> writeBlob(out, material, bytes) }
-        return PartitionEntry(stream, weekStart, weekKey, fileName, rowCount, sha256(bytes))
+        val disk = blobBytes(material, bytes)
+        dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
+        return PartitionEntry(stream, weekStart, weekKey, fileName, rowCount, sha256(bytes), sha256(disk))
     }
 
     private suspend fun restorePartition(
         root: SafDir, entry: PartitionEntry, cipher: BackupCrypto.PartitionCipher,
     ): Int {
         val dir = root.childDir(entry.stream)
-        val bytes = dir.readFile(entry.fileName)?.use { readBlob(it, cipher) }
+        val raw = dir.readFile(entry.fileName)?.use { it.readBytes() }
             ?: error("missing partition file ${entry.fileName}")
-        verifyHash(entry.fileName, bytes, entry.sha256)
+        verifyHash(entry.fileName, raw, entry.encSha256)          // on-disk bytes, before decrypt
+        val bytes = readBlob(raw.inputStream(), cipher)
+        verifyHash(entry.fileName, bytes, entry.sha256)           // plaintext, after decrypt
         return when (entry.stream) {
             STREAM_SAMPLES -> decodeLines(bytes, net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity.serializer())
                 .also { backupDao.restoreSamples(it) }.size
@@ -282,13 +335,15 @@ class BackupEngine @Inject constructor(
     }
 
     private suspend fun restoreSnapshots(
-        root: SafDir, manifest: BackupManifest, cipher: BackupCrypto.PartitionCipher,
+        root: SafDir, snapshots: List<SnapshotEntry>, cipher: BackupCrypto.PartitionCipher,
     ) {
         val dir = root.childDir(SNAPSHOT_DIR)
         fun bytesOf(name: String): ByteArray? {
-            val entry = manifest.snapshots.firstOrNull { it.name == name } ?: return null
-            val b = dir.readFile(entry.fileName)?.use { readBlob(it, cipher) } ?: return null
-            verifyHash(entry.fileName, b, entry.sha256)
+            val entry = snapshots.firstOrNull { it.name == name } ?: return null
+            val raw = dir.readFile(entry.fileName)?.use { it.readBytes() } ?: return null
+            verifyHash(entry.fileName, raw, entry.encSha256)      // on-disk bytes, before decrypt
+            val b = readBlob(raw.inputStream(), cipher)
+            verifyHash(entry.fileName, b, entry.sha256)           // plaintext, after decrypt
             return b
         }
         bytesOf(SNAP_PLACES)?.let { backupDao.restorePlaces(decodeLines(it, net.extrawdw.apps.locationhistory.data.db.PlaceEntity.serializer())) }
@@ -298,12 +353,14 @@ class BackupEngine @Inject constructor(
     }
 
     private suspend fun restoreSettingsAndModels(
-        root: SafDir, manifest: BackupManifest, cipher: BackupCrypto.PartitionCipher,
+        root: SafDir, snapshots: List<SnapshotEntry>, cipher: BackupCrypto.PartitionCipher,
     ) {
         val dir = root.childDir(SNAPSHOT_DIR)
         fun bytesOf(name: String): ByteArray? {
-            val entry = manifest.snapshots.firstOrNull { it.name == name } ?: return null
-            return dir.readFile(entry.fileName)?.use { readBlob(it, cipher) }
+            val entry = snapshots.firstOrNull { it.name == name } ?: return null
+            val raw = dir.readFile(entry.fileName)?.use { it.readBytes() } ?: return null
+            verifyHash(entry.fileName, raw, entry.encSha256)
+            return readBlob(raw.inputStream(), cipher)
         }
         bytesOf(SNAP_SETTINGS)?.let { raw ->
             val s = runCatching { json.decodeFromString(BackupSettings.serializer(), raw.decodeToString()) }.getOrNull()
@@ -327,27 +384,42 @@ class BackupEngine @Inject constructor(
         dir: SafDir, material: Material, name: String, bytes: ByteArray, rowCount: Int,
     ): SnapshotEntry {
         val fileName = "$name.gz" + if (material.cipher.encrypted) ".enc" else ""
-        dir.writeFile(fileName, "application/octet-stream") { out -> writeBlob(out, material, bytes) }
-        return SnapshotEntry(name, fileName, rowCount, sha256(bytes))
+        val disk = blobBytes(material, bytes)
+        dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
+        return SnapshotEntry(name, fileName, rowCount, sha256(bytes), sha256(disk))
     }
 
     // -- Manifest + pruning -------------------------------------------------------------------
 
     private fun writeManifest(
-        root: SafDir, header: CryptoHeader, partitions: List<PartitionEntry>,
+        root: SafDir, material: Material, partitions: List<PartitionEntry>,
         snapshots: List<SnapshotEntry>, nowMs: Long,
     ) {
+        // The sensitive listing goes into the encrypted inventory; the public manifest only points
+        // at it (by name + on-disk hash) so an encrypted backup leaks nothing in plaintext.
+        val inventory = BackupInventory(
+            partitions = partitions.sortedWith(compareBy({ it.stream }, { it.weekStart })),
+            snapshots = snapshots,
+        )
+        val invName = inventoryName(material.cipher.encrypted)
+        val invDisk = blobBytes(material, json.encodeToString(BackupInventory.serializer(), inventory).encodeToByteArray())
+        root.writeFile(invName, "application/octet-stream") { it.write(invDisk) }
+        // Drop a stale inventory left by a previous run under the other encryption mode.
+        root.fileNames().filter { it != invName && it in INVENTORY_NAMES }.forEach { root.deleteFile(it) }
+
         val manifest = BackupManifest(
             formatVersion = Constants.BACKUP_FORMAT_VERSION,
             schemaVersion = AppDatabase.SCHEMA_VERSION,
             createdAtMs = nowMs,
-            crypto = header,
-            partitions = partitions.sortedWith(compareBy({ it.stream }, { it.weekStart })),
-            snapshots = snapshots,
+            crypto = material.header,
+            inventory = InventoryRef(invName, sha256(invDisk)),
         )
-        val bytes = json.encodeToString(BackupManifest.serializer(), manifest).encodeToByteArray()
+        val checksummed = manifest.copy(checksum = manifestChecksum(manifest))
+        val bytes = json.encodeToString(BackupManifest.serializer(), checksummed).encodeToByteArray()
         root.writeFile(MANIFEST, "application/json") { it.write(bytes) }
     }
+
+    private fun inventoryName(encrypted: Boolean) = INVENTORY_GZ + if (encrypted) ".enc" else ""
 
     /** Delete partition + snapshot files that the new manifest no longer references. */
     private fun pruneOrphans(root: SafDir, entries: List<PartitionEntry>, snapshots: List<SnapshotEntry>) {
@@ -385,6 +457,10 @@ class BackupEngine @Inject constructor(
         GZIPOutputStream(enc).use { it.write(plaintext) }
     }
 
+    /** [writeBlob]'s output materialized in memory, so its on-disk hash can be recorded. */
+    private fun blobBytes(material: Material, plaintext: ByteArray): ByteArray =
+        ByteArrayOutputStream().also { writeBlob(it, material, plaintext) }.toByteArray()
+
     /** Inverse of [writeBlob]: decrypt then gunzip back to the plaintext serialized bytes. */
     private fun readBlob(input: java.io.InputStream, cipher: BackupCrypto.PartitionCipher): ByteArray {
         val dec = cipher.unwrap(input)
@@ -409,6 +485,8 @@ class BackupEngine @Inject constructor(
         const val STREAM_TRIPS = "trips"
 
         private const val MANIFEST = "manifest.json"
+        private const val INVENTORY_GZ = "inventory.json.gz"
+        private val INVENTORY_NAMES = setOf(INVENTORY_GZ, "$INVENTORY_GZ.enc")
         private const val SNAPSHOT_DIR = "snapshot"
         private const val SNAP_PLACES = "places"
         private const val SNAP_GEOFENCES = "geofences"

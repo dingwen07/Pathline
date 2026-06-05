@@ -51,8 +51,8 @@ class BackupOperationController @Inject constructor(
     val state: StateFlow<ManagedState?> = _state.asStateFlow()
     private var job: Job? = null
 
-    fun startConfigure(uri: Uri, subdir: String?) =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_setup)) { repo.configureDestination(uri, subdir, it) }
+    fun startConfigure(uri: Uri, subdir: String?, choice: EncryptionChoice?) =
+        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_setup)) { repo.configureDestination(uri, subdir, choice, it) }
 
     fun startBackup() =
         launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_backing_up)) { repo.runManagedBackup(it) }
