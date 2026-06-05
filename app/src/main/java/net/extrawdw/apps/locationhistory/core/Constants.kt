@@ -52,7 +52,7 @@ object Constants {
      *  NOT decay, so it keeps the place near its authoritative origin and stops the radius from
      *  collapsing to the per-visit floor. A Google (MAPS) anchor is authoritative; a local
      *  (user/inferred) anchor is only its founding visit, so it pulls more gently. Roughly: a Google
-     *  anchor ≈ this-many recent confirmed visits' worth of pull. */
+     *  anchor ~ this-many recent confirmed visits' worth of pull. */
     const val PLACE_GOOGLE_ANCHOR_WEIGHT = 10.0
     const val PLACE_LOCAL_ANCHOR_WEIGHT = 3.0
 

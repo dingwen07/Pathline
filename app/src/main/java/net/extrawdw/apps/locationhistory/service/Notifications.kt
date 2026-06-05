@@ -92,7 +92,7 @@ object Notifications {
             .setContentIntent(contentIntent(context))
             .setSmallIcon(R.drawable.ic_stat_recording)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            // Heads-up on pre-O, while staying silent (no default sound/vibration).
+            // Reinforce the channel's heads-up-but-silent intent (no default sound/vibration).
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setDefaults(0)
             .setVibrate(longArrayOf(0L))

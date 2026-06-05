@@ -252,7 +252,7 @@ class BackupEngine @Inject constructor(
     }
 
     /**
-     * Restore the database **as-is** from the backup in [tree]. Wipes current recorded/derived data
+     * Restore the database **as-is** from the backup under [root]. Wipes current recorded/derived data
      * and re-inserts every row with its original primary key so all relational links survive.
      */
     suspend fun restore(
@@ -313,7 +313,7 @@ class BackupEngine @Inject constructor(
         val disk = blobBytes(material, bytes)
         val encHash = sha256(disk)
         val dir = root.childDir(stream)
-        // Unchanged since the last committed backup → reuse the existing (known-good) file, no re-upload.
+        // Unchanged since the last committed backup -> reuse the existing (known-good) file, no re-upload.
         if (previous != null && previous.encSha256 == encHash && dir.exists(previous.fileName)) return previous
         val weekKey = TimeBuckets.weekKey(weekStart)
         val fileName = contentName(weekKey, "jsonl.gz", disk, material)
@@ -420,7 +420,7 @@ class BackupEngine @Inject constructor(
     ): SnapshotEntry {
         val disk = blobBytes(material, bytes)
         val encHash = sha256(disk)
-        // Unchanged since the last committed backup → reuse the existing file (most snapshots, every run).
+        // Unchanged since the last committed backup -> reuse the existing file (most snapshots, every run).
         if (previous != null && previous.encSha256 == encHash && dir.exists(previous.fileName)) return previous
         val fileName = contentName(name, "gz", disk, material)
         dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
@@ -446,7 +446,7 @@ class BackupEngine @Inject constructor(
         val invDisk = blobBytes(material, json.encodeToString(BackupInventory.serializer(), inventory).encodeToByteArray())
         val invHash = sha256(invDisk)
         val invName = if (previousInventory != null && previousInventory.sha256 == invHash && root.exists(previousInventory.fileName)) {
-            previousInventory.fileName // identical inventory already committed → reuse, don't touch it
+            previousInventory.fileName // identical inventory already committed -> reuse, don't touch it
         } else {
             val name = contentName(INVENTORY_BASE, "json.gz", invDisk, material)
             root.writeFile(name, "application/octet-stream") { it.write(invDisk) }
@@ -531,7 +531,7 @@ class BackupEngine @Inject constructor(
 
     /**
      * Content-addressed file name: `<base>.<16-hex-of-on-disk-hash>.<ext>[.enc]`. Embedding the hash
-     * makes the file immutable (distinct content → distinct name), which is what gives the backup its
+     * makes the file immutable (distinct content -> distinct name), which is what gives the backup its
      * write-once / crash-atomic property and makes duplicate names impossible.
      */
     private fun contentName(base: String, ext: String, disk: ByteArray, material: Material): String =

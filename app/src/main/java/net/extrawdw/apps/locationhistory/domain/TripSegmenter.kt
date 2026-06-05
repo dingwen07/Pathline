@@ -23,7 +23,7 @@ data class SegmentResult(
  * is classified along the trip, contiguous same-mode samples are merged, and short runs are folded
  * into a neighbour so brief misclassifications don't fragment the timeline. Each final segment is
  * re-classified over all its samples for a stable mode and confidence — handling multi-modal trips
- * such as walk → light rail → walk.
+ * such as walk -> light rail -> walk.
  */
 @Singleton
 class TripSegmenter @Inject constructor(

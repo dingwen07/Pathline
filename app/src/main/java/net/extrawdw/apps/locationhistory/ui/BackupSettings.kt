@@ -267,7 +267,7 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
         )
     }
 
-    // Dump flow: subdir → encryption choice.
+    // Dump flow: subdir -> encryption choice.
     pendingDumpUri?.let { uri ->
         EncryptionSetupFlow(
             uri = uri,

@@ -70,8 +70,8 @@ class PlaceRepository @Inject constructor(
      *    weighted by a fixed [Constants.PLACE_GOOGLE_ANCHOR_WEIGHT]/[Constants.PLACE_LOCAL_ANCHOR_WEIGHT]
      *    that does NOT decay; this keeps the radius from collapsing to the per-visit floor.
      *  - each **visit**, weighted by **recency** (halves every
-     *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS]) × **confirmation**
-     *    ([Constants.PLACE_CONFIRMED_VISIT_WEIGHT]× for confirmed) × the visit's precomputed
+     *    [Constants.PLACE_VISIT_RECENCY_HALF_LIFE_DAYS]) x **confirmation**
+     *    ([Constants.PLACE_CONFIRMED_VISIT_WEIGHT]x for confirmed) x the visit's precomputed
      *    geometric **[net.extrawdw.apps.locationhistory.data.db.VisitEntity.reliability]** in [0,1]
      *    (count, accuracy, dispersion, duration), so a tight, sample-rich, long stay pulls harder
      *    than a brief noisy drive-by.

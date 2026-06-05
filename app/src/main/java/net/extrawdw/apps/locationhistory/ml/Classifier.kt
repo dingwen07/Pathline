@@ -30,6 +30,9 @@ class Classifier @Inject constructor(
             if (result != null && result.second >= Constants.CONFIRM_CONFIDENCE_THRESHOLD) {
                 val state = DevicePhysicalState.fromModelIndex(result.first)
                 if (state == DevicePhysicalState.STATIONARY) {
+                    // A false "stationary" spawns a spurious visit, so re-validate it against cheap
+                    // signals: discount by GPS trust and reject if there's any real residual speed,
+                    // deferring to the heuristic when the discounted confidence no longer clears the bar.
                     val adjusted = result.second * accuracyTrust(input.horizontalAccuracyMeters)
                     if (input.speedMaxMps >= 1.0f || adjusted < Constants.CONFIRM_CONFIDENCE_THRESHOLD) {
                         return heuristic.classifyState(input)

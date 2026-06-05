@@ -32,7 +32,7 @@ enum class DevicePhysicalState(@param:StringRes val labelRes: Int) {
 
 /**
  * The mode of transportation inferred for a [TripSegment]. A single trip between two places may
- * be split into multiple segments, each with its own mode (e.g. walk → light rail → walk).
+ * be split into multiple segments, each with its own mode (e.g. walk -> light rail -> walk).
  *
  * The ordinal order is the transport model's output label order.
  */

@@ -48,7 +48,7 @@ object TimeBuckets {
      *
      * This MUST stay in lock-step with the SQL the dirty-week triggers use:
      * `((dayEpoch + 3) / 7) * 7 - 3`. SQLite integer division truncates toward zero, which matches
-     * Kotlin's `Long` division for the non-negative epoch-days we deal with (dates ≥ 1970).
+     * Kotlin's `Long` division for the non-negative epoch-days we deal with (dates >= 1970).
      */
     fun weekStartDayEpoch(dayEpoch: Long): Long = ((dayEpoch + 3) / 7) * 7 - 3
 

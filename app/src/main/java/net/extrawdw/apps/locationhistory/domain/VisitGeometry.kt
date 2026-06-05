@@ -52,11 +52,11 @@ object VisitGeometry {
      * one-sample burst can't look reliable just because it's precise), and the result is itself a
      * clean [0,1] weight the place model can multiply in directly:
      *
-     *  - **count** — `n / (n + Nref)`: more fixes ⇒ more evidence.
-     *  - **accuracy** — `Aref / (Aref + medianAccuracy)`: sharper GPS ⇒ more trust.
+     *  - **count** — `n / (n + Nref)`: more fixes ==> more evidence.
+     *  - **accuracy** — `Aref / (Aref + medianAccuracy)`: sharper GPS ==> more trust.
      *  - **dispersion** — `Sref / (Sref + σ)`, σ = RMS distance of fixes from the centroid (the
-     *    spatial standard deviation): a tight cluster ⇒ a precise center.
-     *  - **duration** — `d / (d + Dref)`: a longer stay ⇒ more certainly a real visit, not a pass-by.
+     *    spatial standard deviation): a tight cluster ==> a precise center.
+     *  - **duration** — `d / (d + Dref)`: a longer stay ==> more certainly a real visit, not a pass-by.
      *
      * (count × dispersion together approximate the standard error of the mean, σ/√n — the textbook
      * precision of the centroid — while accuracy and duration add independent evidence.)

@@ -171,7 +171,7 @@ class BackupRepository @Inject constructor(
     /** Persist a dedicated GPX destination and write an initial full export of every week. */
     suspend fun configureGpx(treeUri: Uri, reporter: BackupReporter = BackupReporter.None): BackupResult {
         persistPermission(treeUri, write = true)
-        settings.setGpxTree(treeUri.toString()) // also resets the last-export watermark → full export
+        settings.setGpxTree(treeUri.toString()) // also resets the last-export watermark -> full export
         return performGpxExport(reporter)
     }
 

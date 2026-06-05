@@ -84,11 +84,12 @@ class HeuristicClassifier @Inject constructor() {
             p85 < 2.5f -> TransportClassification(TransportMode.WALKING, 0.6f)
             p85 < 6.0f && accelStd > 1.0f -> TransportClassification(TransportMode.RUNNING, 0.45f)
             p85 < 8.5f && vehicleAr < 0.3f -> TransportClassification(TransportMode.CYCLING, 0.45f)
-            // Fast, smooth, frequently losing cell service → likely rail/subway.
+            // Fast, smooth, frequently losing cell service -> likely rail/subway.
             p85 > 14f && accelStd < 1.2f && noCellFraction > 0.3f ->
                 TransportClassification(TransportMode.RAIL, 0.5f)
             p85 > 80f -> TransportClassification(TransportMode.FLIGHT, 0.6f)
-            // Stop-and-go at road speeds with vehicle AR: car or bus (default to car).
+            // Road-speed average that didn't match a more specific mode above: a road vehicle,
+            // defaulting to car (bus is indistinguishable from speed alone).
             mean > 2f -> TransportClassification(TransportMode.CAR, 0.45f)
             else -> TransportClassification(TransportMode.UNKNOWN, 0.2f)
         }

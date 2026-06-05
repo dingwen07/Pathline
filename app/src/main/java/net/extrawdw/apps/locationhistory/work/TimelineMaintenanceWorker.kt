@@ -315,7 +315,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
      * confirmed trip, restricted to the sub-intervals that overlap [dayStart, dayEnd) (so this day's
      * rebuild only touches its own region). Splits the gap around the confirmed runs and lets
      * [TripSegmenter] break each remaining piece into its own single-mode trips — so a multi-modal
-     * journey (walk → bus → walk), or a stretch left bare beside a hand-confirmed stub, is rebuilt in
+     * journey (walk -> bus -> walk), or a stretch left bare beside a hand-confirmed stub, is rebuilt in
      * full instead of being skipped wholesale.
      */
     private suspend fun fillMovement(

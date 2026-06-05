@@ -22,7 +22,7 @@ import javax.inject.Singleton
  *  - consecutive **same-mode** trips with no visit between them, *even when they are confirmed* —
  *    a hand-split walk that the user never meant to break in two, or a confirmed stub left beside a
  *    freshly rebuilt run. Different modes are left as separate rows, so a real multi-modal journey
- *    (walk → bus → walk) is preserved.
+ *    (walk -> bus -> walk) is preserved.
  *
  * Everything is keyed on time (via the overlap queries), never on the `dayEpoch` bucket. Idempotent:
  * re-running on an already-normalized span is a no-op.
@@ -39,7 +39,7 @@ class TimelineMerger @Inject constructor(
         removeEmptyTrips(spanStartMs, spanEndMs)
         // Drop GPS-drift "trips" that sit between two visits to the same place.
         removeDriftTrips(spanStartMs, spanEndMs)
-        // Repeat until stable so chains (A=B=C…) collapse fully. Each pass fuses one pair, so the cap
+        // Repeat until stable so chains (A=B=C...) collapse fully. Each pass fuses one pair, so the cap
         // is generous enough for a heavily hand-fragmented day; once stable the final pass is a no-op.
         var guard = 0
         while (guard++ < 200 &&

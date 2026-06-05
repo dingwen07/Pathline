@@ -66,7 +66,7 @@ data class PartitionEntry(
     val encSha256: String = "",
 )
 
-/** A whole-table or whole-blob snapshot rewritten on every backup (places, settings, models, …). */
+/** A whole-table or whole-blob snapshot rewritten on every backup (places, settings, models, ...). */
 @Serializable
 data class SnapshotEntry(
     val name: String,

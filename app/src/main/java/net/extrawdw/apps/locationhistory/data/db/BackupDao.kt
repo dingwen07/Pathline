@@ -9,7 +9,7 @@ import androidx.room.Transaction
 /**
  * Data access for the backup pipeline: reading the dirty-partition set the triggers maintain,
  * reading whole-week slices of each stream to serialize, and restoring rows back **with their
- * original primary keys** so the relational links (visit→place, trip→visit, segment→trip) survive.
+ * original primary keys** so the relational links (visit->place, trip->visit) survive.
  */
 @Dao
 interface BackupDao {

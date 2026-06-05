@@ -30,7 +30,7 @@ fun rememberPredictiveBackProgress(enabled: Boolean = true, onDismiss: () -> Uni
             events.collect { event -> inProgress = true; rawProgress = event.progress }
             onDismiss()
         } catch (_: CancellationException) {
-            // cancelled → spring back
+            // cancelled -> spring back
         } finally {
             inProgress = false; rawProgress = 0f
         }

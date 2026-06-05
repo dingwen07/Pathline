@@ -163,7 +163,7 @@ class PasskeyManager @Inject constructor(
             JSONObject().put("eval", JSONObject().put("first", urlEnc.encodeToString(salt))),
         )
 
-    /** Extract clientExtensionResults.prf.results.first (base64url) → 32 bytes, if present. */
+    /** Extract clientExtensionResults.prf.results.first (base64url) -> 32 bytes, if present. */
     private fun prfResult(responseJson: JSONObject): ByteArray? {
         val first = responseJson
             .optJSONObject("clientExtensionResults")

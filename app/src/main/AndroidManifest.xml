@@ -10,7 +10,7 @@
     <!-- Motion / activity recognition -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
-    <!-- Foreground service (only while actively moving) -->
+    <!-- Foreground location service that runs for the whole tracking session -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -63,7 +63,8 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}" />
 
-        <!-- Foreground service used only while the device is moving -->
+        <!-- Foreground location recorder; stays alive for the whole tracking session, dropping to a
+             low-power cadence while stationary rather than stopping. -->
         <service
             android:name=".service.LocationRecorderService"
             android:exported="false"

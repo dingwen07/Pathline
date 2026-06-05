@@ -202,7 +202,7 @@ class DiagnosticsViewModel @Inject constructor(
         "${row.state} · attempts ${row.attempts} · ${row.id}"
 }
 
-/** On-device diagnostics: live DB stats + a session-log browser. Export/share is kept. */
+/** On-device diagnostics: live DB/recorder/model/worker stats and a shareable session-log browser. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = hiltViewModel()) {

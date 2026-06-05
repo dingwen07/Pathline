@@ -138,7 +138,7 @@ data class VisitEntity(
 )
 
 /**
- * A single-transport-mode movement. A multi-modal journey (walk → bus → walk) is represented as
+ * A single-transport-mode movement. A multi-modal journey (walk -> bus -> walk) is represented as
  * consecutive trips, each with its own [mode] and polyline — there is no separate segment table.
  * [fromVisitId]/[toVisitId] reference the visits bounding the journey this movement belongs to
  * (so a door-to-door journey can be recomputed by grouping consecutive trips that share them);
@@ -203,12 +203,12 @@ data class TransportTrainingExampleEntity(
 
 /**
  * One row per (data stream, week) partition that has changed since the last backup. Populated
- * entirely by SQLite triggers on the four append-mostly tables (see `AppDatabase.DIRTY_TRIGGERS`),
+ * entirely by SQLite triggers on the append-mostly tables (see `AppDatabase.DIRTY_TRIGGERS`),
  * so the recording/maintenance code never has to remember to mark anything — the storage layer
  * tracks it. The backup engine reads this set, re-emits exactly those partitions, then clears them.
  *
  * [weekStart] is the Monday-aligned `dayEpoch` of the week (see [net.extrawdw.apps.locationhistory.core.TimeBuckets.weekStartDayEpoch]).
- * [stream] is one of `samples`, `visits`, `trips`, `segments`.
+ * [stream] is one of `samples`, `visits`, `trips`.
  */
 @Entity(tableName = "backup_dirty_partitions", primaryKeys = ["stream", "weekStart"])
 data class BackupDirtyPartitionEntity(

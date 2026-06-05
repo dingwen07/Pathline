@@ -181,9 +181,9 @@ data class PasswordSlot(
 
 @Serializable
 data class PasskeySlot(
-    /** PRF eval input the authenticator must be replayed at restore to reproduce the secret. */
+    /** PRF eval input that must be replayed to the authenticator at restore to reproduce the secret. */
     val prfSaltB64: String,
     val wrappedDekB64: String,
-    /** Credential id of the passkey used (informational; restore uses discoverable lookup). */
+    /** Credential id of the passkey used; when present, restore requires this exact passkey. */
     val credentialId: String? = null,
 )
