@@ -45,6 +45,7 @@ class RecordingController @Inject constructor(
     private val recorderService: RecorderServiceController,
     private val recognitionManager: RecognitionManager,
     private val geofenceManager: GeofenceManager,
+    private val significantMotionManager: SignificantMotionManager,
     private val workScheduler: WorkScheduler,
 ) {
     @Volatile private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
@@ -100,6 +101,7 @@ class RecordingController @Inject constructor(
         AppLog.i(TAG, "disableTracking")
         recognitionManager.stop()
         geofenceManager.clearAll()
+        significantMotionManager.disarm()
         recorderService.stop()
     }
 
@@ -288,6 +290,22 @@ class RecordingController @Inject constructor(
         }
         AppLog.i(TAG, "geofence EXIT")
         geofenceManager.clearAll()
+        becameMoving(DevicePhysicalState.UNKNOWN, force = true)
+    }
+
+    /**
+     * The significant-motion trigger fired while stationary — a fast, low-power hint that the user has
+     * started location-changing motion. Treated like a geofence exit (a forced departure) so accurate
+     * recording starts in seconds; mode is refined to WALKING/IN_VEHICLE/… by the next AR/classifier
+     * signal. A rare false positive self-corrects when the fixes settle back into a stationary cluster.
+     */
+    suspend fun handleSignificantMotion() {
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "significant motion ignored — recording paused (app removed from Recents)")
+            return
+        }
+        if (currentState != DevicePhysicalState.STATIONARY) return // already moving; stale trigger
+        AppLog.i(TAG, "significant motion — treating as departure")
         becameMoving(DevicePhysicalState.UNKNOWN, force = true)
     }
 
@@ -491,6 +509,9 @@ class RecordingController @Inject constructor(
                 sampleCount = 1,
             )
             geofenceManager.armDwellGeofence(candidate.centroidLatitude, candidate.centroidLongitude)
+            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence — fires the moment
+            // the user starts location-changing motion. One-shot; re-armed on the next stationary entry.
+            significantMotionManager.arm { handleSignificantMotion() }
             stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
             workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.timestampMs), "became_stationary")
         }
@@ -521,6 +542,7 @@ class RecordingController @Inject constructor(
             ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
         stationaryAnchor = null
         geofenceManager.clearAll()
+        significantMotionManager.disarm()
         workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay, "became_moving")
         val profile = settingsRepository.settings.first().powerProfile
         recorderService.start(state, profile)
