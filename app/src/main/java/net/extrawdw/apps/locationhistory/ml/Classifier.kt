@@ -51,7 +51,10 @@ class Classifier @Inject constructor(
             val probs = model.infer(Features.transportFeatures(samples))
             val result = probs?.let { argmax(it) }
             if (result != null && result.second >= Constants.CONFIRM_CONFIDENCE_THRESHOLD) {
-                return TransportClassification(TransportMode.fromModelIndex(result.first), result.second)
+                return TransportClassification(
+                    TransportMode.fromModelIndex(result.first),
+                    result.second
+                )
             }
         }
         return heuristic.classifyTransport(samples)
@@ -61,7 +64,9 @@ class Classifier @Inject constructor(
         var bestIdx = 0
         var bestVal = probs[0]
         for (i in 1 until probs.size) {
-            if (probs[i] > bestVal) { bestVal = probs[i]; bestIdx = i }
+            if (probs[i] > bestVal) {
+                bestVal = probs[i]; bestIdx = i
+            }
         }
         return bestIdx to bestVal
     }

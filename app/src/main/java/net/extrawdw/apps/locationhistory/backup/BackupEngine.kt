@@ -99,13 +99,21 @@ class BackupEngine @Inject constructor(
 
     private fun parseManifest(root: SafDir): BackupManifest? {
         val bytes = root.readFile(MANIFEST)?.use { it.readBytes() } ?: return null
-        return runCatching { json.decodeFromString(BackupManifest.serializer(), bytes.decodeToString()) }
+        return runCatching {
+            json.decodeFromString(
+                BackupManifest.serializer(),
+                bytes.decodeToString()
+            )
+        }
             .getOrNull()
     }
 
     /** Canonical bytes used both to compute and to verify the public manifest's self-checksum. */
     private fun manifestChecksum(manifest: BackupManifest): String =
-        sha256(json.encodeToString(BackupManifest.serializer(), manifest.copy(checksum = "")).encodeToByteArray())
+        sha256(
+            json.encodeToString(BackupManifest.serializer(), manifest.copy(checksum = ""))
+                .encodeToByteArray()
+        )
 
     private fun checksumMatches(manifest: BackupManifest): Boolean =
         manifest.checksum == manifestChecksum(manifest)
@@ -126,7 +134,10 @@ class BackupEngine @Inject constructor(
     }
 
     suspend fun runIncremental(
-        root: SafDir, material: Material, nowMs: Long, reporter: BackupReporter = BackupReporter.None,
+        root: SafDir,
+        material: Material,
+        nowMs: Long,
+        reporter: BackupReporter = BackupReporter.None,
     ): BackupReport {
         val existing = readManifest(root)
         // The incremental merge must know the COMPLETE previous file set (so it neither drops nor
@@ -154,7 +165,13 @@ class BackupEngine @Inject constructor(
             val key = dirty.stream + "/" + dirty.weekStart
             val label = dirty.stream + "/" + TimeBuckets.weekKey(dirty.weekStart)
             try {
-                val entry = emitPartition(root, dirty.stream, dirty.weekStart, material, prevPartitions[key])
+                val entry = emitPartition(
+                    root,
+                    dirty.stream,
+                    dirty.weekStart,
+                    material,
+                    prevPartitions[key]
+                )
                 if (entry == null) merged.remove(key) else merged[key] = entry
                 written++
                 reporter.log("Backed up $label (${entry?.rowCount ?: 0} rows)")
@@ -170,7 +187,8 @@ class BackupEngine @Inject constructor(
         reporter.log("Writing snapshots…")
         val snapshots = writeSnapshots(root, material, prevSnapshots)
         val partitions = merged.values.toList()
-        val invName = writeManifest(root, material, partitions, snapshots, nowMs, existing?.inventory)
+        val invName =
+            writeManifest(root, material, partitions, snapshots, nowMs, existing?.inventory)
         pruneOrphans(root, partitions, snapshots, invName)
         reporter.progress(1f)
         AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${partitions.size}")
@@ -184,7 +202,9 @@ class BackupEngine @Inject constructor(
         // Best-effort previous inventory: a full backup re-emits every week regardless, so an
         // unreadable inventory just means "no reuse" (everything is rewritten), which is always safe.
         val existing = readManifest(root)
-        val previous = existing?.let { runCatching { readInventory(root, it, material.cipher) }.getOrNull() } ?: BackupInventory()
+        val previous =
+            existing?.let { runCatching { readInventory(root, it, material.cipher) }.getOrNull() }
+                ?: BackupInventory()
         val prevPartitions = previous.partitions.associateBy { it.stream + "/" + it.weekStart }
         val prevSnapshots = previous.snapshots.associateBy { it.name }
 
@@ -201,7 +221,13 @@ class BackupEngine @Inject constructor(
         for ((stream, weeks) in weeksByStream) {
             for (week in weeks) {
                 try {
-                    emitPartition(root, stream, week, material, prevPartitions["$stream/$week"])?.let {
+                    emitPartition(
+                        root,
+                        stream,
+                        week,
+                        material,
+                        prevPartitions["$stream/$week"]
+                    )?.let {
                         entries.add(it)
                         reporter.log("Backed up $stream/${it.weekKey} (${it.rowCount} rows)")
                     }
@@ -230,19 +256,29 @@ class BackupEngine @Inject constructor(
      * exported; otherwise only the given weeks. Files are weekly and named by ISO week key, so a
      * re-export simply overwrites the affected weeks. Returns the number of week files written.
      */
-    suspend fun exportGpx(dir: SafDir, weeks: Collection<Long>?, reporter: BackupReporter = BackupReporter.None): Int {
+    suspend fun exportGpx(
+        dir: SafDir,
+        weeks: Collection<Long>?,
+        reporter: BackupReporter = BackupReporter.None
+    ): Int {
         val targetWeeks = (weeks ?: backupDao.sampleWeeks()).sorted()
         val total = targetWeeks.size.coerceAtLeast(1)
         var count = 0
         var done = 0
         for (week in targetWeeks) {
             val (startDay, endExclusive) = week to (week + 7)
-            val samples = backupDao.samplesForDays(startDay, endExclusive).filter { it.includedInComputation }
+            val samples =
+                backupDao.samplesForDays(startDay, endExclusive).filter { it.includedInComputation }
             val name = TimeBuckets.weekKey(week) + ".gpx"
             if (samples.isEmpty()) {
                 dir.deleteFile(name)
             } else {
-                dir.writeFile(name, "application/gpx+xml") { out -> GpxExporter.write(samples, out) }
+                dir.writeFile(name, "application/gpx+xml") { out ->
+                    GpxExporter.write(
+                        samples,
+                        out
+                    )
+                }
                 reporter.log("Exported $name (${samples.size} points)")
                 count++
             }
@@ -313,7 +349,11 @@ class BackupEngine @Inject constructor(
     // -- Partition emit / restore -------------------------------------------------------------
 
     private suspend fun emitPartition(
-        root: SafDir, stream: String, weekStart: Long, material: Material, previous: PartitionEntry?,
+        root: SafDir,
+        stream: String,
+        weekStart: Long,
+        material: Material,
+        previous: PartitionEntry?,
     ): PartitionEntry? {
         val endDay = weekStart + 7
         val (bytes, rowCount) = when (stream) {
@@ -331,7 +371,15 @@ class BackupEngine @Inject constructor(
         val weekKey = TimeBuckets.weekKey(weekStart)
         val fileName = contentName(weekKey, "jsonl.gz", disk, material)
         dir.writeFile(fileName, "application/octet-stream") { out -> out.write(disk) }
-        return PartitionEntry(stream, weekStart, weekKey, fileName, rowCount, sha256(bytes), encHash)
+        return PartitionEntry(
+            stream,
+            weekStart,
+            weekKey,
+            fileName,
+            rowCount,
+            sha256(bytes),
+            encHash
+        )
     }
 
     private suspend fun restorePartition(
@@ -344,12 +392,24 @@ class BackupEngine @Inject constructor(
         val bytes = readBlob(raw.inputStream(), cipher)
         verifyHash(entry.fileName, bytes, entry.sha256)           // plaintext, after decrypt
         return when (entry.stream) {
-            STREAM_SAMPLES -> decodeLines(bytes, net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity.serializer())
+            STREAM_SAMPLES -> decodeLines(
+                bytes,
+                net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity.serializer()
+            )
                 .also { backupDao.restoreSamples(it) }.size
-            STREAM_VISITS -> decodeLines(bytes, net.extrawdw.apps.locationhistory.data.db.VisitEntity.serializer())
+
+            STREAM_VISITS -> decodeLines(
+                bytes,
+                net.extrawdw.apps.locationhistory.data.db.VisitEntity.serializer()
+            )
                 .also { backupDao.restoreVisits(it) }.size
-            STREAM_TRIPS -> decodeLines(bytes, net.extrawdw.apps.locationhistory.data.db.TripEntity.serializer())
+
+            STREAM_TRIPS -> decodeLines(
+                bytes,
+                net.extrawdw.apps.locationhistory.data.db.TripEntity.serializer()
+            )
                 .also { backupDao.restoreTrips(it) }.size
+
             else -> error("unknown stream ${entry.stream}")
         }
     }
@@ -362,22 +422,69 @@ class BackupEngine @Inject constructor(
         val dir = root.childDir(SNAPSHOT_DIR)
         val out = ArrayList<SnapshotEntry>()
 
-        out += snapshotLines(dir, material, SNAP_PLACES, backupDao.allPlaces(), previous[SNAP_PLACES])
-        out += snapshotLines(dir, material, SNAP_GEOFENCES, backupDao.allGeofences(), previous[SNAP_GEOFENCES])
-        out += snapshotLines(dir, material, SNAP_STATE_EXAMPLES, backupDao.allStateExamples(), previous[SNAP_STATE_EXAMPLES])
-        out += snapshotLines(dir, material, SNAP_TRANSPORT_EXAMPLES, backupDao.allTransportExamples(), previous[SNAP_TRANSPORT_EXAMPLES])
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_PLACES,
+            backupDao.allPlaces(),
+            previous[SNAP_PLACES]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_GEOFENCES,
+            backupDao.allGeofences(),
+            previous[SNAP_GEOFENCES]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_STATE_EXAMPLES,
+            backupDao.allStateExamples(),
+            previous[SNAP_STATE_EXAMPLES]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_TRANSPORT_EXAMPLES,
+            backupDao.allTransportExamples(),
+            previous[SNAP_TRANSPORT_EXAMPLES]
+        )
 
         // App settings
-        val settings = BackupSettings(powerProfile = settingsRepository.settings.first().powerProfile.name)
-        val settingsBytes = json.encodeToString(BackupSettings.serializer(), settings).encodeToByteArray()
-        out += snapshotBlob(dir, material, SNAP_SETTINGS, settingsBytes, rowCount = 1, previous[SNAP_SETTINGS])
+        val settings =
+            BackupSettings(powerProfile = settingsRepository.settings.first().powerProfile.name)
+        val settingsBytes =
+            json.encodeToString(BackupSettings.serializer(), settings).encodeToByteArray()
+        out += snapshotBlob(
+            dir,
+            material,
+            SNAP_SETTINGS,
+            settingsBytes,
+            rowCount = 1,
+            previous[SNAP_SETTINGS]
+        )
 
         // ML checkpoints (raw bytes)
         modelStore.stateCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(dir, material, SNAP_STATE_CKPT, it.readBytes(), rowCount = 1, previous[SNAP_STATE_CKPT])
+            out += snapshotBlob(
+                dir,
+                material,
+                SNAP_STATE_CKPT,
+                it.readBytes(),
+                rowCount = 1,
+                previous[SNAP_STATE_CKPT]
+            )
         }
         modelStore.transportCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(dir, material, SNAP_TRANSPORT_CKPT, it.readBytes(), rowCount = 1, previous[SNAP_TRANSPORT_CKPT])
+            out += snapshotBlob(
+                dir,
+                material,
+                SNAP_TRANSPORT_CKPT,
+                it.readBytes(),
+                rowCount = 1,
+                previous[SNAP_TRANSPORT_CKPT]
+            )
         }
         return out
     }
@@ -394,10 +501,38 @@ class BackupEngine @Inject constructor(
             verifyHash(entry.fileName, b, entry.sha256)           // plaintext, after decrypt
             return b
         }
-        bytesOf(SNAP_PLACES)?.let { backupDao.restorePlaces(decodeLines(it, net.extrawdw.apps.locationhistory.data.db.PlaceEntity.serializer())) }
-        bytesOf(SNAP_GEOFENCES)?.let { backupDao.restoreGeofences(decodeLines(it, net.extrawdw.apps.locationhistory.data.db.GeofenceEntity.serializer())) }
-        bytesOf(SNAP_STATE_EXAMPLES)?.let { backupDao.restoreStateExamples(decodeLines(it, net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity.serializer())) }
-        bytesOf(SNAP_TRANSPORT_EXAMPLES)?.let { backupDao.restoreTransportExamples(decodeLines(it, net.extrawdw.apps.locationhistory.data.db.TransportTrainingExampleEntity.serializer())) }
+        bytesOf(SNAP_PLACES)?.let {
+            backupDao.restorePlaces(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.PlaceEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_GEOFENCES)?.let {
+            backupDao.restoreGeofences(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.GeofenceEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_STATE_EXAMPLES)?.let {
+            backupDao.restoreStateExamples(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_TRANSPORT_EXAMPLES)?.let {
+            backupDao.restoreTransportExamples(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.TransportTrainingExampleEntity.serializer()
+                )
+            )
+        }
     }
 
     private suspend fun restoreSettingsAndModels(
@@ -411,9 +546,15 @@ class BackupEngine @Inject constructor(
             return readBlob(raw.inputStream(), cipher)
         }
         bytesOf(SNAP_SETTINGS)?.let { raw ->
-            val s = runCatching { json.decodeFromString(BackupSettings.serializer(), raw.decodeToString()) }.getOrNull()
+            val s = runCatching {
+                json.decodeFromString(
+                    BackupSettings.serializer(),
+                    raw.decodeToString()
+                )
+            }.getOrNull()
             s?.powerProfile?.let { name ->
-                runCatching { PowerProfile.valueOf(name) }.getOrNull()?.let { settingsRepository.setPowerProfile(it) }
+                runCatching { PowerProfile.valueOf(name) }.getOrNull()
+                    ?.let { settingsRepository.setPowerProfile(it) }
             }
         }
         bytesOf(SNAP_STATE_CKPT)?.let { modelStore.stateCheckpoint.writeBytes(it) }
@@ -429,7 +570,12 @@ class BackupEngine @Inject constructor(
     }
 
     private fun snapshotBlob(
-        dir: SafDir, material: Material, name: String, bytes: ByteArray, rowCount: Int, previous: SnapshotEntry?,
+        dir: SafDir,
+        material: Material,
+        name: String,
+        bytes: ByteArray,
+        rowCount: Int,
+        previous: SnapshotEntry?,
     ): SnapshotEntry {
         val disk = blobBytes(material, bytes)
         val encHash = sha256(disk)
@@ -456,15 +602,22 @@ class BackupEngine @Inject constructor(
             partitions = partitions.sortedWith(compareBy({ it.stream }, { it.weekStart })),
             snapshots = snapshots,
         )
-        val invDisk = blobBytes(material, json.encodeToString(BackupInventory.serializer(), inventory).encodeToByteArray())
+        val invDisk = blobBytes(
+            material,
+            json.encodeToString(BackupInventory.serializer(), inventory).encodeToByteArray()
+        )
         val invHash = sha256(invDisk)
-        val invName = if (previousInventory != null && previousInventory.sha256 == invHash && root.exists(previousInventory.fileName)) {
-            previousInventory.fileName // identical inventory already committed -> reuse, don't touch it
-        } else {
-            val name = contentName(INVENTORY_BASE, "json.gz", invDisk, material)
-            root.writeFile(name, "application/octet-stream") { it.write(invDisk) }
-            name
-        }
+        val invName =
+            if (previousInventory != null && previousInventory.sha256 == invHash && root.exists(
+                    previousInventory.fileName
+                )
+            ) {
+                previousInventory.fileName // identical inventory already committed -> reuse, don't touch it
+            } else {
+                val name = contentName(INVENTORY_BASE, "json.gz", invDisk, material)
+                root.writeFile(name, "application/octet-stream") { it.write(invDisk) }
+                name
+            }
 
         val manifest = BackupManifest(
             formatVersion = Constants.BACKUP_FORMAT_VERSION,
@@ -475,7 +628,8 @@ class BackupEngine @Inject constructor(
         )
         val checksummed = manifest.copy(checksum = manifestChecksum(manifest))
         // THE commit point: overwriting the fixed-name manifest atomically swaps to the new backup.
-        val bytes = json.encodeToString(BackupManifest.serializer(), checksummed).encodeToByteArray()
+        val bytes =
+            json.encodeToString(BackupManifest.serializer(), checksummed).encodeToByteArray()
         root.writeFile(MANIFEST, "application/json") { it.write(bytes) }
         return invName
     }
@@ -486,7 +640,10 @@ class BackupEngine @Inject constructor(
      * manifest commit, so an interruption here only leaves harmless orphans (cleaned next run).
      */
     private fun pruneOrphans(
-        root: SafDir, partitions: List<PartitionEntry>, snapshots: List<SnapshotEntry>, invName: String,
+        root: SafDir,
+        partitions: List<PartitionEntry>,
+        snapshots: List<SnapshotEntry>,
+        invName: String,
     ) {
         val keep = partitions.groupBy({ it.stream }, { it.fileName })
         for (stream in listOf(STREAM_SAMPLES, STREAM_VISITS, STREAM_TRIPS)) {
@@ -499,7 +656,8 @@ class BackupEngine @Inject constructor(
         snapDir.fileNames().filterNot { it in keepSnap }.forEach { snapDir.deleteFile(it) }
         // Root: drop every superseded inventory file (manifest.json and the stream/snapshot subdirs
         // don't start with the inventory prefix, so they're untouched).
-        root.fileNames().filter { it != invName && it.startsWith("$INVENTORY_BASE.") }.forEach { root.deleteFile(it) }
+        root.fileNames().filter { it != invName && it.startsWith("$INVENTORY_BASE.") }
+            .forEach { root.deleteFile(it) }
     }
 
     // -- Serialization / framing helpers ------------------------------------------------------
@@ -510,13 +668,23 @@ class BackupEngine @Inject constructor(
         return sb.toString().encodeToByteArray() to rows.size
     }
 
-    private fun <T> decodeLines(bytes: ByteArray, serializer: kotlinx.serialization.KSerializer<T>): List<T> {
+    private fun <T> decodeLines(
+        bytes: ByteArray,
+        serializer: kotlinx.serialization.KSerializer<T>
+    ): List<T> {
         var skipped = 0
         val rows = bytes.decodeToString().lineSequence()
             .filter { it.isNotBlank() }
             // Skip (don't abort on) a single undecodable row, so one bad/old line can't sink the whole
             // restore. Forward-compat safety net alongside per-field defaults + ignoreUnknownKeys.
-            .mapNotNull { line -> runCatching { json.decodeFromString(serializer, line) }.getOrElse { skipped++; null } }
+            .mapNotNull { line ->
+                runCatching {
+                    json.decodeFromString(
+                        serializer,
+                        line
+                    )
+                }.getOrElse { skipped++; null }
+            }
             .toList()
         if (skipped > 0) AppLog.w(TAG, "restore: skipped $skipped undecodable row(s)")
         return rows
@@ -533,7 +701,10 @@ class BackupEngine @Inject constructor(
         ByteArrayOutputStream().also { writeBlob(it, material, plaintext) }.toByteArray()
 
     /** Inverse of [writeBlob]: decrypt then gunzip back to the plaintext serialized bytes. */
-    private fun readBlob(input: java.io.InputStream, cipher: BackupCrypto.PartitionCipher): ByteArray {
+    private fun readBlob(
+        input: java.io.InputStream,
+        cipher: BackupCrypto.PartitionCipher
+    ): ByteArray {
         val dec = cipher.unwrap(input)
         return GZIPInputStream(dec).use { gz ->
             val buffer = ByteArrayOutputStream()
@@ -553,7 +724,12 @@ class BackupEngine @Inject constructor(
      * makes the file immutable (distinct content -> distinct name), which is what gives the backup its
      * write-once / crash-atomic property and makes duplicate names impossible.
      */
-    private fun contentName(base: String, ext: String, disk: ByteArray, material: Material): String =
+    private fun contentName(
+        base: String,
+        ext: String,
+        disk: ByteArray,
+        material: Material
+    ): String =
         "$base.${sha256Hex(disk).take(16)}.$ext" + if (material.cipher.encrypted) ".enc" else ""
 
     private fun verifyHash(fileName: String, bytes: ByteArray, expected: String) {

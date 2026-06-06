@@ -56,7 +56,11 @@ class TrainableTfliteModel(
                 val b = FloatArray(input.readInt()) { input.readFloat() }
                 val outputs = HashMap<String, Any>().apply { put("ok", FloatArray(1)) }
                 synchronized(lock) {
-                    interpreter.runSignature(mapOf<String, Any>("w" to w, "b" to b), outputs, "set_weights")
+                    interpreter.runSignature(
+                        mapOf<String, Any>("w" to w, "b" to b),
+                        outputs,
+                        "set_weights"
+                    )
                 }
             }
         }
@@ -83,7 +87,11 @@ class TrainableTfliteModel(
                 val loss = FloatArray(1)
                 val outputs = HashMap<String, Any>().apply { put("loss", loss) }
                 runCatching {
-                    interpreter.runSignature(mapOf<String, Any>("x" to x, "y" to y), outputs, "train")
+                    interpreter.runSignature(
+                        mapOf<String, Any>("x" to x, "y" to y),
+                        outputs,
+                        "train"
+                    )
                     lastLoss = loss[0]
                 }
             }

@@ -272,9 +272,13 @@ fun TimelineScreen(
                                 contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
                             ) {
                                 if (dayTimeline.items.isEmpty()) {
-                                    item { EmptyDay(Modifier
-                                        .fillParentMaxWidth()
-                                        .padding(32.dp)) }
+                                    item {
+                                        EmptyDay(
+                                            Modifier
+                                                .fillParentMaxWidth()
+                                                .padding(32.dp)
+                                        )
+                                    }
                                 }
                                 itemsIndexed(
                                     dayTimeline.items,
@@ -477,9 +481,11 @@ fun TimelineScreen(
                         .fillMaxHeight(),
                     color = MaterialTheme.colorScheme.outlineVariant,
                 ) {}
-                Box(Modifier
-                    .weight(1f)
-                    .fillMaxHeight()) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
                     MapPanel(contentPadding = PaddingValues(), recenterBottomPadding = 24.dp)
                 }
             }
@@ -705,13 +711,17 @@ private fun VisitRow(
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val surfaceColor = MaterialTheme.colorScheme.surface
     var menuOpen by remember { mutableStateOf(false) }
-    Row(Modifier
-        .fillMaxWidth()
-        .height(IntrinsicSize.Min)
-        .padding(horizontal = 16.dp)) {
-        Box(Modifier
-            .width(GUTTER_WIDTH)
-            .fillMaxHeight()) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .padding(horizontal = 16.dp)
+    ) {
+        Box(
+            Modifier
+                .width(GUTTER_WIDTH)
+                .fillMaxHeight()
+        ) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
                 val dotY = NODE_DOT_Y.toPx().coerceAtMost(size.height - 4.dp.toPx())
@@ -811,16 +821,22 @@ private fun TripRow(
     val context = LocalContext.current
     val modeLabel = stringResource(trip.mode.labelRes)
     var menuOpen by remember(trip.id) { mutableStateOf(false) }
-    Row(Modifier
-        .fillMaxWidth()
-        .height(IntrinsicSize.Min)
-        .padding(horizontal = 16.dp)) {
-        Box(Modifier
-            .width(GUTTER_WIDTH)
-            .fillMaxHeight()) { TripLine(item, Modifier.fillMaxSize()) }
-        Column(Modifier
-            .weight(1f)
-            .padding(top = 6.dp, bottom = 6.dp)) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .padding(horizontal = 16.dp)
+    ) {
+        Box(
+            Modifier
+                .width(GUTTER_WIDTH)
+                .fillMaxHeight()
+        ) { TripLine(item, Modifier.fillMaxSize()) }
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(top = 6.dp, bottom = 6.dp)
+        ) {
             Box {
                 CompactTripLine(
                     icon = {

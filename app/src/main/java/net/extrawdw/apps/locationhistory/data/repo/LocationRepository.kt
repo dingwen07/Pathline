@@ -37,7 +37,9 @@ class LocationRepository @Inject constructor(
             val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
                 centerLat, centerLon, s.latitude, s.longitude,
             )
-            if (d > radiusMeters) { dao.markExcluded(s.id, reason); excluded++ }
+            if (d > radiusMeters) {
+                dao.markExcluded(s.id, reason); excluded++
+            }
         }
         return excluded
     }

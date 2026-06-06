@@ -71,32 +71,53 @@ fun PlaceEditDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier.fillMaxSize().predictiveBack(backProgress)) {
+        Surface(Modifier
+            .fillMaxSize()
+            .predictiveBack(backProgress)) {
             Scaffold(
                 topBar = {
                     TopAppBar(
                         title = { Text(stringResource(R.string.place_edit_title)) },
                         navigationIcon = {
-                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close)) }
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.action_close)
+                                )
+                            }
                         },
                         actions = {
                             TextButton(onClick = {
-                                onSave(name, address.ifBlank { null }, center.latitude, center.longitude, radius.toDouble(), fixed)
+                                onSave(
+                                    name,
+                                    address.ifBlank { null },
+                                    center.latitude,
+                                    center.longitude,
+                                    radius.toDouble(),
+                                    fixed
+                                )
                             }) { Text(stringResource(R.string.action_save)) }
                         },
                     )
                 },
             ) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+                Column(Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp)) {
                     OutlinedTextField(
                         value = name, onValueChange = { name = it },
                         label = { Text(stringResource(R.string.field_name)) }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                     )
                     OutlinedTextField(
                         value = address, onValueChange = { address = it },
                         label = { Text(stringResource(R.string.field_address)) }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                     )
                     Text(
                         stringResource(R.string.place_edit_radius_hint, radius.toInt()),
@@ -105,17 +126,28 @@ fun PlaceEditDialog(
                     )
                     Slider(value = radius, onValueChange = { radius = it }, valueRange = 20f..300f)
                     Row(
-                        Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.place_lock_title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                            Text(stringResource(R.string.place_lock_desc), style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                stringResource(R.string.place_lock_title),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                stringResource(R.string.place_lock_desc),
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                         Switch(checked = fixed, onCheckedChange = { fixed = it })
                     }
                     // Map fills the rest with no scrolling parent, so gestures aren't intercepted.
-                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                    Box(Modifier
+                        .fillMaxWidth()
+                        .weight(1f)) {
                         GoogleMap(
                             modifier = Modifier.fillMaxSize(),
                             cameraPositionState = cameraPositionState,

@@ -56,7 +56,7 @@ class DeviceStateCollector @Inject constructor(
         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
         val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else return null
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL
+                status == BatteryManager.BATTERY_STATUS_FULL
         pct to charging
     }.getOrNull()
 
@@ -81,7 +81,8 @@ class DeviceStateCollector @Inject constructor(
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null to null
         val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return null to null)
         val info = caps?.transportInfo as? WifiInfo ?: return null to null
-        val ssid = info.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != WifiManager.UNKNOWN_SSID }
+        val ssid =
+            info.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != WifiManager.UNKNOWN_SSID }
         ssid to info.bssid
     }.getOrDefault(null to null)
 
@@ -89,9 +90,11 @@ class DeviceStateCollector @Inject constructor(
     private fun readCellular(): Pair<Int?, Boolean?> = runCatching {
         if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) return null to null
         val tm = context.getSystemService(TelephonyManager::class.java) ?: return null to null
-        val signal = tm.signalStrength ?: return null to (tm.simState == TelephonyManager.SIM_STATE_READY)
-        val dbm = signal.cellSignalStrengths.mapNotNull { it.dbm.takeIf { d -> d != Int.MAX_VALUE } }
-            .maxOrNull()
+        val signal =
+            tm.signalStrength ?: return null to (tm.simState == TelephonyManager.SIM_STATE_READY)
+        val dbm =
+            signal.cellSignalStrengths.mapNotNull { it.dbm.takeIf { d -> d != Int.MAX_VALUE } }
+                .maxOrNull()
         val hasService = dbm != null && dbm > -120
         dbm to hasService
     }.getOrDefault(null to null)

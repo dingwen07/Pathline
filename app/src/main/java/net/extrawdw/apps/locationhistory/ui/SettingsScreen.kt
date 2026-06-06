@@ -51,7 +51,11 @@ fun SettingsScreen(
 
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) }) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp),
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Tracking toggle
@@ -78,9 +82,14 @@ fun SettingsScreen(
             // Power profile
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.settings_power_profile), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.settings_power_profile),
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     val profiles = PowerProfile.entries
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    SingleChoiceSegmentedButtonRow(Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)) {
                         profiles.forEachIndexed { index, profile ->
                             SegmentedButton(
                                 selected = settings.powerProfile == profile,
@@ -107,9 +116,16 @@ fun SettingsScreen(
             // Data + model status
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.settings_data_model_title), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        pluralStringResource(R.plurals.samples_recorded, sampleCount.toInt(), sampleCount),
+                        stringResource(R.string.settings_data_model_title),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        pluralStringResource(
+                            R.plurals.samples_recorded,
+                            sampleCount.toInt(),
+                            sampleCount
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
@@ -148,7 +164,10 @@ fun SettingsScreen(
             var showDiagnostics by remember { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.settings_diagnostics_title), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.settings_diagnostics_title),
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     Text(
                         stringResource(R.string.settings_diagnostics_desc),
                         style = MaterialTheme.typography.bodySmall,

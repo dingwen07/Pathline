@@ -36,7 +36,8 @@ class SignificantMotionManager @Inject constructor(
     private val sensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    @Volatile private var listener: TriggerEventListener? = null
+    @Volatile
+    private var listener: TriggerEventListener? = null
 
     fun isAvailable(): Boolean = sensor != null
 

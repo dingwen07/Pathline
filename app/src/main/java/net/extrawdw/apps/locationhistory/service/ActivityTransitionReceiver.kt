@@ -15,14 +15,18 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class ActivityTransitionReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var controller: RecordingController
+    @Inject
+    lateinit var controller: RecordingController
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION || !ActivityTransitionResult.hasResult(intent)) return
         val result = ActivityTransitionResult.extractResult(intent) ?: return
         val events = result.transitionEvents.map { it.activityType to it.transitionType }
         if (events.isEmpty()) return
-        net.extrawdw.apps.locationhistory.core.AppLog.i("ARReceiver", "received ${events.size} transition(s)")
+        net.extrawdw.apps.locationhistory.core.AppLog.i(
+            "ARReceiver",
+            "received ${events.size} transition(s)"
+        )
 
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {

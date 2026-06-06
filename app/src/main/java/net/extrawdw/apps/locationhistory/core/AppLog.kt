@@ -64,7 +64,8 @@ object AppLog {
     }
 
     private fun prune(dir: File) {
-        val files = dir.listFiles { f -> f.name.startsWith("session-") }?.sortedBy { it.name } ?: return
+        val files =
+            dir.listFiles { f -> f.name.startsWith("session-") }?.sortedBy { it.name } ?: return
         if (files.size > MAX_FILES) files.take(files.size - MAX_FILES).forEach { it.delete() }
     }
 

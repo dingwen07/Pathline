@@ -15,8 +15,8 @@ object Geo {
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
         val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-            sin(dLon / 2) * sin(dLon / 2)
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+                sin(dLon / 2) * sin(dLon / 2)
         return EARTH_RADIUS_METERS * (2 * atan2(sqrt(a), sqrt(1 - a)))
     }
 

@@ -60,7 +60,10 @@ class TimelineEditor @Inject constructor(
         deleteItem(item)
         materialize(samples.subList(0, k), leftType)
         materialize(samples.subList(k, samples.size), rightType)
-        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(item.startMs), "edit_split")
+        workScheduler.enqueueTimelineMaintenanceNow(
+            TimeBuckets.dayEpoch(item.startMs),
+            "edit_split"
+        )
     }
 
     /** Reclassify a whole item to [type] without splitting. */
@@ -69,7 +72,10 @@ class TimelineEditor @Inject constructor(
         if (samples.isEmpty()) return
         deleteItem(item)
         materialize(samples, type)
-        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(item.startMs), "edit_convert")
+        workScheduler.enqueueTimelineMaintenanceNow(
+            TimeBuckets.dayEpoch(item.startMs),
+            "edit_convert"
+        )
     }
 
     private suspend fun deleteItem(item: TimelineItem) {
@@ -79,6 +85,7 @@ class TimelineEditor @Inject constructor(
                 // Detach trips that bounded this visit so they don't keep a dangling fromVisitId/toVisitId.
                 tripDao.detachVisit(item.visit.id)
             }
+
             is TimelineItem.TripItem -> tripDao.deleteTrip(item.trip.id)
         }
     }
@@ -93,22 +100,46 @@ class TimelineEditor @Inject constructor(
             SegmentType.Stationary -> {
                 val fallback = Geo.centroid(usable.map { it.latitude to it.longitude })
                 val initialGeom = VisitGeometry.compute(usable, fallback.first, fallback.second)
-                val match = runCatching { placeMatcher.match(initialGeom.latitude, initialGeom.longitude) }.getOrNull()
+                val match = runCatching {
+                    placeMatcher.match(
+                        initialGeom.latitude,
+                        initialGeom.longitude
+                    )
+                }.getOrNull()
                 val ring = when (match) {
-                    is PlaceMatch.Local -> Triple(match.place.latitude, match.place.longitude, match.place.radiusMeters)
-                    else -> Triple(initialGeom.latitude, initialGeom.longitude, initialGeom.radiusMeters)
+                    is PlaceMatch.Local -> Triple(
+                        match.place.latitude,
+                        match.place.longitude,
+                        match.place.radiusMeters
+                    )
+
+                    else -> Triple(
+                        initialGeom.latitude,
+                        initialGeom.longitude,
+                        initialGeom.radiusMeters
+                    )
                 }
                 // Mark fixes outside the circle as GPS drift (bogus) before deriving the final
                 // visit geometry and feeding place/training updates.
                 for (s in span) {
                     if (s.includedInComputation &&
-                        Geo.distanceMeters(ring.first, ring.second, s.latitude, s.longitude) > ring.third
+                        Geo.distanceMeters(
+                            ring.first,
+                            ring.second,
+                            s.latitude,
+                            s.longitude
+                        ) > ring.third
                     ) {
                         sampleDao.markExcluded(s.id, "drift_outside_place")
                     }
                 }
                 val cleanUsable = usable.filter {
-                    Geo.distanceMeters(ring.first, ring.second, it.latitude, it.longitude) <= ring.third
+                    Geo.distanceMeters(
+                        ring.first,
+                        ring.second,
+                        it.latitude,
+                        it.longitude
+                    ) <= ring.third
                 }.ifEmpty { usable }
                 val geom = VisitGeometry.compute(cleanUsable, ring.first, ring.second)
                 val visit = applyMatch(
@@ -133,6 +164,7 @@ class TimelineEditor @Inject constructor(
                 )
                 id
             }
+
             is SegmentType.Moving -> {
                 span.filter { it.exclusionReason == "drift_outside_place" }
                     .forEach { sampleDao.markIncluded(it.id) }
@@ -162,13 +194,18 @@ class TimelineEditor @Inject constructor(
     }
 
     private fun applyMatch(visit: VisitEntity, match: PlaceMatch?): VisitEntity = when (match) {
-        is PlaceMatch.Local -> visit.copy(placeId = match.place.id, candidateName = match.place.name)
+        is PlaceMatch.Local -> visit.copy(
+            placeId = match.place.id,
+            candidateName = match.place.name
+        )
+
         is PlaceMatch.Candidate -> visit.copy(
             candidateName = match.candidate.name,
             candidateGooglePlaceId = match.candidate.googlePlaceId,
             candidateLatitude = match.candidate.latitude,
             candidateLongitude = match.candidate.longitude,
         )
+
         PlaceMatch.None, null -> visit
     }
 }

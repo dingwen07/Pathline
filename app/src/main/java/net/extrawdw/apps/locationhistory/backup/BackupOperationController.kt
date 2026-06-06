@@ -53,64 +53,115 @@ class BackupOperationController @Inject constructor(
     private var job: Job? = null
 
     fun startConfigure(uri: Uri, subdir: String?, choice: EncryptionChoice?) =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_setup)) { repo.configureDestination(uri, subdir, choice, it) }
+        launch(
+            ManagedKind.BACKUP,
+            context.getString(R.string.backup_op_setup)
+        ) { repo.configureDestination(uri, subdir, choice, it) }
 
     fun startBackup() =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_backing_up)) { repo.runManagedBackup(it) }
+        launch(
+            ManagedKind.BACKUP,
+            context.getString(R.string.backup_op_backing_up)
+        ) { repo.runManagedBackup(it) }
 
     fun startEnablePassword(password: CharArray) =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_enable_encryption)) { repo.enablePasswordEncryption(password, it) }
+        launch(
+            ManagedKind.BACKUP,
+            context.getString(R.string.backup_op_enable_encryption)
+        ) { repo.enablePasswordEncryption(password, it) }
 
     fun startEnablePasskey(choice: EncryptionChoice.Passkey) =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_enable_passkey)) { repo.enablePasskeyEncryption(choice, it) }
+        launch(
+            ManagedKind.BACKUP,
+            context.getString(R.string.backup_op_enable_passkey)
+        ) { repo.enablePasskeyEncryption(choice, it) }
 
     fun startDisableEncryption() =
-        launch(ManagedKind.BACKUP, context.getString(R.string.backup_op_remove_encryption)) { repo.disableEncryption(it) }
+        launch(
+            ManagedKind.BACKUP,
+            context.getString(R.string.backup_op_remove_encryption)
+        ) { repo.disableEncryption(it) }
 
     fun startDump(uri: Uri, subdir: String?, choice: EncryptionChoice) =
-        launch(ManagedKind.DUMP, context.getString(R.string.backup_op_dump)) { repo.oneTimeDump(uri, subdir, choice, it) }
+        launch(ManagedKind.DUMP, context.getString(R.string.backup_op_dump)) {
+            repo.oneTimeDump(
+                uri,
+                subdir,
+                choice,
+                it
+            )
+        }
 
     fun startConfigureGpx(uri: Uri) =
-        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_setup)) { repo.configureGpx(uri, it) }
+        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_setup)) {
+            repo.configureGpx(
+                uri,
+                it
+            )
+        }
 
     fun startGpxExportNow() =
-        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_export)) { repo.runManagedGpxExport(it) }
+        launch(
+            ManagedKind.GPX,
+            context.getString(R.string.gpx_op_export)
+        ) { repo.runManagedGpxExport(it) }
 
     fun startGpxExport(uri: Uri, range: GpxRange) =
-        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_export)) { repo.oneTimeGpxExport(uri, range, it) }
+        launch(ManagedKind.GPX, context.getString(R.string.gpx_op_export)) {
+            repo.oneTimeGpxExport(
+                uri,
+                range,
+                it
+            )
+        }
 
     fun startRestore(uri: Uri, password: CharArray?, prfSecret: ByteArray?) =
-        launch(ManagedKind.RESTORE, context.getString(R.string.backup_op_restore)) { repo.restoreFrom(uri, password, prfSecret, it) }
+        launch(
+            ManagedKind.RESTORE,
+            context.getString(R.string.backup_op_restore)
+        ) { repo.restoreFrom(uri, password, prfSecret, it) }
 
     /** Surface a ceremony/setup failure (e.g. passkey cancelled) in the managed sheet. */
     fun fail(kind: ManagedKind, title: String, message: String) {
-        _state.value = ManagedState(kind, title, running = false, progress = 0f, logs = listOf(message),
-            finished = true, success = false, message = message)
+        _state.value = ManagedState(
+            kind, title, running = false, progress = 0f, logs = listOf(message),
+            finished = true, success = false, message = message
+        )
     }
 
     fun dismiss() {
         if (_state.value?.running != true) _state.value = null
     }
 
-    private fun launch(kind: ManagedKind, title: String, op: suspend (BackupReporter) -> BackupResult) {
+    private fun launch(
+        kind: ManagedKind,
+        title: String,
+        op: suspend (BackupReporter) -> BackupResult
+    ) {
         if (_state.value?.running == true) return
-        _state.value = ManagedState(kind, title, running = true, progress = -1f, logs = emptyList(),
-            finished = false, success = false, message = null)
+        _state.value = ManagedState(
+            kind, title, running = true, progress = -1f, logs = emptyList(),
+            finished = false, success = false, message = null
+        )
         job = scope.launch {
             val reporter = object : BackupReporter {
                 override fun log(message: String) {
                     AppLog.i(TAG, message)
                     _state.update { s -> s?.copy(logs = (s.logs + message).takeLast(MAX_LOG_LINES)) }
                 }
+
                 override fun progress(fraction: Float) {
                     _state.update { s -> s?.copy(progress = fraction) }
                 }
             }
             val result = op(reporter)
-            val ok = result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
+            val ok =
+                result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
             _state.update { s ->
-                s?.copy(running = false, finished = true, progress = if (ok) 1f else s.progress,
-                    success = ok, message = describe(result))
+                s?.copy(
+                    running = false, finished = true, progress = if (ok) 1f else s.progress,
+                    success = ok, message = describe(result)
+                )
             }
         }
     }
@@ -118,11 +169,21 @@ class BackupOperationController @Inject constructor(
     private fun describe(result: BackupResult): String = when (result) {
         is BackupResult.Backed ->
             if (result.report.partitionsFailed > 0) {
-                context.getString(R.string.backup_result_backed_failed, result.report.partitionsWritten, result.report.partitionsFailed)
+                context.getString(
+                    R.string.backup_result_backed_failed,
+                    result.report.partitionsWritten,
+                    result.report.partitionsFailed
+                )
             } else {
                 context.getString(R.string.backup_result_backed, result.report.partitionsWritten)
             }
-        is BackupResult.Restored -> context.getString(R.string.backup_result_restored, result.report.rowsRestored, result.report.partitionsRestored)
+
+        is BackupResult.Restored -> context.getString(
+            R.string.backup_result_restored,
+            result.report.rowsRestored,
+            result.report.partitionsRestored
+        )
+
         is BackupResult.Exported -> context.getString(R.string.gpx_result_exported, result.count)
         BackupResult.NoDestination -> context.getString(R.string.backup_result_no_destination)
         BackupResult.NeedsReclaim -> context.getString(R.string.backup_result_needs_reclaim)

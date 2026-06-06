@@ -28,6 +28,7 @@ class RecorderServiceController @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     private val running = AtomicBoolean(false)
+
     /**
      * In-memory mirror of the persisted autostart-suppression flag (see [SettingsRepository]). When
      * set, [start] is a no-op so an AR transition / geofence exit can't relaunch the foreground
@@ -40,8 +41,13 @@ class RecorderServiceController @Inject constructor(
     val isRecording: Boolean get() = running.get()
     val debugState: StateFlow<RecorderDebugState> = debugMutable.asStateFlow()
 
-    fun suppressAutostart() { autostartSuppressed.set(true) }
-    fun clearAutostartSuppression() { autostartSuppressed.set(false) }
+    fun suppressAutostart() {
+        autostartSuppressed.set(true)
+    }
+
+    fun clearAutostartSuppression() {
+        autostartSuppressed.set(false)
+    }
 
     /** Start (or re-tune) the active recording session for the given state/profile. */
     fun start(state: DevicePhysicalState, profile: PowerProfile): Boolean {

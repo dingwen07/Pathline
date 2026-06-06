@@ -41,14 +41,22 @@ class BackupKeyVault @Inject constructor(
      */
     fun storePassword(password: CharArray) {
         pwdFile.parentFile?.mkdirs()
-        pwdFile.writeBytes(KeystoreWrap.wrap(KEY_ALIAS, String(password).toByteArray(Charsets.UTF_8)))
+        pwdFile.writeBytes(
+            KeystoreWrap.wrap(
+                KEY_ALIAS,
+                String(password).toByteArray(Charsets.UTF_8)
+            )
+        )
     }
 
     /** The locally-cached password, or null if none is stored / the Keystore key was lost. */
     fun localPassword(): CharArray? {
         if (!pwdFile.exists()) return null
         return runCatching {
-            String(KeystoreWrap.unwrap(KEY_ALIAS, pwdFile.readBytes()), Charsets.UTF_8).toCharArray()
+            String(
+                KeystoreWrap.unwrap(KEY_ALIAS, pwdFile.readBytes()),
+                Charsets.UTF_8
+            ).toCharArray()
         }.getOrNull()
     }
 

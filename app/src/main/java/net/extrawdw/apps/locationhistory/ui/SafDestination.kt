@@ -35,13 +35,18 @@ object SafDestination {
         if (authority == EXTERNAL_STORAGE_AUTHORITY) {
             val volume = (docId ?: "").substringBefore(':')
             name = context.getString(
-                if (volume.equals("primary", ignoreCase = true) || volume.equals("home", ignoreCase = true)) {
+                if (volume.equals("primary", ignoreCase = true) || volume.equals(
+                        "home",
+                        ignoreCase = true
+                    )
+                ) {
                     R.string.dest_internal_storage
                 } else {
                     R.string.dest_external_storage
                 },
             )
-            detailBase = docId.orEmpty() // keep the full "volume:path" id, e.g. primary:Backups/Pathline
+            detailBase =
+                docId.orEmpty() // keep the full "volume:path" id, e.g. primary:Backups/Pathline
         } else {
             name = resolveAppLabel(context, authority) ?: context.getString(R.string.dest_unknown)
             detailBase = "" // opaque document id — don't surface it
@@ -62,8 +67,10 @@ object SafDestination {
     private fun resolveAppLabel(context: Context, authority: String?): String? {
         authority ?: return null
         val pm = context.packageManager
+
         @Suppress("DEPRECATION")
-        val info = runCatching { pm.resolveContentProvider(authority, 0) }.getOrNull() ?: return null
+        val info =
+            runCatching { pm.resolveContentProvider(authority, 0) }.getOrNull() ?: return null
         return runCatching { pm.getApplicationLabel(info.applicationInfo).toString() }.getOrNull()
     }
 }

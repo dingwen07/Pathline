@@ -55,7 +55,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
 
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.places_title)) }) }) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -65,11 +67,18 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Text(
-                                visit.candidateName ?: "%.4f, %.4f".format(visit.centroidLatitude, visit.centroidLongitude),
+                                visit.candidateName ?: "%.4f, %.4f".format(
+                                    visit.centroidLatitude,
+                                    visit.centroidLongitude
+                                ),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                stringResource(R.string.time_range, Format.time(visit.startMs), Format.time(visit.endMs)),
+                                stringResource(
+                                    R.string.time_range,
+                                    Format.time(visit.startMs),
+                                    Format.time(visit.endMs)
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             AssistChip(
@@ -88,7 +97,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 Card(onClick = { detailPlaceId = place.id }, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Place, contentDescription = null)
-                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Column(Modifier
+                            .padding(start = 12.dp)
+                            .weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(place.name, style = MaterialTheme.typography.titleMedium)
                                 if (place.fixed) {
@@ -99,7 +110,12 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                     )
                                 }
                             }
-                            place.address?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            place.address?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                             Text(
                                 stringResource(
                                     R.string.place_summary,
@@ -113,11 +129,17 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                         }
                         if (count == 0) {
                             IconButton(onClick = { deletePlace = place }) {
-                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.cd_place_delete))
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = stringResource(R.string.cd_place_delete)
+                                )
                             }
                         }
                         IconButton(onClick = { editPlace = place }) {
-                            Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_place_edit))
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = stringResource(R.string.cd_place_edit)
+                            )
                         }
                     }
                 }
@@ -159,7 +181,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 ) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { deletePlace = null }) { Text(stringResource(R.string.action_cancel)) }
+                TextButton(onClick = {
+                    deletePlace = null
+                }) { Text(stringResource(R.string.action_cancel)) }
             },
         )
     }

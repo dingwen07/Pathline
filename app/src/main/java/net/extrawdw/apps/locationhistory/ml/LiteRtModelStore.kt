@@ -28,10 +28,15 @@ class LiteRtModelStore @Inject constructor(
     private var loaded = false
 
     val stateCheckpoint: File get() = File(context.filesDir, Constants.STATE_CHECKPOINT_FILE)
-    val transportCheckpoint: File get() = File(context.filesDir, Constants.TRANSPORT_CHECKPOINT_FILE)
+    val transportCheckpoint: File
+        get() = File(
+            context.filesDir,
+            Constants.TRANSPORT_CHECKPOINT_FILE
+        )
 
     fun stateModel(): TrainableTfliteModel? = synchronized(lock) { ensureLoaded(); stateModel }
-    fun transportModel(): TrainableTfliteModel? = synchronized(lock) { ensureLoaded(); transportModel }
+    fun transportModel(): TrainableTfliteModel? =
+        synchronized(lock) { ensureLoaded(); transportModel }
 
     /** Re-create interpreters from disk (called after a training run rewrites the checkpoints). */
     fun reload() = synchronized(lock) {

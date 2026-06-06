@@ -19,8 +19,8 @@ interface LocationSampleDao {
 
     @Query(
         "SELECT * FROM location_samples " +
-            "WHERE timestampMs >= :startMs AND timestampMs < :endMs " +
-            "AND includedInComputation = 1 ORDER BY timestampMs ASC"
+                "WHERE timestampMs >= :startMs AND timestampMs < :endMs " +
+                "AND includedInComputation = 1 ORDER BY timestampMs ASC"
     )
     suspend fun rangeForComputation(startMs: Long, endMs: Long): List<LocationSampleEntity>
 

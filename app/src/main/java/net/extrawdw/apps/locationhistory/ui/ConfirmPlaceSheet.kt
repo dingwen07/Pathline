@@ -67,7 +67,9 @@ fun ConfirmPlaceSheet(
     }
     // Debounced text search against the Maps API.
     LaunchedEffect(query) {
-        if (query.isBlank()) { results = emptyList(); return@LaunchedEffect }
+        if (query.isBlank()) {
+            results = emptyList(); return@LaunchedEffect
+        }
         delay(350)
         results = searchPlaces(query, visit.centroidLatitude, visit.centroidLongitude)
     }
@@ -77,14 +79,27 @@ fun ConfirmPlaceSheet(
 
     val localNearby = remember(localPlaces) {
         localPlaces
-            .map { it to Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, it.latitude, it.longitude) }
+            .map {
+                it to Geo.distanceMeters(
+                    visit.centroidLatitude,
+                    visit.centroidLongitude,
+                    it.latitude,
+                    it.longitude
+                )
+            }
             .sortedBy { it.second }
             .map { it.first }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Text(stringResource(R.string.assign_place_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Column(Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+            Text(
+                stringResource(R.string.assign_place_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
 
             OutlinedTextField(
                 value = query,
@@ -92,35 +107,61 @@ fun ConfirmPlaceSheet(
                 label = { Text(stringResource(R.string.search_places_label)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
             )
 
-            LazyColumn(Modifier.heightIn(max = 380.dp).padding(top = 8.dp)) {
+            LazyColumn(Modifier
+                .heightIn(max = 380.dp)
+                .padding(top = 8.dp)) {
                 if (results.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.search_results_header)) }
                     items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) { onConfirm(PlaceChoice.Google(c)) }
+                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) {
+                            onConfirm(
+                                PlaceChoice.Google(c)
+                            )
+                        }
                     }
                 }
                 if (query.isBlank() && localNearby.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.saved_places_nearest_header)) }
                     items(localNearby, key = { "l${it.id}" }) { place ->
-                        val dist = Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, place.latitude, place.longitude)
-                        PlaceRow(place.name, stringResource(R.string.distance_away, Format.distance(context, dist))) { onConfirm(PlaceChoice.Existing(place.id)) }
+                        val dist = Geo.distanceMeters(
+                            visit.centroidLatitude,
+                            visit.centroidLongitude,
+                            place.latitude,
+                            place.longitude
+                        )
+                        PlaceRow(
+                            place.name,
+                            stringResource(R.string.distance_away, Format.distance(context, dist))
+                        ) { onConfirm(PlaceChoice.Existing(place.id)) }
                     }
                 }
                 if (query.isBlank() && nearby.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.nearby_header)) }
                     items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) { onConfirm(PlaceChoice.Google(c)) }
+                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) {
+                            onConfirm(
+                                PlaceChoice.Google(c)
+                            )
+                        }
                     }
                 }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text(stringResource(R.string.custom_places_header), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.custom_places_header),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
             Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -142,7 +183,8 @@ fun ConfirmPlaceSheet(
 
 /** "<distance> away · <address/type>" relative to the visit location. */
 private fun candidateSubtitle(context: Context, visit: VisitEntity, c: PlaceCandidate): String {
-    val dist = Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, c.latitude, c.longitude)
+    val dist =
+        Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, c.latitude, c.longitude)
     val detail = c.address ?: c.primaryType ?: context.getString(R.string.place_default_name)
     return context.getString(R.string.candidate_subtitle, Format.distance(context, dist), detail)
 }
@@ -160,7 +202,10 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun PlaceRow(title: String, subtitle: String, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

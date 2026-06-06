@@ -22,10 +22,13 @@ import javax.inject.Singleton
 sealed interface PlaceChoice {
     /** Link to an existing local place. */
     data class Existing(val placeId: Long) : PlaceChoice
+
     /** Save a Google Places suggestion as a new local place and link it. */
     data class Google(val candidate: PlaceCandidate) : PlaceChoice
+
     /** Create a new place at the visit centroid with the given name. */
     data class NewNamed(val name: String) : PlaceChoice
+
     /** Promote the visit's own inline candidate (or centroid) into the place DB. */
     data object PromoteCandidate : PlaceChoice
 }
@@ -101,6 +104,7 @@ class TimelineRepository @Inject constructor(
                 category = choice.candidate.primaryType,
                 source = PlaceSource.MAPS,
             )
+
             is PlaceChoice.NewNamed -> placeRepository.confirmPlace(
                 name = choice.name,
                 latitude = visit.centroidLatitude,
@@ -108,6 +112,7 @@ class TimelineRepository @Inject constructor(
                 googlePlaceId = null, address = null, category = null,
                 source = PlaceSource.USER,
             )
+
             PlaceChoice.PromoteCandidate -> placeRepository.confirmPlace(
                 name = visit.candidateName ?: "Place",
                 latitude = visit.candidateLatitude ?: visit.centroidLatitude,
@@ -135,7 +140,13 @@ class TimelineRepository @Inject constructor(
         placeRepository.recordVisitToPlace(placeId)
         // Mark fixes outside the (updated) place circle as GPS drift (bogus).
         placeRepository.byId(placeId)?.let { p ->
-            locationRepository.excludeDriftOutside(visit.startMs, visit.endMs, p.latitude, p.longitude, p.radiusMeters)
+            locationRepository.excludeDriftOutside(
+                visit.startMs,
+                visit.endMs,
+                p.latitude,
+                p.longitude,
+                p.radiusMeters
+            )
         }
         // Re-fetch the now-filtered samples so the training example reflects only good fixes.
         val included = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)

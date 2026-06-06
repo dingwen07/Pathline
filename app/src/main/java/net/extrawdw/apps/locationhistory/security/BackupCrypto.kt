@@ -63,7 +63,11 @@ object BackupCrypto {
         val kek = deriveKek(password, salt, PBKDF2_ITERATIONS)
         val header = CryptoHeader(
             mode = BackupEncryption.PASSWORD,
-            password = PasswordSlot(saltB64 = b64(salt), iterations = PBKDF2_ITERATIONS, wrappedDekB64 = b64(aesGcmSeal(kek, dek))),
+            password = PasswordSlot(
+                saltB64 = b64(salt),
+                iterations = PBKDF2_ITERATIONS,
+                wrappedDekB64 = b64(aesGcmSeal(kek, dek))
+            ),
         )
         return header to dek
     }
@@ -72,7 +76,11 @@ object BackupCrypto {
      * Build a passkey-protected header. [prfSecret] is the 32-byte PRF output the authenticator
      * produced for [prfSalt]; restore must replay the same [prfSalt] to recover the same secret.
      */
-    fun createPasskeyHeader(prfSecret: ByteArray, prfSalt: ByteArray, credentialId: String?): Pair<CryptoHeader, ByteArray> {
+    fun createPasskeyHeader(
+        prfSecret: ByteArray,
+        prfSalt: ByteArray,
+        credentialId: String?
+    ): Pair<CryptoHeader, ByteArray> {
         val dek = randomBytes(DEK_BYTES)
         val header = CryptoHeader(
             mode = BackupEncryption.PASSKEY,
@@ -92,14 +100,22 @@ object BackupCrypto {
      * matching credential: [password] for a password slot, [prfSecret] for a passkey slot. Throws
      * (GCM tag mismatch) if the credential is wrong.
      */
-    fun openDek(header: CryptoHeader, password: CharArray? = null, prfSecret: ByteArray? = null): ByteArray? =
+    fun openDek(
+        header: CryptoHeader,
+        password: CharArray? = null,
+        prfSecret: ByteArray? = null
+    ): ByteArray? =
         when (header.mode) {
             BackupEncryption.NONE -> null
             BackupEncryption.PASSWORD -> {
                 val slot = header.password ?: error("password backup is missing its key slot")
                 requireNotNull(password) { "password required to open this backup" }
-                aesGcmOpen(deriveKek(password, unb64(slot.saltB64), slot.iterations), unb64(slot.wrappedDekB64))
+                aesGcmOpen(
+                    deriveKek(password, unb64(slot.saltB64), slot.iterations),
+                    unb64(slot.wrappedDekB64)
+                )
             }
+
             BackupEncryption.PASSKEY -> {
                 val slot = header.passkey ?: error("passkey backup is missing its key slot")
                 requireNotNull(prfSecret) { "passkey PRF secret required to open this backup" }
@@ -125,7 +141,11 @@ object BackupCrypto {
         val iv = blob.copyOfRange(0, GCM_IV_BYTES)
         val ct = blob.copyOfRange(GCM_IV_BYTES, blob.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(key, "AES"),
+            GCMParameterSpec(GCM_TAG_BITS, iv)
+        )
         return cipher.doFinal(ct)
     }
 
@@ -156,7 +176,11 @@ object BackupCrypto {
                 read += r
             }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(key, "AES"),
+                GCMParameterSpec(GCM_TAG_BITS, iv)
+            )
             return CipherInputStream(input, cipher)
         }
     }

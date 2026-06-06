@@ -16,7 +16,8 @@ import javax.inject.Inject
 @HiltAndroidApp
 class PathlineApp : Application(), Configuration.Provider {
 
-    @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject
+    lateinit var workerFactory: HiltWorkerFactory
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()

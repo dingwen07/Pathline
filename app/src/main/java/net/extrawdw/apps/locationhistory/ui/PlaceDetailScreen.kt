@@ -78,14 +78,20 @@ class PlaceDetailViewModel @Inject constructor(
     private val placeRepository: PlaceRepository,
 ) : ViewModel() {
     private val placeId = MutableStateFlow<Long?>(null)
-    fun load(id: Long) { placeId.value = id }
+    fun load(id: Long) {
+        placeId.value = id
+    }
 
     val place: StateFlow<PlaceEntity?> = placeId
         .flatMapLatest { if (it == null) flowOf(null) else placeRepository.observeById(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val visits: StateFlow<List<VisitEntity>> = placeId
-        .flatMapLatest { if (it == null) flowOf(emptyList()) else placeRepository.observeVisitsForPlace(it) }
+        .flatMapLatest {
+            if (it == null) flowOf(emptyList()) else placeRepository.observeVisitsForPlace(
+                it
+            )
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val visitMarkers: StateFlow<List<PlaceVisitMarker>> = placeId
@@ -145,19 +151,34 @@ fun PlaceDetailDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier.fillMaxSize().predictiveBack(backProgress)) {
+        Surface(Modifier
+            .fillMaxSize()
+            .predictiveBack(backProgress)) {
             Scaffold(
                 topBar = {
                     TopAppBar(
-                        title = { Text(place?.name ?: stringResource(R.string.place_default_name)) },
+                        title = {
+                            Text(
+                                place?.name ?: stringResource(R.string.place_default_name)
+                            )
+                        },
                         navigationIcon = {
-                            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close)) }
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.action_close)
+                                )
+                            }
                         },
                     )
                 },
             ) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding)) {
-                    Box(Modifier.fillMaxWidth().height(280.dp)) {
+                Column(Modifier
+                    .fillMaxSize()
+                    .padding(padding)) {
+                    Box(Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)) {
                         // Compose the map only once the place is loaded, so its camera can be seeded
                         // at the place in the constructor (no world-view flash, like the editor).
                         place?.let { p ->
@@ -169,26 +190,47 @@ fun PlaceDetailDialog(
                         }
                     }
                     place?.let { p ->
-                        val visitsLabel = pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
+                        val visitsLabel =
+                            pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
                         Text(
                             if (p.fixed) {
-                                stringResource(R.string.place_detail_summary_locked, visitsLabel, p.radiusMeters.toInt())
+                                stringResource(
+                                    R.string.place_detail_summary_locked,
+                                    visitsLabel,
+                                    p.radiusMeters.toInt()
+                                )
                             } else {
-                                stringResource(R.string.place_detail_summary, visitsLabel, p.radiusMeters.toInt())
+                                stringResource(
+                                    R.string.place_detail_summary,
+                                    visitsLabel,
+                                    p.radiusMeters.toInt()
+                                )
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         )
                         p.address?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
                         }
                     }
                     HorizontalDivider()
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         items(visits, key = { it.id }) { v ->
                             val context = LocalContext.current
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                                Text(Format.date(v.dayEpoch), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                            ) {
+                                Text(
+                                    Format.date(v.dayEpoch),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                                 Text(
                                     stringResource(
                                         R.string.time_range_duration,
@@ -202,7 +244,11 @@ fun PlaceDetailDialog(
                                     stringResource(
                                         R.string.visit_detail_stats,
                                         v.radiusMeters.toInt(),
-                                        pluralStringResource(R.plurals.fixes_count, v.sampleCount, v.sampleCount),
+                                        pluralStringResource(
+                                            R.plurals.fixes_count,
+                                            v.sampleCount,
+                                            v.sampleCount
+                                        ),
                                         (v.reliability * 100).toInt(),
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
@@ -237,8 +283,22 @@ private fun PlaceDetailMap(
         if (!followList || visibleMarkers.isEmpty()) return@LaunchedEffect
         val bounds = visibleVisitBounds(visibleMarkers)
         if (bounds != null) {
-            runCatching { cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 80)) }
-                .onFailure { cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(visibleMarkers.first().center, 16f)) }
+            runCatching {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngBounds(
+                        bounds,
+                        80
+                    )
+                )
+            }
+                .onFailure {
+                    cameraPositionState.animate(
+                        CameraUpdateFactory.newLatLngZoom(
+                            visibleMarkers.first().center,
+                            16f
+                        )
+                    )
+                }
         }
     }
     GoogleMap(

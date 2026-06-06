@@ -113,7 +113,9 @@ class DiagnosticsViewModel @Inject constructor(
 ) : ViewModel() {
     val diagnostics = MutableStateFlow(DiagnosticsState())
 
-    init { refresh() }
+    init {
+        refresh()
+    }
 
     fun refresh() = viewModelScope.launch {
         val recent = sampleDao.mostRecent()
@@ -129,8 +131,8 @@ class DiagnosticsViewModel @Inject constructor(
         val totalStateExamples = trainingRepository.allStateExamples().size
         val totalTransportExamples = trainingRepository.allTransportExamples().size
         val noTrainingDataNote = totalStateExamples + totalTransportExamples == 0 &&
-            !stateCheckpoint.exists() &&
-            !transportCheckpoint.exists()
+                !stateCheckpoint.exists() &&
+                !transportCheckpoint.exists()
         val dbStats = DbStats(
             samples = sampleDao.count(),
             excluded = sampleDao.excludedCount(),
@@ -138,7 +140,11 @@ class DiagnosticsViewModel @Inject constructor(
             trips = tripDao.count(),
             places = placeDao.count(),
             lastFix = recent?.let {
-                "${TimeBuckets.localDate(it.dayEpoch)} ${Format.time(it.timestampMs)} · ${appContext.getString(it.devicePhysicalState.labelRes)} · ±${it.accuracy?.toInt() ?: "?"}m"
+                "${TimeBuckets.localDate(it.dayEpoch)} ${Format.time(it.timestampMs)} · ${
+                    appContext.getString(
+                        it.devicePhysicalState.labelRes
+                    )
+                } · ±${it.accuracy?.toInt() ?: "?"}m"
             } ?: "—",
         )
         diagnostics.value = DiagnosticsState(
@@ -170,7 +176,9 @@ class DiagnosticsViewModel @Inject constructor(
     fun logFiles(): List<File> = AppLog.sessionFiles()
 
     suspend fun readLog(file: File): String = withContext(Dispatchers.IO) {
-        runCatching { file.readText().takeLast(80_000) }.getOrElse { "(could not read ${file.name})" }
+        runCatching {
+            file.readText().takeLast(80_000)
+        }.getOrElse { "(could not read ${file.name})" }
     }
 
     private suspend fun workRows(today: Long): List<WorkerDebugRow> = withContext(Dispatchers.IO) {
@@ -224,38 +232,59 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val diagnosticsBackProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier.fillMaxSize().predictiveBack(diagnosticsBackProgress)) {
+        Surface(Modifier
+            .fillMaxSize()
+            .predictiveBack(diagnosticsBackProgress)) {
             Scaffold(
                 topBar = {
                     TopAppBar(
                         title = { Text(stringResource(R.string.diagnostics_title)) },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
-                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.action_close)
+                                )
                             }
                         },
                         actions = {
                             IconButton(onClick = { viewModel.refresh() }) {
-                                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.cd_refresh_diagnostics))
+                                Icon(
+                                    Icons.Filled.Refresh,
+                                    contentDescription = stringResource(R.string.cd_refresh_diagnostics)
+                                )
                             }
                             IconButton(onClick = { shareLogs(context) }) {
-                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.cd_share_logs))
+                                Icon(
+                                    Icons.Filled.Share,
+                                    contentDescription = stringResource(R.string.cd_share_logs)
+                                )
                             }
                         },
                     )
                 },
             ) { padding ->
                 val files = remember(diagnostics) { viewModel.logFiles() }
-                LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+                LazyColumn(Modifier
+                    .fillMaxSize()
+                    .padding(padding)) {
                     item {
                         DebugCard("Recorder") {
-                            diagnostics.recorderRows.forEach { (label, value) -> StatRow(label, value) }
+                            diagnostics.recorderRows.forEach { (label, value) ->
+                                StatRow(
+                                    label,
+                                    value
+                                )
+                            }
                         }
                     }
                     item {
                         val stats = diagnostics.db
                         DebugCard("Internal data") {
-                            StatRow("Location samples", "${stats.samples} (${stats.excluded} excluded)")
+                            StatRow(
+                                "Location samples",
+                                "${stats.samples} (${stats.excluded} excluded)"
+                            )
                             StatRow("Visits", stats.visits.toString())
                             StatRow("Trips", stats.trips.toString())
                             StatRow("Places", stats.places.toString())
@@ -264,13 +293,21 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                     }
                     item {
                         DebugCard("Models") {
-                            diagnostics.modelRows.forEach { (label, value) -> StatRow(label, value) }
+                            diagnostics.modelRows.forEach { (label, value) ->
+                                StatRow(
+                                    label,
+                                    value
+                                )
+                            }
                         }
                     }
                     item {
                         DebugCard("Workers") {
                             diagnostics.workerRows.forEach {
-                                StatRow(it.label, "${it.state} · attempts ${it.attempts} · ${it.id}")
+                                StatRow(
+                                    it.label,
+                                    "${it.state} · attempts ${it.attempts} · ${it.id}"
+                                )
                             }
                         }
                     }
@@ -284,7 +321,10 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                     }
                     items(files, key = { it.name }) { f ->
                         Column(
-                            Modifier.fillMaxWidth().clickable { openFile = f }.padding(horizontal = 16.dp, vertical = 12.dp),
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { openFile = f }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                         ) {
                             Text(f.name, style = MaterialTheme.typography.bodyMedium)
                             Text(
@@ -295,7 +335,12 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                         HorizontalDivider()
                     }
                     if (files.isEmpty()) {
-                        item { Text(stringResource(R.string.diag_no_logs), Modifier.padding(16.dp)) }
+                        item {
+                            Text(
+                                stringResource(R.string.diag_no_logs),
+                                Modifier.padding(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -326,29 +371,40 @@ private fun LogFileDialog(
     ) {
         DisableDialogDim()
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier.fillMaxSize().predictiveBack(backProgress)) {
+        Surface(Modifier
+            .fillMaxSize()
+            .predictiveBack(backProgress)) {
             Scaffold(
                 topBar = {
                     TopAppBar(
                         title = { Text(file.name) },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
-                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_close_log))
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.cd_close_log)
+                                )
                             }
                         },
                         actions = {
                             IconButton(onClick = onShare) {
-                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.cd_share_log))
+                                Icon(
+                                    Icons.Filled.Share,
+                                    contentDescription = stringResource(R.string.cd_share_log)
+                                )
                             }
                         },
                     )
                 },
             ) { padding ->
                 val emptyText = stringResource(R.string.diag_log_empty)
-                SelectionContainer(Modifier.fillMaxSize().padding(padding)) {
+                SelectionContainer(Modifier
+                    .fillMaxSize()
+                    .padding(padding)) {
                     Text(
                         content.ifEmpty { emptyText },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
                             .verticalScroll(rememberScrollState())
                             .horizontalScroll(rememberScrollState())
                             .padding(12.dp),
@@ -374,7 +430,9 @@ private fun DisableDialogDim() {
 
 @Composable
 private fun DebugCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Card(Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 8.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()
@@ -384,7 +442,12 @@ private fun DebugCard(title: String, content: @Composable ColumnScope.() -> Unit
 
 @Composable
 private fun StatRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
@@ -409,19 +472,30 @@ fun shareLogs(context: Context) {
         putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_logs_chooser)))
+    context.startActivity(
+        android.content.Intent.createChooser(
+            intent,
+            context.getString(R.string.share_logs_chooser)
+        )
+    )
 }
 
 /** Share exactly one selected session log via a FileProvider content URI. */
 fun shareLog(context: Context, file: File) {
     val authority = "${context.packageName}.fileprovider"
-    val uri = runCatching { androidx.core.content.FileProvider.getUriForFile(context, authority, file) }
-        .getOrNull() ?: return
+    val uri =
+        runCatching { androidx.core.content.FileProvider.getUriForFile(context, authority, file) }
+            .getOrNull() ?: return
     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
         putExtra(android.content.Intent.EXTRA_SUBJECT, file.name)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(intent, context.getString(R.string.share_log_chooser, file.name)))
+    context.startActivity(
+        android.content.Intent.createChooser(
+            intent,
+            context.getString(R.string.share_log_chooser, file.name)
+        )
+    )
 }

@@ -95,16 +95,27 @@ class MapExplorerViewModel @Inject constructor(
                     val state = if (drawTrack) {
                         // Thin stationary stretches so the polyline + dots stay light.
                         val track = thinTrack(samples)
-                        MapExplorerState(dotPoints = track, trackPoints = track, totalCount = samples.size)
+                        MapExplorerState(
+                            dotPoints = track,
+                            trackPoints = track,
+                            totalCount = samples.size
+                        )
                     } else {
                         // Keep coverage but collapse coordinates that land in the same ~1 m cell
                         // (true duplicate fixes), which tames stacked stationary samples.
-                        MapExplorerState(dotPoints = dedupeByCell(samples), totalCount = samples.size)
+                        MapExplorerState(
+                            dotPoints = dedupeByCell(samples),
+                            totalCount = samples.size
+                        )
                     }
                     emit(state)
                 }.flowOn(Dispatchers.IO)
             }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapExplorerState(loading = true))
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                MapExplorerState(loading = true)
+            )
 
     private data class QueryKey(
         val range: MapRange,
@@ -113,14 +124,18 @@ class MapExplorerViewModel @Inject constructor(
         val drawTrackCustom: Boolean,
     )
 
-    fun selectRange(r: MapRange) { _range.value = r }
+    fun selectRange(r: MapRange) {
+        _range.value = r
+    }
 
     fun setCustomRange(startDayEpoch: Long, endDayEpoch: Long) {
         _customStart.value = startDayEpoch
         _customEnd.value = endDayEpoch
     }
 
-    fun setDrawTrackCustom(value: Boolean) { _drawTrackCustom.value = value }
+    fun setDrawTrackCustom(value: Boolean) {
+        _drawTrackCustom.value = value
+    }
 
     /** Connect samples with a track for today/week, and for custom only when the user opts in. */
     fun shouldDrawTrack(r: MapRange, drawCustom: Boolean): Boolean = when (r) {
@@ -137,13 +152,17 @@ class MapExplorerViewModel @Inject constructor(
             MapRange.TODAY -> TimeBuckets.dayRangeMillis(today).first to endMs
             MapRange.WEEK -> TimeBuckets.dayRangeMillis(today - 6).first to endMs
             MapRange.MONTH -> {
-                val start = TimeBuckets.dayEpoch(LocalDate.ofEpochDay(today).minusMonths(1).plusDays(1))
+                val start =
+                    TimeBuckets.dayEpoch(LocalDate.ofEpochDay(today).minusMonths(1).plusDays(1))
                 TimeBuckets.dayRangeMillis(start).first to endMs
             }
+
             MapRange.YEAR -> {
-                val start = TimeBuckets.dayEpoch(LocalDate.ofEpochDay(today).minusYears(1).plusDays(1))
+                val start =
+                    TimeBuckets.dayEpoch(LocalDate.ofEpochDay(today).minusYears(1).plusDays(1))
                 TimeBuckets.dayRangeMillis(start).first to endMs
             }
+
             MapRange.CUSTOM -> {
                 if (customStart == null || customEnd == null) return null
                 val lo = minOf(customStart, customEnd)

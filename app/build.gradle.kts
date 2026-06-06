@@ -26,8 +26,8 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 8
-        versionName = "1.3.1"
+        versionCode = 9
+        versionName = "1.3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -54,9 +54,6 @@ android {
         buildConfig = true
     }
     androidResources {
-        // Auto-generate res/xml/locales_config.xml from the translated values-* folders and inject
-        // android:localeConfig into the manifest, so the app shows up in Android 13+ "per-app
-        // language" settings. The unqualified values/ locale is declared in res/resources.properties.
         generateLocaleConfig = true
     }
 }

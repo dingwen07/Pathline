@@ -331,9 +331,11 @@ private fun DateRangePickerDialog(
                 .predictiveBack(backProgress),
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(Modifier
-                .fillMaxSize()
-                .statusBarsPadding()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+            ) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -353,9 +355,11 @@ private fun DateRangePickerDialog(
                         enabled = start != null && end != null,
                     ) { Text(stringResource(R.string.action_plot)) }
                 }
-                DateRangePicker(state = pickerState, modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f))
+                DateRangePicker(
+                    state = pickerState, modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                )
             }
         }
     }

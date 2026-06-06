@@ -51,7 +51,8 @@ class SafDir internal constructor(
 
     /** Find or create a subdirectory. */
     fun childDir(name: String): SafDir {
-        children[name]?.firstOrNull { it.isDirectory && it.exists() }?.let { return SafDir(context, it) }
+        children[name]?.firstOrNull { it.isDirectory && it.exists() }
+            ?.let { return SafDir(context, it) }
         // No directory by that name (possibly a stale file, or duplicates): clear them, then create.
         deleteAllNamed(name)
         val dir = doc.createDirectory(name)?.also { children[name] = mutableListOf(it) }

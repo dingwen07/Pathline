@@ -17,9 +17,12 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var controller: RecordingController
-    @Inject lateinit var settingsRepository: SettingsRepository
-    @Inject lateinit var workScheduler: WorkScheduler
+    @Inject
+    lateinit var controller: RecordingController
+    @Inject
+    lateinit var settingsRepository: SettingsRepository
+    @Inject
+    lateinit var workScheduler: WorkScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action

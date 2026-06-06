@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     @javax.inject.Inject
     lateinit var recordingController: RecordingController
+
     @javax.inject.Inject
     lateinit var workScheduler: WorkScheduler
 
@@ -164,9 +165,11 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                             .zIndex(2f)
                     ) { PlacesScreen() }
 
-                    AppDestinations.SETTINGS -> Surface(Modifier
-                        .fillMaxSize()
-                        .zIndex(2f)) {
+                    AppDestinations.SETTINGS -> Surface(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(2f)
+                    ) {
                         SettingsScreen(
                             permissionsGranted = permissions.granted,
                             onRequestPermissions = permissions::request,

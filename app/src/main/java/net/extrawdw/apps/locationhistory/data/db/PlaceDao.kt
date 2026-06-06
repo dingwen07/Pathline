@@ -18,7 +18,7 @@ interface PlaceDao {
     // Most-visited first, counted live over the visits table (there is no stored count column).
     @Query(
         "SELECT * FROM places ORDER BY " +
-            "(SELECT COUNT(*) FROM visits WHERE visits.placeId = places.id) DESC, name ASC"
+                "(SELECT COUNT(*) FROM visits WHERE visits.placeId = places.id) DESC, name ASC"
     )
     fun observeAll(): Flow<List<PlaceEntity>>
 
@@ -34,7 +34,7 @@ interface PlaceDao {
      */
     @Query(
         "SELECT * FROM places WHERE latitude BETWEEN :minLat AND :maxLat " +
-            "AND longitude BETWEEN :minLon AND :maxLon"
+                "AND longitude BETWEEN :minLon AND :maxLon"
     )
     suspend fun inBoundingBox(
         minLat: Double, minLon: Double, maxLat: Double, maxLon: Double,

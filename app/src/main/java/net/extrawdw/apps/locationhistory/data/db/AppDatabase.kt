@@ -54,24 +54,87 @@ abstract class AppDatabase : RoomDatabase() {
             fun mark(stream: String, dayExpr: String): String {
                 val w = "(($dayExpr + 3) / 7) * 7 - 3"
                 return "INSERT INTO backup_dirty_partitions(stream, weekStart) " +
-                    "SELECT '$stream', $w WHERE NOT EXISTS " +
-                    "(SELECT 1 FROM backup_dirty_partitions WHERE stream = '$stream' AND weekStart = $w);"
+                        "SELECT '$stream', $w WHERE NOT EXISTS " +
+                        "(SELECT 1 FROM backup_dirty_partitions WHERE stream = '$stream' AND weekStart = $w);"
             }
 
             // location_samples
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_ai AFTER INSERT ON location_samples BEGIN ${mark("samples", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_au AFTER UPDATE ON location_samples BEGIN ${mark("samples", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_ad AFTER DELETE ON location_samples BEGIN ${mark("samples", "OLD.dayEpoch")} END;")
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_ai AFTER INSERT ON location_samples BEGIN ${
+                    mark(
+                        "samples",
+                        "NEW.dayEpoch"
+                    )
+                } END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_au AFTER UPDATE ON location_samples BEGIN ${
+                    mark(
+                        "samples",
+                        "NEW.dayEpoch"
+                    )
+                } END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_samples_ad AFTER DELETE ON location_samples BEGIN ${
+                    mark(
+                        "samples",
+                        "OLD.dayEpoch"
+                    )
+                } END;"
+            )
 
             // visits
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_ai AFTER INSERT ON visits BEGIN ${mark("visits", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_au AFTER UPDATE ON visits BEGIN ${mark("visits", "OLD.dayEpoch")} ${mark("visits", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_ad AFTER DELETE ON visits BEGIN ${mark("visits", "OLD.dayEpoch")} END;")
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_ai AFTER INSERT ON visits BEGIN ${
+                    mark(
+                        "visits",
+                        "NEW.dayEpoch"
+                    )
+                } END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_au AFTER UPDATE ON visits BEGIN ${
+                    mark(
+                        "visits",
+                        "OLD.dayEpoch"
+                    )
+                } ${mark("visits", "NEW.dayEpoch")} END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_visits_ad AFTER DELETE ON visits BEGIN ${
+                    mark(
+                        "visits",
+                        "OLD.dayEpoch"
+                    )
+                } END;"
+            )
 
             // trips
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_ai AFTER INSERT ON trips BEGIN ${mark("trips", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_au AFTER UPDATE ON trips BEGIN ${mark("trips", "OLD.dayEpoch")} ${mark("trips", "NEW.dayEpoch")} END;")
-            add("CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_ad AFTER DELETE ON trips BEGIN ${mark("trips", "OLD.dayEpoch")} END;")
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_ai AFTER INSERT ON trips BEGIN ${
+                    mark(
+                        "trips",
+                        "NEW.dayEpoch"
+                    )
+                } END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_au AFTER UPDATE ON trips BEGIN ${
+                    mark(
+                        "trips",
+                        "OLD.dayEpoch"
+                    )
+                } ${mark("trips", "NEW.dayEpoch")} END;"
+            )
+            add(
+                "CREATE TRIGGER IF NOT EXISTS trg_dirty_trips_ad AFTER DELETE ON trips BEGIN ${
+                    mark(
+                        "trips",
+                        "OLD.dayEpoch"
+                    )
+                } END;"
+            )
         }
     }
 }

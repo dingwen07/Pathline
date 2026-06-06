@@ -58,10 +58,16 @@ class PermissionUsageActivity : ComponentActivity() {
 private fun PermissionUsageScreen(onDone: () -> Unit) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 28.dp, vertical = 24.dp),
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .padding(horizontal = 28.dp, vertical = 24.dp),
         ) {
             Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -69,7 +75,9 @@ private fun PermissionUsageScreen(onDone: () -> Unit) {
             }
             Button(
                 onClick = onDone,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
             ) {
                 Text(stringResource(R.string.action_ok))
             }

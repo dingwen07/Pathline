@@ -30,6 +30,7 @@ class HeuristicClassifier @Inject constructor() {
                 speed < 2.8f -> StateClassification(DevicePhysicalState.WALKING, 0.72f)
                 speed < 6.0f && input.motionVariance > 3f ->
                     StateClassification(DevicePhysicalState.RUNNING, 0.62f)
+
                 speed < 8.5f -> StateClassification(DevicePhysicalState.CYCLING, 0.56f)
                 else -> StateClassification(DevicePhysicalState.IN_VEHICLE, 0.68f)
             }
@@ -43,7 +44,12 @@ class HeuristicClassifier @Inject constructor() {
                     DevicePhysicalState.STATIONARY,
                     0.8f * accuracyTrust,
                 )
-                "WALKING", "ON_FOOT" -> return StateClassification(DevicePhysicalState.WALKING, 0.72f)
+
+                "WALKING", "ON_FOOT" -> return StateClassification(
+                    DevicePhysicalState.WALKING,
+                    0.72f
+                )
+
                 "RUNNING" -> return StateClassification(DevicePhysicalState.RUNNING, 0.72f)
                 "ON_BICYCLE" -> return StateClassification(DevicePhysicalState.CYCLING, 0.7f)
                 "IN_VEHICLE" -> return StateClassification(DevicePhysicalState.IN_VEHICLE, 0.75f)
@@ -54,9 +60,11 @@ class HeuristicClassifier @Inject constructor() {
         return when {
             speed < 0.5f && input.motionVariance < 1.5f ->
                 StateClassification(DevicePhysicalState.STATIONARY, 0.7f * accuracyTrust)
+
             speed < 2.5f -> StateClassification(DevicePhysicalState.WALKING, 0.55f)
             speed < 6.0f && input.motionVariance > 4f ->
                 StateClassification(DevicePhysicalState.RUNNING, 0.5f)
+
             speed < 8.0f -> StateClassification(DevicePhysicalState.CYCLING, 0.45f)
             else -> StateClassification(DevicePhysicalState.IN_VEHICLE, 0.6f)
         }
@@ -78,7 +86,8 @@ class HeuristicClassifier @Inject constructor() {
         val accelStd = if (accels.isEmpty()) 0f else
             sqrt(accels.map { it * it }.average().toFloat())
         val noCellFraction = samples.count { it.hasCellService == false }.toFloat() / samples.size
-        val vehicleAr = samples.count { it.arActivity?.uppercase() == "IN_VEHICLE" }.toFloat() / samples.size
+        val vehicleAr =
+            samples.count { it.arActivity?.uppercase() == "IN_VEHICLE" }.toFloat() / samples.size
 
         return when {
             p85 < 2.5f -> TransportClassification(TransportMode.WALKING, 0.6f)
@@ -87,6 +96,7 @@ class HeuristicClassifier @Inject constructor() {
             // Fast, smooth, frequently losing cell service -> likely rail/subway.
             p85 > 14f && accelStd < 1.2f && noCellFraction > 0.3f ->
                 TransportClassification(TransportMode.RAIL, 0.5f)
+
             p85 > 80f -> TransportClassification(TransportMode.FLIGHT, 0.6f)
             // Road-speed average that didn't match a more specific mode above: a road vehicle,
             // defaulting to car (bus is indistinguishable from speed alone).

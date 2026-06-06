@@ -93,7 +93,11 @@ class TimelineViewModel @Inject constructor(
 
     val timeline: StateFlow<TimelineDay> = selectedDay
         .flatMapLatest { timelineRepository.observeDay(it) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimelineDay(today, emptyList()))
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            TimelineDay(today, emptyList())
+        )
 
     val mapState: StateFlow<MapState> = selectedDay
         .flatMapLatest { day -> timelineRepository.observeDay(day).map { buildMapState(it) } }
@@ -103,7 +107,9 @@ class TimelineViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Never navigate into the future. */
-    fun selectDay(dayEpoch: Long) { selectedDay.value = dayEpoch.coerceAtMost(today) }
+    fun selectDay(dayEpoch: Long) {
+        selectedDay.value = dayEpoch.coerceAtMost(today)
+    }
 
     /** Reactive timeline for an arbitrary day (used by the day pager's pages). */
     fun timelineFor(day: Long): kotlinx.coroutines.flow.Flow<TimelineDay> =
@@ -117,7 +123,10 @@ class TimelineViewModel @Inject constructor(
             val start = System.currentTimeMillis()
             try {
                 runCatching {
-                    val id = workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "pull_refresh")
+                    val id = workScheduler.enqueueTimelineMaintenanceNow(
+                        selectedDay.value,
+                        "pull_refresh"
+                    )
                     val finished = withTimeoutOrNull(6_000) {
                         workManager.getWorkInfoByIdFlow(id)
                             .filterNotNull()
@@ -143,9 +152,10 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun updatePlace(place: net.extrawdw.apps.locationhistory.data.db.PlaceEntity) = viewModelScope.launch {
-        placeRepository.update(place)
-    }
+    fun updatePlace(place: net.extrawdw.apps.locationhistory.data.db.PlaceEntity) =
+        viewModelScope.launch {
+            placeRepository.update(place)
+        }
 
     // --- confirmations -------------------------------------------------------------------------
 
@@ -189,7 +199,10 @@ class TimelineViewModel @Inject constructor(
             != PackageManager.PERMISSION_GRANTED
         ) return null
         return runCatching {
-            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+            fusedClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                CancellationTokenSource().token
+            )
                 .await()?.let { LatLng(it.latitude, it.longitude) }
         }.getOrNull()
     }
@@ -202,15 +215,24 @@ class TimelineViewModel @Inject constructor(
             when (item) {
                 is TimelineItem.TripItem -> {
                     val t = item.trip
-                    val pts = Geo.decodePolyline(t.encodedPolyline).map { LatLng(it.first, it.second) }
+                    val pts =
+                        Geo.decodePolyline(t.encodedPolyline).map { LatLng(it.first, it.second) }
                     if (pts.isNotEmpty()) segments.add(MapSegment(pts, t.mode, t.confirmed))
                 }
+
                 is TimelineItem.VisitItem -> {
                     val v = item.visit
-                    visits.add(MapVisitMarker(LatLng(v.centroidLatitude, v.centroidLongitude), v.radiusMeters, v.confirmed))
+                    visits.add(
+                        MapVisitMarker(
+                            LatLng(v.centroidLatitude, v.centroidLongitude),
+                            v.radiusMeters,
+                            v.confirmed
+                        )
+                    )
                     // Yellow ring for the place this visit belongs to (one per place).
                     item.place?.let { p ->
-                        placeRings[p.id] = MapPlaceRing(LatLng(p.latitude, p.longitude), p.radiusMeters)
+                        placeRings[p.id] =
+                            MapPlaceRing(LatLng(p.latitude, p.longitude), p.radiusMeters)
                     }
                 }
             }

@@ -120,21 +120,44 @@ class OnboardingViewModel @Inject constructor(
     fun beginRestore(uri: Uri, activityContext: Context) = viewModelScope.launch {
         val info = backupRepository.cryptoInfoAt(uri)
         if (info == null) {
-            controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.action_restore), appContext.getString(R.string.restore_no_backup))
+            controller.fail(
+                ManagedKind.RESTORE,
+                appContext.getString(R.string.action_restore),
+                appContext.getString(R.string.restore_no_backup)
+            )
             return@launch
         }
         when (info.mode) {
             BackupEncryption.NONE -> controller.startRestore(uri, null, null)
-            BackupEncryption.PASSWORD -> { pendingRestoreUri = uri; restoreNeedsPassword.value = true }
+            BackupEncryption.PASSWORD -> {
+                pendingRestoreUri = uri; restoreNeedsPassword.value = true
+            }
+
             BackupEncryption.PASSKEY -> {
                 val salt = info.prfSalt
                 if (salt == null) {
-                    controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.action_restore), appContext.getString(R.string.restore_missing_salt))
+                    controller.fail(
+                        ManagedKind.RESTORE,
+                        appContext.getString(R.string.action_restore),
+                        appContext.getString(R.string.restore_missing_salt)
+                    )
                     return@launch
                 }
-                runCatching { passkeyManager.obtainForRestore(activityContext, salt, info.credentialId) }
+                runCatching {
+                    passkeyManager.obtainForRestore(
+                        activityContext,
+                        salt,
+                        info.credentialId
+                    )
+                }
                     .onSuccess { controller.startRestore(uri, null, it.secret) }
-                    .onFailure { controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_unlock_failed)) }
+                    .onFailure {
+                        controller.fail(
+                            ManagedKind.RESTORE,
+                            appContext.getString(R.string.passkey_label),
+                            it.message ?: appContext.getString(R.string.passkey_unlock_failed)
+                        )
+                    }
             }
         }
     }
@@ -193,7 +216,8 @@ fun OnboardingScreen(
 
     // Advance automatically as each permission phase is granted.
     LaunchedEffect(permissions.granted) {
-        if (step == OnboardingStep.PERMISSIONS && permissions.granted) step = OnboardingStep.BACKGROUND
+        if (step == OnboardingStep.PERMISSIONS && permissions.granted) step =
+            OnboardingStep.BACKGROUND
     }
     LaunchedEffect(permissions.backgroundGranted) {
         if (step == OnboardingStep.BACKGROUND && permissions.backgroundGranted) onFinish(permissions.granted)
@@ -201,11 +225,17 @@ fun OnboardingScreen(
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 28.dp, vertical = 24.dp),
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .padding(horizontal = 28.dp, vertical = 24.dp),
         ) {
             StepDots(step.ordinal, OnboardingStep.entries.size, Modifier.padding(bottom = 8.dp))
             Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -224,12 +254,15 @@ fun OnboardingScreen(
             // Primary / secondary actions per step.
             when (step) {
                 OnboardingStep.WELCOME -> {
-                    PrimaryButton(stringResource(R.string.action_get_started)) { step = OnboardingStep.PERMISSIONS }
+                    PrimaryButton(stringResource(R.string.action_get_started)) {
+                        step = OnboardingStep.PERMISSIONS
+                    }
                     TextButton(
                         onClick = { pickRestoreFolder.launch(null) },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(stringResource(R.string.action_restore_backup)) }
                 }
+
                 OnboardingStep.PERMISSIONS -> {
                     PrimaryButton(stringResource(if (permissions.granted) R.string.action_continue else R.string.action_allow_access)) {
                         if (permissions.granted) step = OnboardingStep.BACKGROUND
@@ -240,6 +273,7 @@ fun OnboardingScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(stringResource(R.string.action_not_now)) }
                 }
+
                 OnboardingStep.BACKGROUND -> {
                     PrimaryButton(stringResource(if (permissions.backgroundGranted) R.string.action_finish else R.string.action_allow_all_time)) {
                         if (permissions.backgroundGranted) onFinish(permissions.granted)
@@ -379,7 +413,9 @@ private fun PermissionContent(
 
 @Composable
 private fun PrimaryButton(label: String, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+    Button(onClick = onClick, modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 8.dp)) {
         Text(label)
     }
 }

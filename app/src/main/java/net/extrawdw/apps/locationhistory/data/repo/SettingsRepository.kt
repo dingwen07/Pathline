@@ -147,7 +147,8 @@ class SettingsRepository @Inject constructor(
     suspend fun setBackupEncryption(mode: BackupEncryption, cryptoHeaderJson: String?) {
         context.dataStore.edit {
             it[keyBackupEncryption] = mode.name
-            if (cryptoHeaderJson == null) it.remove(keyBackupHeader) else it[keyBackupHeader] = cryptoHeaderJson
+            if (cryptoHeaderJson == null) it.remove(keyBackupHeader) else it[keyBackupHeader] =
+                cryptoHeaderJson
         }
     }
 

@@ -92,7 +92,8 @@ class BackupViewModel @Inject constructor(
 
     fun folderLooksLikePathline(uri: Uri) = backupRepository.folderLooksLikePathline(uri)
 
-    suspend fun backupExists(uri: Uri, subdir: String?): Boolean = backupRepository.backupExistsAt(uri, subdir)
+    suspend fun backupExists(uri: Uri, subdir: String?): Boolean =
+        backupRepository.backupExistsAt(uri, subdir)
 
     /** Fresh setup: persist the destination with the chosen encryption applied to the first backup. */
     fun configure(uri: Uri, subdir: String?, choice: EncryptionChoice) {
@@ -100,14 +101,25 @@ class BackupViewModel @Inject constructor(
         workScheduler.schedulePeriodicBackup()
     }
 
-    fun configureWithPasskey(activityContext: Context, uri: Uri, subdir: String?) = viewModelScope.launch {
-        runCatching { passkeyManager.obtainForSetup(activityContext) }
-            .onSuccess {
-                controller.startConfigure(uri, subdir, EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId))
-                workScheduler.schedulePeriodicBackup()
-            }
-            .onFailure { controller.fail(ManagedKind.BACKUP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
-    }
+    fun configureWithPasskey(activityContext: Context, uri: Uri, subdir: String?) =
+        viewModelScope.launch {
+            runCatching { passkeyManager.obtainForSetup(activityContext) }
+                .onSuccess {
+                    controller.startConfigure(
+                        uri,
+                        subdir,
+                        EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)
+                    )
+                    workScheduler.schedulePeriodicBackup()
+                }
+                .onFailure {
+                    controller.fail(
+                        ManagedKind.BACKUP,
+                        appContext.getString(R.string.passkey_label),
+                        it.message ?: appContext.getString(R.string.passkey_setup_failed)
+                    )
+                }
+        }
 
     /** Change destination / reconnect an existing backup, keeping its current encryption. */
     fun reconfigure(uri: Uri, subdir: String?) {
@@ -141,17 +153,45 @@ class BackupViewModel @Inject constructor(
 
     fun enablePasskey(activityContext: Context) = viewModelScope.launch {
         runCatching { passkeyManager.obtainForSetup(activityContext) }
-            .onSuccess { controller.startEnablePasskey(EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)) }
-            .onFailure { controller.fail(ManagedKind.BACKUP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
+            .onSuccess {
+                controller.startEnablePasskey(
+                    EncryptionChoice.Passkey(
+                        it.secret,
+                        it.salt,
+                        it.credentialId
+                    )
+                )
+            }
+            .onFailure {
+                controller.fail(
+                    ManagedKind.BACKUP,
+                    appContext.getString(R.string.passkey_label),
+                    it.message ?: appContext.getString(R.string.passkey_setup_failed)
+                )
+            }
     }
 
-    fun dump(uri: Uri, subdir: String?, choice: EncryptionChoice) = controller.startDump(uri, subdir, choice)
+    fun dump(uri: Uri, subdir: String?, choice: EncryptionChoice) =
+        controller.startDump(uri, subdir, choice)
 
-    fun dumpWithPasskey(activityContext: Context, uri: Uri, subdir: String?) = viewModelScope.launch {
-        runCatching { passkeyManager.obtainForSetup(activityContext) }
-            .onSuccess { controller.startDump(uri, subdir, EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)) }
-            .onFailure { controller.fail(ManagedKind.DUMP, appContext.getString(R.string.passkey_label), it.message ?: appContext.getString(R.string.passkey_setup_failed)) }
-    }
+    fun dumpWithPasskey(activityContext: Context, uri: Uri, subdir: String?) =
+        viewModelScope.launch {
+            runCatching { passkeyManager.obtainForSetup(activityContext) }
+                .onSuccess {
+                    controller.startDump(
+                        uri,
+                        subdir,
+                        EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)
+                    )
+                }
+                .onFailure {
+                    controller.fail(
+                        ManagedKind.DUMP,
+                        appContext.getString(R.string.passkey_label),
+                        it.message ?: appContext.getString(R.string.passkey_setup_failed)
+                    )
+                }
+        }
 }
 
 /** Backup section of the Settings screen. */
@@ -166,12 +206,14 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
     var showEncryptionChooser by remember { mutableStateOf(false) }
     var showPasswordDialog by remember { mutableStateOf(false) }
 
-    val pickBackupFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-        it?.let { uri -> pendingBackupUri = uri }
-    }
-    val pickDumpFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-        it?.let { uri -> pendingDumpUri = uri }
-    }
+    val pickBackupFolder =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+            it?.let { uri -> pendingBackupUri = uri }
+        }
+    val pickDumpFolder =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+            it?.let { uri -> pendingDumpUri = uri }
+        }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -193,16 +235,26 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                 val dest = remember(cfg.treeUri, cfg.subdir) {
                     SafDestination.describe(activity, cfg.treeUri, cfg.subdir)
                 }
-                Text(stringResource(R.string.backup_dest, dest), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(R.string.backup_dest, dest),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 if (cfg.lastBackupMs > 0) {
                     Text(
-                        stringResource(R.string.backup_last, DateFormat.getDateTimeInstance().format(Date(cfg.lastBackupMs))),
+                        stringResource(
+                            R.string.backup_last,
+                            DateFormat.getDateTimeInstance().format(Date(cfg.lastBackupMs))
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = viewModel::backupNow) { Text(stringResource(R.string.backup_now)) }
-                    OutlinedButton(onClick = { pickBackupFolder.launch(null) }) { Text(stringResource(R.string.backup_change_reconnect)) }
+                    OutlinedButton(onClick = { pickBackupFolder.launch(null) }) {
+                        Text(
+                            stringResource(R.string.backup_change_reconnect)
+                        )
+                    }
                 }
 
                 EncryptionRow(
@@ -232,9 +284,27 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                 encryptText = stringResource(R.string.encrypt_chooser_text),
                 passwordTitle = stringResource(R.string.backup_set_password_title),
                 passwordConfirmLabel = stringResource(R.string.action_encrypt),
-                onNone = { subdir -> pendingBackupUri = null; viewModel.configure(uri, subdir, EncryptionChoice.None) },
-                onPassword = { subdir, pw -> pendingBackupUri = null; viewModel.configure(uri, subdir, EncryptionChoice.Password(pw)) },
-                onPasskey = { subdir -> pendingBackupUri = null; viewModel.configureWithPasskey(activity, uri, subdir) },
+                onNone = { subdir ->
+                    pendingBackupUri = null; viewModel.configure(
+                    uri,
+                    subdir,
+                    EncryptionChoice.None
+                )
+                },
+                onPassword = { subdir, pw ->
+                    pendingBackupUri = null; viewModel.configure(
+                    uri,
+                    subdir,
+                    EncryptionChoice.Password(pw)
+                )
+                },
+                onPasskey = { subdir ->
+                    pendingBackupUri = null; viewModel.configureWithPasskey(
+                    activity,
+                    uri,
+                    subdir
+                )
+                },
                 onDismiss = { pendingBackupUri = null },
             )
         } else {
@@ -243,7 +313,12 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                 treeUri = uri,
                 defaultLooksLikePathline = viewModel.folderLooksLikePathline(uri),
                 checkExists = { sub -> viewModel.backupExists(uri, sub) },
-                onConfirm = { subdir -> pendingBackupUri = null; viewModel.reconfigure(uri, subdir) },
+                onConfirm = { subdir ->
+                    pendingBackupUri = null; viewModel.reconfigure(
+                    uri,
+                    subdir
+                )
+                },
                 onDismiss = { pendingBackupUri = null },
             )
         }
@@ -277,9 +352,27 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
             encryptText = stringResource(R.string.dump_encrypt_text),
             passwordTitle = stringResource(R.string.dump_password_title),
             passwordConfirmLabel = stringResource(R.string.action_dump),
-            onNone = { subdir -> pendingDumpUri = null; viewModel.dump(uri, subdir, EncryptionChoice.None) },
-            onPassword = { subdir, pw -> pendingDumpUri = null; viewModel.dump(uri, subdir, EncryptionChoice.Password(pw)) },
-            onPasskey = { subdir -> pendingDumpUri = null; viewModel.dumpWithPasskey(activity, uri, subdir) },
+            onNone = { subdir ->
+                pendingDumpUri = null; viewModel.dump(
+                uri,
+                subdir,
+                EncryptionChoice.None
+            )
+            },
+            onPassword = { subdir, pw ->
+                pendingDumpUri = null; viewModel.dump(
+                uri,
+                subdir,
+                EncryptionChoice.Password(pw)
+            )
+            },
+            onPasskey = { subdir ->
+                pendingDumpUri = null; viewModel.dumpWithPasskey(
+                activity,
+                uri,
+                subdir
+            )
+            },
             onDismiss = { pendingDumpUri = null },
         )
     }
@@ -302,12 +395,14 @@ fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
     val context = LocalContext.current
     var pendingExportUri by remember { mutableStateOf<Uri?>(null) }
 
-    val pickAutoFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-        it?.let { uri -> viewModel.configureGpx(uri) }
-    }
-    val pickExportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-        it?.let { uri -> pendingExportUri = uri }
-    }
+    val pickAutoFolder =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+            it?.let { uri -> viewModel.configureGpx(uri) }
+        }
+    val pickExportFolder =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+            it?.let { uri -> pendingExportUri = uri }
+        }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -326,19 +421,35 @@ fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
             )
 
             if (cfg?.treeUri == null) {
-                Text(stringResource(R.string.gpx_auto_intro), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(R.string.gpx_auto_intro),
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
-                val dest = remember(cfg.treeUri) { SafDestination.describe(context, cfg.treeUri, null) }
-                Text(stringResource(R.string.gpx_dest, dest), style = MaterialTheme.typography.bodySmall)
+                val dest =
+                    remember(cfg.treeUri) { SafDestination.describe(context, cfg.treeUri, null) }
+                Text(
+                    stringResource(R.string.gpx_dest, dest),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 if (cfg.lastExportMs > 0) {
                     Text(
-                        stringResource(R.string.gpx_last, DateFormat.getDateTimeInstance().format(Date(cfg.lastExportMs))),
+                        stringResource(
+                            R.string.gpx_last,
+                            DateFormat.getDateTimeInstance().format(Date(cfg.lastExportMs))
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = viewModel::gpxExportNow) { Text(stringResource(R.string.gpx_export_now)) }
-                    OutlinedButton(onClick = { pickAutoFolder.launch(null) }) { Text(stringResource(R.string.backup_change_reconnect)) }
+                    OutlinedButton(onClick = { pickAutoFolder.launch(null) }) {
+                        Text(
+                            stringResource(
+                                R.string.backup_change_reconnect
+                            )
+                        )
+                    }
                 }
             }
 
@@ -354,7 +465,12 @@ fun GpxCard(viewModel: BackupViewModel = hiltViewModel()) {
     pendingExportUri?.let { uri ->
         GpxRangeDialog(
             onAll = { pendingExportUri = null; viewModel.gpxExport(uri, GpxRange.All) },
-            onRange = { startDay, endExclusive -> pendingExportUri = null; viewModel.gpxExport(uri, GpxRange.Days(startDay, endExclusive)) },
+            onRange = { startDay, endExclusive ->
+                pendingExportUri = null; viewModel.gpxExport(
+                uri,
+                GpxRange.Days(startDay, endExclusive)
+            )
+            },
             onDismiss = { pendingExportUri = null },
         )
     }
@@ -379,7 +495,11 @@ private fun GpxRangeDialog(
             title = { Text(stringResource(R.string.gpx_range_title)) },
             text = { Text(stringResource(R.string.gpx_range_text)) },
             confirmButton = { TextButton(onClick = onAll) { Text(stringResource(R.string.gpx_range_all)) } },
-            dismissButton = { TextButton(onClick = { pickRange = true }) { Text(stringResource(R.string.gpx_range_pick)) } },
+            dismissButton = {
+                TextButton(onClick = {
+                    pickRange = true
+                }) { Text(stringResource(R.string.gpx_range_pick)) }
+            },
         )
     } else {
         val state = rememberDateRangePickerState()
@@ -392,7 +512,10 @@ private fun GpxRangeDialog(
                     enabled = start != null && end != null,
                     onClick = {
                         if (start != null && end != null) {
-                            onRange(Math.floorDiv(start, MILLIS_PER_DAY), Math.floorDiv(end, MILLIS_PER_DAY) + 1)
+                            onRange(
+                                Math.floorDiv(start, MILLIS_PER_DAY),
+                                Math.floorDiv(end, MILLIS_PER_DAY) + 1
+                            )
                         }
                     },
                 ) { Text(stringResource(R.string.action_export)) }
@@ -408,7 +531,11 @@ private const val MILLIS_PER_DAY = 86_400_000L
 
 /** Title + master on/off switch shown at the top of the backup and GPX cards. */
 @Composable
-private fun MasterSwitchHeader(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun MasterSwitchHeader(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -422,12 +549,17 @@ private fun MasterSwitchHeader(title: String, checked: Boolean, onCheckedChange:
 @Composable
 private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOff: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(top = 4.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.encrypt_title), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(R.string.encrypt_title),
+                style = MaterialTheme.typography.bodyMedium
+            )
             Text(
                 stringResource(
                     when (mode) {
@@ -447,7 +579,11 @@ private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOf
 }
 
 @Composable
-private fun EncryptionChooserDialog(onPassword: () -> Unit, onPasskey: () -> Unit, onDismiss: () -> Unit) {
+private fun EncryptionChooserDialog(
+    onPassword: () -> Unit,
+    onPasskey: () -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.encrypt_title)) },
@@ -494,6 +630,7 @@ private fun EncryptionSetupFlow(
             onConfirm = { s -> subdir = s; subdirChosen = true },
             onDismiss = onDismiss,
         )
+
         passwordFor -> PasswordDialog(
             title = passwordTitle,
             confirmLabel = passwordConfirmLabel,
@@ -501,11 +638,16 @@ private fun EncryptionSetupFlow(
             onConfirm = { pw -> onPassword(subdir, pw) },
             onDismiss = onDismiss,
         )
+
         else -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(encryptTitle) },
             text = { Text(encryptText) },
-            confirmButton = { TextButton(onClick = { passwordFor = true }) { Text(stringResource(R.string.action_password)) } },
+            confirmButton = {
+                TextButton(onClick = {
+                    passwordFor = true
+                }) { Text(stringResource(R.string.action_password)) }
+            },
             dismissButton = {
                 Row {
                     TextButton(onClick = { onPasskey(subdir) }) { Text(stringResource(R.string.action_passkey)) }
@@ -529,7 +671,8 @@ fun SubdirDialog(
     onDismiss: () -> Unit,
     checkExists: (suspend (String?) -> Boolean)? = null,
 ) {
-    val folderName = treeUri.lastPathSegment?.substringAfterLast('/') ?: stringResource(R.string.backup_folder_fallback)
+    val folderName = treeUri.lastPathSegment?.substringAfterLast('/')
+        ?: stringResource(R.string.backup_folder_fallback)
     val defaultSubdir = stringResource(R.string.backup_default_subdir)
     var subdir by remember(treeUri) { mutableStateOf(if (defaultLooksLikePathline) "" else defaultSubdir) }
     var exists by remember(treeUri) { mutableStateOf(false) }
@@ -544,7 +687,10 @@ fun SubdirDialog(
         title = { Text(stringResource(R.string.backup_location_title)) },
         text = {
             Column {
-                Text(stringResource(R.string.backup_files_written), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    stringResource(R.string.backup_files_written),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Text(
                     folderName + (if (subdir.isBlank()) " /" else " / $subdir /"),
                     style = MaterialTheme.typography.bodyMedium,
@@ -554,7 +700,9 @@ fun SubdirDialog(
                     onValueChange = { subdir = it },
                     label = { Text(stringResource(R.string.backup_subfolder_label)) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                 )
                 if (exists) {
                     Text(
@@ -623,7 +771,9 @@ fun PasswordDialog(
                     visualTransformation = transformation,
                     keyboardOptions = keyboard,
                     trailingIcon = revealToggle,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                 )
                 if (requireConfirm) {
                     OutlinedTextField(
@@ -635,7 +785,9 @@ fun PasswordDialog(
                         visualTransformation = transformation,
                         keyboardOptions = keyboard,
                         trailingIcon = revealToggle,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                     )
                     if (mismatch) {
                         Text(
@@ -647,7 +799,12 @@ fun PasswordDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text.toCharArray()) }, enabled = valid) { Text(confirmLabel) } },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(text.toCharArray()) },
+                enabled = valid
+            ) { Text(confirmLabel) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
@@ -672,13 +829,19 @@ fun ManagedOperationSheet(state: ManagedState, onClose: () -> Unit) {
                 if (state.progress < 0f) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else {
-                    LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
+                    LinearProgressIndicator(
+                        progress = { state.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 val scroll = rememberScrollState()
                 LaunchedEffect(state.logs.size) { scroll.animateScrollTo(scroll.maxValue) }
                 Column(
-                    Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).verticalScroll(scroll),
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 260.dp)
+                        .verticalScroll(scroll),
                 ) {
                     state.logs.forEach { line ->
                         Text(line, style = MaterialTheme.typography.bodySmall)

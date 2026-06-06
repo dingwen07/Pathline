@@ -36,8 +36,10 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class LocationRecorderService : LifecycleService() {
 
-    @Inject lateinit var controller: RecordingController
-    @Inject lateinit var serviceController: RecorderServiceController
+    @Inject
+    lateinit var controller: RecordingController
+    @Inject
+    lateinit var serviceController: RecorderServiceController
 
     private val fusedClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(this)
@@ -77,6 +79,7 @@ class LocationRecorderService : LifecycleService() {
                 stopUpdatesAndSelf()
                 return START_NOT_STICKY
             }
+
             else -> if (!startRecording(intent)) return START_NOT_STICKY
         }
         // The system delivers updates via PendingIntent; if killed, AR/geofence will restart us.
@@ -199,7 +202,10 @@ class LocationRecorderService : LifecycleService() {
     private fun registerIdleReceiver() {
         if (idleReceiverRegistered) return
         runCatching {
-            registerReceiver(idleReceiver, IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED))
+            registerReceiver(
+                idleReceiver,
+                IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+            )
             idleReceiverRegistered = true
         }.onFailure { AppLog.w(TAG, "idle receiver registration failed: ${it.message}") }
     }
@@ -217,7 +223,7 @@ class LocationRecorderService : LifecycleService() {
 
     private fun hasLocationPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
 
     companion object {
         const val ACTION_STOP = "net.extrawdw.apps.locationhistory.STOP_RECORDING"

@@ -25,6 +25,7 @@ import javax.inject.Singleton
 sealed interface BackupResult {
     data class Backed(val report: BackupReport) : BackupResult
     data class Restored(val report: RestoreReport) : BackupResult
+
     /** A GPX export completed, writing [count] week files. */
     data class Exported(val count: Int) : BackupResult
     data object NoDestination : BackupResult
@@ -36,6 +37,7 @@ sealed interface BackupResult {
 /** Date scope for a one-time GPX export. */
 sealed interface GpxRange {
     data object All : GpxRange
+
     /** Inclusive-start / exclusive-end dayEpoch. Whole weeks intersecting this range are exported. */
     data class Days(val startDay: Long, val endDayExclusive: Long) : GpxRange
 }
@@ -44,12 +46,18 @@ sealed interface GpxRange {
 sealed interface EncryptionChoice {
     data object None : EncryptionChoice
     data class Password(val password: CharArray) : EncryptionChoice
+
     /** A PRF secret already obtained from a passkey (the UI runs the ceremony; it needs an Activity). */
-    data class Passkey(val secret: ByteArray, val salt: ByteArray, val credentialId: String?) : EncryptionChoice
+    data class Passkey(val secret: ByteArray, val salt: ByteArray, val credentialId: String?) :
+        EncryptionChoice
 }
 
 /** Crypto descriptor of an existing backup, so the UI knows how to prompt for restore. */
-data class CryptoInfo(val mode: BackupEncryption, val prfSalt: ByteArray?, val credentialId: String?)
+data class CryptoInfo(
+    val mode: BackupEncryption,
+    val prfSalt: ByteArray?,
+    val credentialId: String?
+)
 
 /**
  * Application-facing entry point for the SAF backup feature. Owns crypto-material assembly, SAF
@@ -76,7 +84,12 @@ class BackupRepository @Inject constructor(
      * backup is already protected; when null (changing/reconnecting an existing destination) the
      * current encryption + cached DEK are kept as-is.
      */
-    suspend fun configureDestination(treeUri: Uri, subdir: String?, choice: EncryptionChoice?, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    suspend fun configureDestination(
+        treeUri: Uri,
+        subdir: String?,
+        choice: EncryptionChoice?,
+        reporter: BackupReporter = BackupReporter.None
+    ): BackupResult {
         persistPermission(treeUri, write = true)
         settings.setBackupTree(treeUri.toString(), subdir)
         if (choice != null) applyEncryptionChoice(choice)
@@ -96,13 +109,19 @@ class BackupRepository @Inject constructor(
     }
 
     /** Turn on password encryption: mint a DEK, wrap it for the password + cache both locally. */
-    suspend fun enablePasswordEncryption(password: CharArray, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    suspend fun enablePasswordEncryption(
+        password: CharArray,
+        reporter: BackupReporter = BackupReporter.None
+    ): BackupResult {
         applyEncryptionChoice(EncryptionChoice.Password(password))
         return performBackup(full = true, reporter = reporter) // re-encrypt under the new DEK
     }
 
     /** Turn on passkey (PRF) encryption from a secret the UI already obtained via the passkey ceremony. */
-    suspend fun enablePasskeyEncryption(choice: EncryptionChoice.Passkey, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    suspend fun enablePasskeyEncryption(
+        choice: EncryptionChoice.Passkey,
+        reporter: BackupReporter = BackupReporter.None
+    ): BackupResult {
         applyEncryptionChoice(choice)
         return performBackup(full = true, reporter = reporter)
     }
@@ -117,26 +136,42 @@ class BackupRepository @Inject constructor(
             keyVault.clear()
             settings.setBackupEncryption(BackupEncryption.NONE, null)
         }
+
         is EncryptionChoice.Password -> {
             val (header, dek) = BackupCrypto.createPasswordHeader(choice.password)
             keyVault.store(dek)
             keyVault.storePassword(choice.password)
-            settings.setBackupEncryption(BackupEncryption.PASSWORD, json.encodeToString(CryptoHeader.serializer(), header))
+            settings.setBackupEncryption(
+                BackupEncryption.PASSWORD,
+                json.encodeToString(CryptoHeader.serializer(), header)
+            )
         }
+
         is EncryptionChoice.Passkey -> {
-            val (header, dek) = BackupCrypto.createPasskeyHeader(choice.secret, choice.salt, choice.credentialId)
+            val (header, dek) = BackupCrypto.createPasskeyHeader(
+                choice.secret,
+                choice.salt,
+                choice.credentialId
+            )
             keyVault.store(dek)
             keyVault.clearPasswordOnly()
-            settings.setBackupEncryption(BackupEncryption.PASSKEY, json.encodeToString(CryptoHeader.serializer(), header))
+            settings.setBackupEncryption(
+                BackupEncryption.PASSKEY,
+                json.encodeToString(CryptoHeader.serializer(), header)
+            )
         }
     }
 
     // --- Running backups ---------------------------------------------------------------------
 
     suspend fun runScheduledBackup(): BackupResult = performBackup(full = false)
-    suspend fun runManagedBackup(reporter: BackupReporter): BackupResult = performBackup(full = false, reporter = reporter)
+    suspend fun runManagedBackup(reporter: BackupReporter): BackupResult =
+        performBackup(full = false, reporter = reporter)
 
-    private suspend fun performBackup(full: Boolean, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    private suspend fun performBackup(
+        full: Boolean,
+        reporter: BackupReporter = BackupReporter.None
+    ): BackupResult {
         val cfg = settings.backupConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
         val tree = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
@@ -169,7 +204,10 @@ class BackupRepository @Inject constructor(
     val gpxConfig: Flow<GpxConfig> get() = settings.gpxConfig
 
     /** Persist a dedicated GPX destination and write an initial full export of every week. */
-    suspend fun configureGpx(treeUri: Uri, reporter: BackupReporter = BackupReporter.None): BackupResult {
+    suspend fun configureGpx(
+        treeUri: Uri,
+        reporter: BackupReporter = BackupReporter.None
+    ): BackupResult {
         persistPermission(treeUri, write = true)
         settings.setGpxTree(treeUri.toString()) // also resets the last-export watermark -> full export
         return performGpxExport(reporter)
@@ -179,7 +217,8 @@ class BackupRepository @Inject constructor(
     suspend fun disableGpx() = settings.setGpxTree(null)
 
     suspend fun runScheduledGpxExport(): BackupResult = performGpxExport(BackupReporter.None)
-    suspend fun runManagedGpxExport(reporter: BackupReporter): BackupResult = performGpxExport(reporter)
+    suspend fun runManagedGpxExport(reporter: BackupReporter): BackupResult =
+        performGpxExport(reporter)
 
     /** Export to the configured GPX tree: every week on the first run, only changed weeks after. */
     private suspend fun performGpxExport(reporter: BackupReporter): BackupResult {
@@ -188,7 +227,8 @@ class BackupRepository @Inject constructor(
         val dir = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
         return try {
             val now = System.currentTimeMillis()
-            val weeks = if (cfg.lastExportMs <= 0L) null else backupDao.sampleWeeksSince(cfg.lastExportMs)
+            val weeks =
+                if (cfg.lastExportMs <= 0L) null else backupDao.sampleWeeksSince(cfg.lastExportMs)
             reporter.log("Exporting GPX…")
             val n = engine.exportGpx(dir, weeks, reporter)
             settings.setGpxLastExport(now)
@@ -203,13 +243,20 @@ class BackupRepository @Inject constructor(
      * One-time GPX export to a freshly-picked folder, independent of the configured destination and
      * its watermark. [range] selects all dates or whole weeks intersecting a dayEpoch range.
      */
-    suspend fun oneTimeGpxExport(treeUri: Uri, range: GpxRange, reporter: BackupReporter): BackupResult {
+    suspend fun oneTimeGpxExport(
+        treeUri: Uri,
+        range: GpxRange,
+        reporter: BackupReporter
+    ): BackupResult {
         persistPermission(treeUri, write = true)
         val dir = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
         return try {
             val weeks = when (range) {
                 GpxRange.All -> null
-                is GpxRange.Days -> backupDao.sampleWeeksInDays(range.startDay, range.endDayExclusive)
+                is GpxRange.Days -> backupDao.sampleWeeksInDays(
+                    range.startDay,
+                    range.endDayExclusive
+                )
             }
             reporter.log("Exporting GPX…")
             BackupResult.Exported(engine.exportGpx(dir, weeks, reporter))
@@ -224,7 +271,12 @@ class BackupRepository @Inject constructor(
      * Write a complete standalone snapshot to [treeUri]/[subdir] once, with the chosen encryption.
      * Independent of the configured destination, its DEK, and the dirty set.
      */
-    suspend fun oneTimeDump(treeUri: Uri, subdir: String?, choice: EncryptionChoice, reporter: BackupReporter): BackupResult {
+    suspend fun oneTimeDump(
+        treeUri: Uri,
+        subdir: String?,
+        choice: EncryptionChoice,
+        reporter: BackupReporter
+    ): BackupResult {
         persistPermission(treeUri, write = true)
         val tree = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
         val root = rootDir(tree, subdir)
@@ -232,11 +284,24 @@ class BackupRepository @Inject constructor(
             EncryptionChoice.None -> BackupEngine.Material(BackupCrypto.plaintextHeader(), null)
             is EncryptionChoice.Password -> BackupCrypto.createPasswordHeader(choice.password)
                 .let { (h, dek) -> BackupEngine.Material(h, dek) }
-            is EncryptionChoice.Passkey -> BackupCrypto.createPasskeyHeader(choice.secret, choice.salt, choice.credentialId)
+
+            is EncryptionChoice.Passkey -> BackupCrypto.createPasskeyHeader(
+                choice.secret,
+                choice.salt,
+                choice.credentialId
+            )
                 .let { (h, dek) -> BackupEngine.Material(h, dek) }
         }
         return try {
-            BackupResult.Backed(engine.runFull(root, material, System.currentTimeMillis(), clearDirtyAfter = false, reporter = reporter))
+            BackupResult.Backed(
+                engine.runFull(
+                    root,
+                    material,
+                    System.currentTimeMillis(),
+                    clearDirtyAfter = false,
+                    reporter = reporter
+                )
+            )
         } catch (t: Throwable) {
             BackupResult.Error(t.message ?: "dump failed")
         }
@@ -247,9 +312,15 @@ class BackupRepository @Inject constructor(
      * Supply [password] / [prfSecret] matching the backup's encryption; a password backup falls back
      * to the locally-stored password on the same device.
      */
-    suspend fun restoreFrom(treeUri: Uri, password: CharArray?, prfSecret: ByteArray?, reporter: BackupReporter): BackupResult {
+    suspend fun restoreFrom(
+        treeUri: Uri,
+        password: CharArray?,
+        prfSecret: ByteArray?,
+        reporter: BackupReporter
+    ): BackupResult {
         persistPermission(treeUri, write = true)
-        val tree = safStore.open(treeUri) ?: return BackupResult.Error("cannot read the selected folder")
+        val tree =
+            safStore.open(treeUri) ?: return BackupResult.Error("cannot read the selected folder")
         val pwd = password ?: keyVault.localPassword()
         return try {
             BackupResult.Restored(engine.restore(tree, pwd, prfSecret, reporter))
@@ -300,10 +371,18 @@ class BackupRepository @Inject constructor(
         BackupEncryption.PASSWORD -> {
             val header = parseHeader(cfg) ?: return null
             val dek = keyVault.localDek()
-                ?: keyVault.localPassword()?.let { runCatching { BackupCrypto.openDek(header, password = it) }.getOrNull() }
+                ?: keyVault.localPassword()?.let {
+                    runCatching {
+                        BackupCrypto.openDek(
+                            header,
+                            password = it
+                        )
+                    }.getOrNull()
+                }
                 ?: return null
             BackupEngine.Material(header, dek)
         }
+
         BackupEncryption.PASSKEY -> {
             val header = parseHeader(cfg) ?: return null
             // The background worker can't run a passkey ceremony — it relies on the cached DEK.
@@ -318,7 +397,7 @@ class BackupRepository @Inject constructor(
 
     private fun persistPermission(uri: Uri, write: Boolean) {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0
+                if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0
         runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
             .onFailure { AppLog.w(TAG, "could not persist SAF permission: ${it.message}") }
     }

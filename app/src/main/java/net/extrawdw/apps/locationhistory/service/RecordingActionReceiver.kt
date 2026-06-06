@@ -20,7 +20,8 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class RecordingActionReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var controller: RecordingController
+    @Inject
+    lateinit var controller: RecordingController
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action

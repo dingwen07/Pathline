@@ -89,7 +89,7 @@ class WorkScheduler @Inject constructor(
      */
     suspend fun maybeScheduleTraining() {
         val pending = trainingRepository.unconsumedStateCount() +
-            trainingRepository.unconsumedTransportCount()
+                trainingRepository.unconsumedTransportCount()
         if (pending >= Constants.RETRAIN_EXAMPLE_THRESHOLD) scheduleTrainingNow()
     }
 
@@ -130,7 +130,9 @@ class WorkScheduler @Inject constructor(
     /** Run an incremental backup as soon as constraints allow (after a manual "Back up now"). */
     fun enqueueBackupNow() {
         val request = OneTimeWorkRequestBuilder<BackupWorker>()
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniqueWork(WORK_BACKUP_NOW, ExistingWorkPolicy.REPLACE, request)
@@ -143,6 +145,7 @@ class WorkScheduler @Inject constructor(
         const val WORK_BACKUP_NOW = "saf-backup-now"
 
         fun timelineMaintenanceWorkName(dayEpoch: Long): String = "timeline-maintenance-$dayEpoch"
-        fun timelineMaintenanceNowWorkName(dayEpoch: Long): String = "timeline-maintenance-now-$dayEpoch"
+        fun timelineMaintenanceNowWorkName(dayEpoch: Long): String =
+            "timeline-maintenance-now-$dayEpoch"
     }
 }

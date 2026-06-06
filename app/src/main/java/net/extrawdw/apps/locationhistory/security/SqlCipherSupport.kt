@@ -59,7 +59,11 @@ object SqlCipherSupport {
     }
 
     private fun sidecars(dbFile: File): List<File> =
-        listOf(File(dbFile.path + "-wal"), File(dbFile.path + "-shm"), File(dbFile.path + "-journal"))
+        listOf(
+            File(dbFile.path + "-wal"),
+            File(dbFile.path + "-shm"),
+            File(dbFile.path + "-journal")
+        )
 
     /** The 16-byte SQLite header magic: "SQLite format 3" followed by a NUL byte. */
     private val SQLITE_MAGIC: ByteArray = "SQLite format 3".toByteArray(Charsets.US_ASCII) + 0x00

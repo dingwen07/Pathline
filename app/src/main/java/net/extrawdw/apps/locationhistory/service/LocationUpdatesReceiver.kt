@@ -15,7 +15,8 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class LocationUpdatesReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var controller: RecordingController
+    @Inject
+    lateinit var controller: RecordingController
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return

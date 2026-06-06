@@ -82,12 +82,21 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         // any already covered by a confirmed (ground-truth) visit.
         val candidates = visitDetector.detectVisits(samples)
             .filter { it.overlaps(dayStart, dayEnd) }
-            .filterNot { candidate -> confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } }
+            .filterNot { candidate ->
+                confirmedVisits.any {
+                    it.overlaps(
+                        candidate.startMs,
+                        candidate.endMs + 1
+                    )
+                }
+            }
             .toMutableList()
 
         ongoingStationaryCandidate(samples, dayStart, dayEnd, latest)?.let { ongoing ->
-            val overlapsDetected = candidates.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
-            val overlapsConfirmed = confirmedVisits.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
+            val overlapsDetected =
+                candidates.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
+            val overlapsConfirmed =
+                confirmedVisits.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
             if (!overlapsDetected && !overlapsConfirmed) candidates.add(ongoing)
         }
 
@@ -160,30 +169,32 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val fallbackLon = (match as? PlaceMatch.Local)?.place?.longitude ?: initialGeom.longitude
         val geom = VisitGeometry.compute(clean, fallbackLat, fallbackLon)
         val isOngoing = latest != null &&
-            latest.timestampMs in candidate.startMs..candidate.endMs &&
-            latest.devicePhysicalState == DevicePhysicalState.STATIONARY
+                latest.timestampMs in candidate.startMs..candidate.endMs &&
+                latest.devicePhysicalState == DevicePhysicalState.STATIONARY
 
-        return visitDao.insert(applyMatch(
-            VisitEntity(
-                placeId = null,
-                candidateName = null,
-                candidateGooglePlaceId = null,
-                candidateLatitude = null,
-                candidateLongitude = null,
-                startMs = candidate.startMs,
-                endMs = candidate.endMs,
-                dayEpoch = candidate.dayEpoch,
-                centroidLatitude = geom.latitude,
-                centroidLongitude = geom.longitude,
-                radiusMeters = geom.radiusMeters,
-                sampleCount = clean.size,
-                reliability = geom.reliability.toFloat(),
-                confirmed = false,
-                confidence = 0f,
-                isOngoing = isOngoing,
-            ),
-            match,
-        ))
+        return visitDao.insert(
+            applyMatch(
+                VisitEntity(
+                    placeId = null,
+                    candidateName = null,
+                    candidateGooglePlaceId = null,
+                    candidateLatitude = null,
+                    candidateLongitude = null,
+                    startMs = candidate.startMs,
+                    endMs = candidate.endMs,
+                    dayEpoch = candidate.dayEpoch,
+                    centroidLatitude = geom.latitude,
+                    centroidLongitude = geom.longitude,
+                    radiusMeters = geom.radiusMeters,
+                    sampleCount = clean.size,
+                    reliability = geom.reliability.toFloat(),
+                    confirmed = false,
+                    confidence = 0f,
+                    isOngoing = isOngoing,
+                ),
+                match,
+            )
+        )
     }
 
     /**
@@ -211,8 +222,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             current.centroidLatitude, current.centroidLongitude, latest.latitude, latest.longitude,
         ) <= maxOf(current.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
         val stillThere = latest.timestampMs >= current.startMs && latest.includedInComputation &&
-            latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
-            (latest.speed ?: 0f) <= 0.8f && nearby
+                latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
+                (latest.speed ?: 0f) <= 0.8f && nearby
         if (stillThere) {
             // Recompute the visit's own center/radius from its (now longer) sample span so the
             // visit circle stays accurate as the stay grows — this also feeds the place's
@@ -244,13 +255,14 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         dayEnd: Long,
         latest: LocationSampleEntity?,
     ): VisitCandidate? {
-        val latestInDay = samples.lastOrNull { it.timestampMs >= dayStart && it.timestampMs < dayEnd }
+        val latestInDay =
+            samples.lastOrNull { it.timestampMs >= dayStart && it.timestampMs < dayEnd }
         if (latest == null || latestInDay?.id != latest.id) return null
         if (!latest.includedInComputation || latest.devicePhysicalState != DevicePhysicalState.STATIONARY) return null
         val speed = latest.speed ?: 0f
         if (speed > 0.6f) return null
         val trustedStationary = latest.devicePhysicalStateConfidence >= 0.45f ||
-            latest.arActivity?.uppercase() == "STILL"
+                latest.arActivity?.uppercase() == "STILL"
         if (!trustedStationary) return null
 
         val tail = ArrayDeque<LocationSampleEntity>()
@@ -293,8 +305,17 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         if (latest == null || latest.devicePhysicalState == DevicePhysicalState.STATIONARY) return
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         val origin = visits.lastOrNull { it.endMs <= latest.timestampMs } ?: return
-        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
-        fillMovement(origin.endMs, latest.timestampMs, confirmedTrips, dayStart, dayEnd, origin.id, null)
+        val confirmedTrips =
+            tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+        fillMovement(
+            origin.endMs,
+            latest.timestampMs,
+            confirmedTrips,
+            dayStart,
+            dayEnd,
+            origin.id,
+            null
+        )
     }
 
     /**
@@ -307,7 +328,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private suspend fun rebuildTrips(loadStart: Long, loadEnd: Long, dayStart: Long, dayEnd: Long) {
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         if (visits.size < 2) return
-        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+        val confirmedTrips =
+            tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
         for (i in 0 until visits.lastIndex) {
             val from = visits[i]
             val to = visits[i + 1]
@@ -372,6 +394,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             // ground truth rows that should survive future rebuilds unchanged.
             confirmed = false,
         )
+
         is PlaceMatch.Candidate -> visit.copy(
             candidateName = match.candidate.name,
             candidateGooglePlaceId = match.candidate.googlePlaceId,
@@ -380,6 +403,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             confidence = match.confidence,
             confirmed = false,
         )
+
         PlaceMatch.None, null -> visit
     }
 
@@ -389,7 +413,10 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private fun VisitEntity.overlaps(startMs: Long, endMs: Long): Boolean =
         this.startMs < endMs && this.endMs > startMs
 
-    private fun List<LocationSampleEntity>.inRange(startMs: Long, endMs: Long): List<LocationSampleEntity> =
+    private fun List<LocationSampleEntity>.inRange(
+        startMs: Long,
+        endMs: Long
+    ): List<LocationSampleEntity> =
         filter { it.timestampMs >= startMs && it.timestampMs < endMs }
 
     companion object {

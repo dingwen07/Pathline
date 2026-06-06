@@ -54,7 +54,12 @@ class PasskeyManager @Inject constructor(
         // returns NoCredentialException with no UI when none exists, avoiding the confusing
         // "sign in another way" sheet), otherwise create a new one. Only an explicit cancel aborts.
         try {
-            return runAssert(activityContext, salt, requireCredentialId = null, preferImmediate = true)
+            return runAssert(
+                activityContext,
+                salt,
+                requireCredentialId = null,
+                preferImmediate = true
+            )
         } catch (e: GetCredentialCancellationException) {
             throw PasskeyException("Passkey setup was cancelled", e)
         } catch (e: NoCredentialException) {
@@ -70,9 +75,18 @@ class PasskeyManager @Inject constructor(
      * [credentialId] is known (from the backup's key slot) the request *requires that exact passkey*
      * via allowCredentials, so the right key is selected deterministically even if several exist.
      */
-    suspend fun obtainForRestore(activityContext: Context, salt: ByteArray, credentialId: String? = null): PasskeyPrf =
+    suspend fun obtainForRestore(
+        activityContext: Context,
+        salt: ByteArray,
+        credentialId: String? = null
+    ): PasskeyPrf =
         try {
-            runAssert(activityContext, salt, requireCredentialId = credentialId, preferImmediate = false)
+            runAssert(
+                activityContext,
+                salt,
+                requireCredentialId = credentialId,
+                preferImmediate = false
+            )
         } catch (e: GetCredentialException) {
             throw PasskeyException("Passkey unlock failed: ${e.message}", e)
         }
@@ -84,17 +98,23 @@ class PasskeyManager @Inject constructor(
         val options = JSONObject().apply {
             put("challenge", urlEnc.encodeToString(BackupCrypto.randomBytes(32)))
             put("rp", JSONObject().put("id", RP_ID).put("name", RP_NAME))
-            put("user", JSONObject()
-                .put("id", urlEnc.encodeToString(userId))
-                .put("name", USER_NAME)
-                .put("displayName", USER_DISPLAY))
-            put("pubKeyCredParams", JSONArray()
-                .put(JSONObject().put("type", "public-key").put("alg", -7))
-                .put(JSONObject().put("type", "public-key").put("alg", -257)))
-            put("authenticatorSelection", JSONObject()
-                .put("residentKey", "required")
-                .put("requireResidentKey", true)
-                .put("userVerification", "required"))
+            put(
+                "user", JSONObject()
+                    .put("id", urlEnc.encodeToString(userId))
+                    .put("name", USER_NAME)
+                    .put("displayName", USER_DISPLAY)
+            )
+            put(
+                "pubKeyCredParams", JSONArray()
+                    .put(JSONObject().put("type", "public-key").put("alg", -7))
+                    .put(JSONObject().put("type", "public-key").put("alg", -257))
+            )
+            put(
+                "authenticatorSelection", JSONObject()
+                    .put("residentKey", "required")
+                    .put("requireResidentKey", true)
+                    .put("userVerification", "required")
+            )
             put("extensions", prfExtension(salt))
         }
         val response = try {
@@ -125,7 +145,10 @@ class PasskeyManager @Inject constructor(
      * available (used for the silent reuse probe at setup).
      */
     private suspend fun runAssert(
-        activityContext: Context, salt: ByteArray, requireCredentialId: String?, preferImmediate: Boolean,
+        activityContext: Context,
+        salt: ByteArray,
+        requireCredentialId: String?,
+        preferImmediate: Boolean,
     ): PasskeyPrf {
         val options = JSONObject().apply {
             put("challenge", urlEnc.encodeToString(BackupCrypto.randomBytes(32)))
@@ -134,9 +157,11 @@ class PasskeyManager @Inject constructor(
             if (requireCredentialId != null) {
                 // Require this exact passkey (its PRF secret encrypted the backup); avoids the
                 // ambiguity of a discoverable picker when several Pathline passkeys exist.
-                put("allowCredentials", JSONArray().put(
-                    JSONObject().put("type", "public-key").put("id", requireCredentialId),
-                ))
+                put(
+                    "allowCredentials", JSONArray().put(
+                        JSONObject().put("type", "public-key").put("id", requireCredentialId),
+                    )
+                )
             }
             // else: discoverable — the platform offers the user's passkeys for this RP (setup/reuse).
             put("extensions", prfExtension(salt))
@@ -177,6 +202,7 @@ class PasskeyManager @Inject constructor(
     companion object {
         const val RP_ID = "locationhistory.apps.extrawdw.net"
         private const val RP_NAME = "Pathline"
+
         // Fixed, non-cosmetic identifiers. The user-facing label can be renamed by the user in their
         // password manager; we don't manage it. user.id stays a random opaque handle (below).
         private const val USER_NAME = "pathline-backup"

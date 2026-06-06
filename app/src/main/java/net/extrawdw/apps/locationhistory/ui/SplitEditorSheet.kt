@@ -64,9 +64,16 @@ fun SplitEditorPanel(
     onSplitIndexChange: (Int?) -> Unit = {},
     onReclassifyType: (SegmentType?) -> Unit = {},
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+    Column(Modifier
+        .fillMaxWidth()
+        .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.split_edit_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(
+                stringResource(R.string.split_edit_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
             TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) }
         }
 
@@ -74,49 +81,96 @@ fun SplitEditorPanel(
         if (samples.size < 2) {
             var whole by remember { mutableStateOf(initialType) }
             LaunchedEffect(whole) { onSplitIndexChange(null); onReclassifyType(whole) }
-            Text(stringResource(R.string.split_not_enough), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(R.string.split_not_enough),
+                style = MaterialTheme.typography.bodyMedium
+            )
             TypePicker(typeLabel, whole, Modifier.padding(top = 8.dp)) { whole = it }
-            Button(onClick = { onConvert(whole) }, modifier = Modifier.padding(top = 12.dp)) { Text(stringResource(R.string.action_apply)) }
+            Button(onClick = { onConvert(whole) }, modifier = Modifier.padding(top = 12.dp)) {
+                Text(
+                    stringResource(R.string.action_apply)
+                )
+            }
             return@Column
         }
 
         var splitMode by remember { mutableStateOf(true) }
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(splitMode, { splitMode = true }, { Text(stringResource(R.string.split_tab_split)) })
-            FilterChip(!splitMode, { splitMode = false }, { Text(stringResource(R.string.split_tab_reclassify)) })
+            FilterChip(
+                splitMode,
+                { splitMode = true },
+                { Text(stringResource(R.string.split_tab_split)) })
+            FilterChip(
+                !splitMode,
+                { splitMode = false },
+                { Text(stringResource(R.string.split_tab_reclassify)) })
         }
 
         if (!splitMode) {
             var whole by remember { mutableStateOf(initialType) }
             LaunchedEffect(whole) { onSplitIndexChange(null); onReclassifyType(whole) }
             TypePicker(typeLabel, whole, Modifier.padding(top = 16.dp)) { whole = it }
-            Button(onClick = { onConvert(whole) }, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.action_apply_whole)) }
+            Button(onClick = { onConvert(whole) }, modifier = Modifier.padding(top = 16.dp)) {
+                Text(
+                    stringResource(R.string.action_apply_whole)
+                )
+            }
             return@Column
         }
 
         var split by remember { mutableStateOf(samples.size / 2) }
         var leftType by remember { mutableStateOf(initialType) }
         var rightType by remember {
-            mutableStateOf(if (initialType == SegmentType.Stationary) SegmentType.Moving(TransportMode.WALKING) else SegmentType.Stationary)
+            mutableStateOf(
+                if (initialType == SegmentType.Stationary) SegmentType.Moving(
+                    TransportMode.WALKING
+                ) else SegmentType.Stationary
+            )
         }
         split = split.coerceIn(1, samples.size - 1)
         LaunchedEffect(split) { onReclassifyType(null); onSplitIndexChange(split) }
 
-        Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { if (split > 1) split-- }) { Icon(Icons.Filled.Remove, contentDescription = stringResource(R.string.cd_move_split_earlier)) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { if (split > 1) split-- }) {
+                Icon(
+                    Icons.Filled.Remove,
+                    contentDescription = stringResource(R.string.cd_move_split_earlier)
+                )
+            }
             Slider(
                 value = split.toFloat(),
                 onValueChange = { split = it.toInt().coerceIn(1, samples.size - 1) },
                 valueRange = 1f..(samples.size - 1).toFloat(),
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = { if (split < samples.size - 1) split++ }) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cd_move_split_later)) }
+            IconButton(onClick = { if (split < samples.size - 1) split++ }) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = stringResource(R.string.cd_move_split_later)
+                )
+            }
         }
 
-        SideCard(stringResource(R.string.split_before), samples.subList(0, split), leftType) { leftType = it }
-        SideCard(stringResource(R.string.split_after), samples.subList(split, samples.size), rightType) { rightType = it }
+        SideCard(
+            stringResource(R.string.split_before),
+            samples.subList(0, split),
+            leftType
+        ) { leftType = it }
+        SideCard(
+            stringResource(R.string.split_after),
+            samples.subList(split, samples.size),
+            rightType
+        ) { rightType = it }
 
-        Button(onClick = { onSplit(split, leftType, rightType) }, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.action_split_here)) }
+        Button(
+            onClick = { onSplit(split, leftType, rightType) },
+            modifier = Modifier.padding(top = 16.dp)
+        ) { Text(stringResource(R.string.action_split_here)) }
     }
 }
 
@@ -128,9 +182,15 @@ private fun SideCard(
     onType: (SegmentType) -> Unit,
 ) {
     val context = LocalContext.current
-    OutlinedCard(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+    OutlinedCard(Modifier
+        .fillMaxWidth()
+        .padding(top = 12.dp)) {
         Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
             if (span.isNotEmpty()) {
                 val start = span.first().timestampMs
                 val end = span.last().timestampMs
@@ -146,7 +206,12 @@ private fun SideCard(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            TypePicker(stringResource(R.string.field_type), type, Modifier.padding(top = 8.dp), onType)
+            TypePicker(
+                stringResource(R.string.field_type),
+                type,
+                Modifier.padding(top = 8.dp),
+                onType
+            )
         }
     }
 }
@@ -167,7 +232,9 @@ private fun TypePicker(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             TYPE_OPTIONS.forEach { option ->
-                DropdownMenuItem(text = { Text(option.label(context)) }, onClick = { open = false; onSelect(option) })
+                DropdownMenuItem(
+                    text = { Text(option.label(context)) },
+                    onClick = { open = false; onSelect(option) })
             }
         }
     }

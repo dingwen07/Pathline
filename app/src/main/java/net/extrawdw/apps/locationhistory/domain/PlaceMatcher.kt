@@ -56,7 +56,12 @@ class PlaceMatcher @Inject constructor(
         val box = Geo.boundingBox(lat, lon, Constants.PLACE_MATCH_RADIUS_METERS)
         return placeDao.inBoundingBox(box[0], box[1], box[2], box[3])
             .map { it to Geo.distanceMeters(lat, lon, it.latitude, it.longitude) }
-            .filter { it.second <= maxOf(Constants.PLACE_MATCH_RADIUS_METERS, it.first.radiusMeters) }
+            .filter {
+                it.second <= maxOf(
+                    Constants.PLACE_MATCH_RADIUS_METERS,
+                    it.first.radiusMeters
+                )
+            }
             .minByOrNull { it.second }
     }
 }

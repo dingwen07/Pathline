@@ -65,5 +65,6 @@ object TimeBuckets {
     }
 
     /** Inclusive-start / exclusive-end `dayEpoch` range covered by a week bucket. */
-    fun weekDayRange(weekStartDayEpoch: Long): LongRange = weekStartDayEpoch until (weekStartDayEpoch + 7)
+    fun weekDayRange(weekStartDayEpoch: Long): LongRange =
+        weekStartDayEpoch until (weekStartDayEpoch + 7)
 }

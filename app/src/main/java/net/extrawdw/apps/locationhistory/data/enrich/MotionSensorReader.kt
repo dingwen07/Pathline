@@ -50,6 +50,7 @@ class MotionSensorReader @Inject constructor(
                                 cont.resume(Unit)
                             }
                         }
+
                         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
                     }
                     listener = l

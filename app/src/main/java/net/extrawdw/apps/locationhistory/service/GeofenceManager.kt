@@ -34,7 +34,7 @@ class GeofenceManager @Inject constructor(
 
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
 
     /** Replace any existing dwell geofence with one centred on the stationary location. */
     @SuppressLint("MissingPermission")
@@ -86,7 +86,8 @@ class GeofenceManager @Inject constructor(
                 .setNotificationResponsiveness(Constants.DWELL_GEOFENCE_RESPONSIVENESS_MS)
                 .build()
         }
-        val request = GeofencingRequest.Builder().setInitialTrigger(0).addGeofences(geofences).build()
+        val request =
+            GeofencingRequest.Builder().setInitialTrigger(0).addGeofences(geofences).build()
         runCatching { client.addGeofences(request, pendingIntent()).await() }
     }
 

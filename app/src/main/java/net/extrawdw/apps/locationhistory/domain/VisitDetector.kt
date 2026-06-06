@@ -32,7 +32,10 @@ class VisitDetector @Inject constructor() {
     fun detectVisits(samples: List<LocationSampleEntity>): List<VisitCandidate> {
         val usable = samples
             .filter { it.includedInComputation }
-            .filter { (it.accuracy ?: Constants.SAMPLE_ACCURACY_GATE_METERS) <= Constants.SAMPLE_ACCURACY_GATE_METERS }
+            .filter {
+                (it.accuracy
+                    ?: Constants.SAMPLE_ACCURACY_GATE_METERS) <= Constants.SAMPLE_ACCURACY_GATE_METERS
+            }
         if (usable.isEmpty()) return emptyList()
 
         val visits = ArrayList<VisitCandidate>()

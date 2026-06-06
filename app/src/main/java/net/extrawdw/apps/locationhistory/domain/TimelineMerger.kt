@@ -43,7 +43,10 @@ class TimelineMerger @Inject constructor(
         // is generous enough for a heavily hand-fragmented day; once stable the final pass is a no-op.
         var guard = 0
         while (guard++ < 200 &&
-            (mergeAdjacentVisitsOnce(spanStartMs, spanEndMs) || mergeAdjacentTripsOnce(spanStartMs, spanEndMs))
+            (mergeAdjacentVisitsOnce(spanStartMs, spanEndMs) || mergeAdjacentTripsOnce(
+                spanStartMs,
+                spanEndMs
+            ))
         ) {
             // keep going
         }
@@ -100,7 +103,13 @@ class TimelineMerger @Inject constructor(
             // them (any movement worth showing would have left a trip). Keyed on time, not dayEpoch,
             // so a midnight-spanning stay finally collapses to a single row.
             val overlapsOrTouches = b.startMs <= a.endMs
-            if (overlapsOrTouches || !tripExistsBetween(spanStartMs, spanEndMs, a.endMs, b.startMs)) {
+            if (overlapsOrTouches || !tripExistsBetween(
+                    spanStartMs,
+                    spanEndMs,
+                    a.endMs,
+                    b.startMs
+                )
+            ) {
                 visitDao.update(mergedVisit(a, b))
                 visitDao.delete(b.id)
                 return true
@@ -124,7 +133,8 @@ class TimelineMerger @Inject constructor(
             // separate legs of the same mode (e.g. two walks with a stop between) and is left alone.
             if (b.startMs - a.endMs > Constants.MERGE_GAP_MS) continue
 
-            val points = Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
+            val points =
+                Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
             tripDao.update(
                 a.copy(
                     toVisitId = b.toVisitId ?: a.toVisitId,
@@ -145,6 +155,7 @@ class TimelineMerger @Inject constructor(
         a.placeId != null && a.placeId == b.placeId -> true
         a.placeId == null && b.placeId == null && a.candidateName != null ->
             a.candidateName == b.candidateName
+
         else -> false
     }
 
@@ -198,12 +209,14 @@ class TimelineMerger @Inject constructor(
         spanEndMs: Long,
         fromMs: Long,
         toMs: Long,
-    ): Boolean = tripDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
+    ): Boolean =
+        tripDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
 
     private suspend fun visitExistsBetween(
         spanStartMs: Long,
         spanEndMs: Long,
         fromMs: Long,
         toMs: Long,
-    ): Boolean = visitDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
+    ): Boolean =
+        visitDao.overlapping(spanStartMs, spanEndMs).any { it.startMs < toMs && it.endMs > fromMs }
 }

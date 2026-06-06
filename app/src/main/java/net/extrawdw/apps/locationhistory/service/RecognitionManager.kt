@@ -34,7 +34,7 @@ class RecognitionManager @Inject constructor(
 
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) ==
-            PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission")
     fun start(): Boolean {

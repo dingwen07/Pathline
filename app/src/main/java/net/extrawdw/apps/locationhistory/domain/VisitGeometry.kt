@@ -36,7 +36,12 @@ object VisitGeometry {
             .filter { (it.accuracy ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS }
             .ifEmpty { samples }
         if (good.isEmpty()) {
-            return StayGeometry(fallbackLat, fallbackLon, Constants.PLACE_MIN_RADIUS_METERS, reliability = 0.0)
+            return StayGeometry(
+                fallbackLat,
+                fallbackLon,
+                Constants.PLACE_MIN_RADIUS_METERS,
+                reliability = 0.0
+            )
         }
         val (lat, lon) = accuracyWeightedCentroid(good)
         val spread = percentileDistance(good, lat, lon, 0.68)
@@ -75,9 +80,9 @@ object VisitGeometry {
 
         val countScore = n / (n + Constants.VISIT_RELIABILITY_COUNT_REF)
         val accuracyScore = Constants.VISIT_RELIABILITY_ACCURACY_REF_M /
-            (Constants.VISIT_RELIABILITY_ACCURACY_REF_M + medianAccuracy.coerceAtLeast(0.0))
+                (Constants.VISIT_RELIABILITY_ACCURACY_REF_M + medianAccuracy.coerceAtLeast(0.0))
         val dispersionScore = Constants.VISIT_RELIABILITY_DISPERSION_REF_M /
-            (Constants.VISIT_RELIABILITY_DISPERSION_REF_M + sigma)
+                (Constants.VISIT_RELIABILITY_DISPERSION_REF_M + sigma)
         val durationScore = durationMs / (durationMs + Constants.VISIT_RELIABILITY_DURATION_REF_MS)
 
         return (countScore * accuracyScore * dispersionScore * durationScore)
@@ -95,7 +100,9 @@ object VisitGeometry {
     }
 
     fun accuracyWeightedCentroid(samples: List<LocationSampleEntity>): Pair<Double, Double> {
-        var sumW = 0.0; var sumLat = 0.0; var sumLon = 0.0
+        var sumW = 0.0;
+        var sumLat = 0.0;
+        var sumLon = 0.0
         for (s in samples) {
             val acc = (s.accuracy ?: 30f).coerceAtLeast(5f)
             val w = 1.0 / (acc * acc)

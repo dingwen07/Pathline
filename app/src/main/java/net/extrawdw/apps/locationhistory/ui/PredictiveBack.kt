@@ -36,7 +36,10 @@ fun rememberPredictiveBackProgress(enabled: Boolean = true, onDismiss: () -> Uni
         }
     }
 
-    return animateFloatAsState(targetValue = if (inProgress) rawProgress else 0f, label = "predictiveBack")
+    return animateFloatAsState(
+        targetValue = if (inProgress) rawProgress else 0f,
+        label = "predictiveBack"
+    )
 }
 
 /** Scales/translates content by the predictive-back [progress] (0..1) for the dismiss preview. */

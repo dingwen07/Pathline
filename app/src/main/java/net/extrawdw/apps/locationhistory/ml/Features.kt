@@ -98,9 +98,15 @@ object Features {
         val stopFraction = speeds.count { it < SLOW_SPEED_MPS }.toFloat() / speeds.size
         val accelVar = accelerationVariance(speeds)
 
-        var still = 0; var walk = 0; var run = 0; var bike = 0; var vehicle = 0
-        var wifi = 0; var noCell = 0
-        var signalSum = 0f; var signalN = 0
+        var still = 0;
+        var walk = 0;
+        var run = 0;
+        var bike = 0;
+        var vehicle = 0
+        var wifi = 0;
+        var noCell = 0
+        var signalSum = 0f;
+        var signalN = 0
         for (s in samples) {
             when (arBucket(s.arActivity)) {
                 0 -> still++; 1 -> walk++; 2 -> run++; 3 -> bike++; 4 -> vehicle++
@@ -111,7 +117,8 @@ object Features {
         }
         val n = samples.size.toFloat()
         val totalDist = pathDistance(samples)
-        val durationSec = ((samples.last().timestampMs - samples.first().timestampMs) / 1000).toFloat()
+        val durationSec =
+            ((samples.last().timestampMs - samples.first().timestampMs) / 1000).toFloat()
 
         return floatArrayOf(
             norm(mean, MAX_SPEED_MPS),

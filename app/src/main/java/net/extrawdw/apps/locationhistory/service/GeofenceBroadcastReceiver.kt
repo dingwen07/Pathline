@@ -16,13 +16,17 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var controller: RecordingController
+    @Inject
+    lateinit var controller: RecordingController
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return
         val event = GeofencingEvent.fromIntent(intent) ?: return
         if (event.hasError()) {
-            net.extrawdw.apps.locationhistory.core.AppLog.w("GeofenceReceiver", "error ${event.errorCode}")
+            net.extrawdw.apps.locationhistory.core.AppLog.w(
+                "GeofenceReceiver",
+                "error ${event.errorCode}"
+            )
             return
         }
         if (event.geofenceTransition != Geofence.GEOFENCE_TRANSITION_EXIT) return

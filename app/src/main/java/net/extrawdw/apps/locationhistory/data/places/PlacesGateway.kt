@@ -47,7 +47,11 @@ class PlacesGateway @Inject constructor(
     }.getOrNull()
 
     /** The single most likely POI near [lat]/[lon], or null if none / unavailable. */
-    suspend fun nearestPlace(lat: Double, lon: Double, radiusMeters: Double = 80.0): PlaceCandidate? =
+    suspend fun nearestPlace(
+        lat: Double,
+        lon: Double,
+        radiusMeters: Double = 80.0
+    ): PlaceCandidate? =
         withTimeoutOrNull(2_000) { nearbyPlaces(lat, lon, radiusMeters).firstOrNull() }
 
     /** Free-text place search (Maps API), focused near [lat]/[lon] and ranked by distance from it. */

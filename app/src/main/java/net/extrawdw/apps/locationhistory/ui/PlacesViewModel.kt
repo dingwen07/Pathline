@@ -30,8 +30,9 @@ class PlacesViewModel @Inject constructor(
         .map { list -> list.associate { it.placeId to it.visits } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    val unconfirmedVisits: StateFlow<List<VisitEntity>> = timelineRepository.observeUnconfirmedVisits()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val unconfirmedVisits: StateFlow<List<VisitEntity>> =
+        timelineRepository.observeUnconfirmedVisits()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun confirmVisit(visitId: Long, choice: PlaceChoice) = viewModelScope.launch {
         timelineRepository.confirmVisitPlace(visitId, choice)

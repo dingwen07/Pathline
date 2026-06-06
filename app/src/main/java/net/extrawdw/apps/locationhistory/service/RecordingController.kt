@@ -55,10 +55,14 @@ class RecordingController @Inject constructor(
     private val significantMotionManager: SignificantMotionManager,
     private val workScheduler: WorkScheduler,
 ) {
-    @Volatile private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
-    @Volatile private var lastArActivity: String? = null
-    @Volatile private var lastArConfidence: Int? = null
-    @Volatile private var serviceState: DevicePhysicalState? = null
+    @Volatile
+    private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
+    @Volatile
+    private var lastArActivity: String? = null
+    @Volatile
+    private var lastArConfidence: Int? = null
+    @Volatile
+    private var serviceState: DevicePhysicalState? = null
     private val recentSpeeds = ArrayDeque<Float>()
     private val speedLock = Any()
 
@@ -71,22 +75,30 @@ class RecordingController @Inject constructor(
         val speedMps: Float?,
         val stationary: Boolean,
     )
+
     private val recentFixes = ArrayDeque<Fix>()
     private val fixLock = Any()
-    @Volatile private var stationaryAnchor: Pair<Double, Double>? = null
+    @Volatile
+    private var stationaryAnchor: Pair<Double, Double>? = null
 
     /** Long-lived scope for the significant-motion backoff re-arm (process-lifetime singleton). */
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     /** Consecutive unconfirmed significant-motion triggers in the current stay -> backoff growth. */
-    @Volatile private var sigMotionFalseStreak = 0
-    @Volatile private var sigMotionRearmJob: Job? = null
+    @Volatile
+    private var sigMotionFalseStreak = 0
+    @Volatile
+    private var sigMotionRearmJob: Job? = null
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
     /** Begin the always-on, low-power heartbeat (Activity Recognition transitions). */
     fun enableTracking(): Boolean {
         val started = recognitionManager.start()
-        AppLog.i(TAG, "enableTracking: AR started=$started perm=${recognitionManager.hasPermission()}")
+        AppLog.i(
+            TAG,
+            "enableTracking: AR started=$started perm=${recognitionManager.hasPermission()}"
+        )
         return started
     }
 
@@ -150,7 +162,10 @@ class RecordingController @Inject constructor(
             AppLog.i(TAG, "task removed but stop-on-task-removed is off — keeping recording")
             return false
         }
-        AppLog.w(TAG, "pauseRecordingFromTaskRemoval — app removed from Recents; suppressing autostart")
+        AppLog.w(
+            TAG,
+            "pauseRecordingFromTaskRemoval — app removed from Recents; suppressing autostart"
+        )
         settingsRepository.setAutostartSuppressed(true)
         recorderService.suppressAutostart()
         recorderService.markStopped("task removed from Recents")
@@ -238,7 +253,10 @@ class RecordingController @Inject constructor(
             return
         }
         if (isAutostartSuppressed()) {
-            AppLog.i(TAG, "passive rearm: autostart suppressed (paused since task removal) — skipping")
+            AppLog.i(
+                TAG,
+                "passive rearm: autostart suppressed (paused since task removal) — skipping"
+            )
             return
         }
         if (!recognitionManager.hasPermission()) {
@@ -293,7 +311,10 @@ class RecordingController @Inject constructor(
             // fix (the device hasn't moved 80m *yet*), so the whole moving leg is undersampled.
             DetectedActivity.RUNNING -> becameMoving(DevicePhysicalState.RUNNING, force = true)
             DetectedActivity.ON_BICYCLE -> becameMoving(DevicePhysicalState.CYCLING, force = true)
-            DetectedActivity.IN_VEHICLE -> becameMoving(DevicePhysicalState.IN_VEHICLE, force = true)
+            DetectedActivity.IN_VEHICLE -> becameMoving(
+                DevicePhysicalState.IN_VEHICLE,
+                force = true
+            )
         }
     }
 
@@ -325,7 +346,10 @@ class RecordingController @Inject constructor(
      */
     suspend fun handleSignificantMotion() {
         if (isAutostartSuppressed()) {
-            AppLog.i(TAG, "significant motion ignored — recording paused (app removed from Recents)")
+            AppLog.i(
+                TAG,
+                "significant motion ignored — recording paused (app removed from Recents)"
+            )
             return
         }
         if (currentState != DevicePhysicalState.STATIONARY) return // already moving; stale trigger
@@ -412,13 +436,17 @@ class RecordingController @Inject constructor(
                 if (currentState == DevicePhysicalState.STATIONARY) {
                     // Non-drift already checked against this fresh delivered fix; force past the
                     // stale-fix re-check inside becameMoving so it isn't re-suppressed.
-                    if (!isLikelyDrift(location, motionVariance)) becameMoving(classification.state, force = true)
+                    if (!isLikelyDrift(location, motionVariance)) becameMoving(
+                        classification.state,
+                        force = true
+                    )
                 } else {
                     currentState = classification.state
                 }
             }
             pushFix(location, classification.state == DevicePhysicalState.STATIONARY)
-            val sample = buildSample(location, context, classification.state, classification.confidence)
+            val sample =
+                buildSample(location, context, classification.state, classification.confidence)
             locationRepository.record(sample)
             affectedDays.add(sample.dayEpoch)
         }
@@ -475,7 +503,12 @@ class RecordingController @Inject constructor(
         if (maxSpeed >= 1.5f) return true
         val spread = recent.maxOf { a ->
             recent.maxOf { b ->
-                net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(a.lat, a.lon, b.lat, b.lon)
+                net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+                    a.lat,
+                    a.lon,
+                    b.lat,
+                    b.lon
+                )
             }
         }
         spread > net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
@@ -490,17 +523,19 @@ class RecordingController @Inject constructor(
         val window = recentFixes.filter { now - it.t <= minVisitMs }
         if (window.size < 3) return null
         if (now - window.first().t < minVisitMs * 0.8) return null
-        val goodAccuracy = window.count { (it.accuracyMeters ?: 30f) <=
-            net.extrawdw.apps.locationhistory.core.Constants.SAMPLE_ACCURACY_GATE_METERS
+        val goodAccuracy = window.count {
+            (it.accuracyMeters ?: 30f) <=
+                    net.extrawdw.apps.locationhistory.core.Constants.SAMPLE_ACCURACY_GATE_METERS
         }
         if (goodAccuracy < window.size * 0.7) return null
-        val meanSpeed = window.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        val meanSpeed =
+            window.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
         if (meanSpeed > 0.6) return null
         val cLat = window.sumOf { it.lat } / window.size
         val cLon = window.sumOf { it.lon } / window.size
         val withinRadius = window.all {
             net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <=
-                net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
+                    net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
         }
         val mostlyStationary = window.count { it.stationary } >= window.size * 0.8
         if (!withinRadius || !mostlyStationary) return null
@@ -542,14 +577,20 @@ class RecordingController @Inject constructor(
 
     // --- state transitions --------------------------------------------------------------------
 
-    private suspend fun becameStationary(candidateFromFixes: VisitCandidate? = null, forceOpen: Boolean = false) {
+    private suspend fun becameStationary(
+        candidateFromFixes: VisitCandidate? = null,
+        forceOpen: Boolean = false
+    ) {
         if (currentState == DevicePhysicalState.STATIONARY && !forceOpen) return
         currentState = DevicePhysicalState.STATIONARY
         AppLog.i(TAG, "becameStationary: keeping FGS alive at low-power cadence")
         // Keep the foreground service alive but drop to the low-power stationary location cadence,
         // so it never silently exits. (We deliberately do NOT stopSelf here.)
         if (recorderService.isRecording) {
-            recorderService.start(DevicePhysicalState.STATIONARY, settingsRepository.settings.first().powerProfile)
+            recorderService.start(
+                DevicePhysicalState.STATIONARY,
+                settingsRepository.settings.first().powerProfile
+            )
             serviceState = DevicePhysicalState.STATIONARY
         }
 
@@ -567,7 +608,10 @@ class RecordingController @Inject constructor(
                 centroidLongitude = anchor.longitude,
                 sampleCount = 1,
             )
-            geofenceManager.armDwellGeofence(candidate.centroidLatitude, candidate.centroidLongitude)
+            geofenceManager.armDwellGeofence(
+                candidate.centroidLatitude,
+                candidate.centroidLongitude
+            )
             // Fast, Doze-surviving departure trigger alongside the (laggy) geofence — fires the moment
             // the user starts location-changing motion. One-shot; re-armed on the next stationary entry.
             // A genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
@@ -575,7 +619,10 @@ class RecordingController @Inject constructor(
             resetSigMotionBackoff()
             significantMotionManager.arm { handleSignificantMotion() }
             stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
-            workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.timestampMs), "became_stationary")
+            workScheduler.enqueueTimelineMaintenanceNow(
+                TimeBuckets.dayEpoch(anchor.timestampMs),
+                "became_stationary"
+            )
         }
     }
 
@@ -596,13 +643,17 @@ class RecordingController @Inject constructor(
                     AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
                     return false
                 }
-                AppLog.i(TAG, "becameMoving($state): fresh fix confirms real departure (stale drift overridden)")
+                AppLog.i(
+                    TAG,
+                    "becameMoving($state): fresh fix confirms real departure (stale drift overridden)"
+                )
             }
         }
         currentState = state
         AppLog.i(TAG, "becameMoving: $state (force=$force)")
-        val maintenanceDay = locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
-            ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
+        val maintenanceDay =
+            locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
+                ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
         stationaryAnchor = null
         cancelSigMotionRearm()
         resetSigMotionBackoff()
@@ -636,14 +687,18 @@ class RecordingController @Inject constructor(
      */
     private fun rearmSignificantMotionWithBackoff() {
         val streak = sigMotionFalseStreak
-        val delayMs = (SIG_MOTION_BASE_BACKOFF_MS shl streak.coerceAtMost(SIG_MOTION_MAX_BACKOFF_SHIFTS))
-            .coerceAtMost(SIG_MOTION_MAX_BACKOFF_MS)
+        val delayMs =
+            (SIG_MOTION_BASE_BACKOFF_MS shl streak.coerceAtMost(SIG_MOTION_MAX_BACKOFF_SHIFTS))
+                .coerceAtMost(SIG_MOTION_MAX_BACKOFF_MS)
         sigMotionFalseStreak = streak + 1
         cancelSigMotionRearm()
         sigMotionRearmJob = controllerScope.launch {
             delay(delayMs)
             if (currentState == DevicePhysicalState.STATIONARY) {
-                AppLog.i(TAG, "re-arming significant motion after ${delayMs}ms (unconfirmed streak=$streak)")
+                AppLog.i(
+                    TAG,
+                    "re-arming significant motion after ${delayMs}ms (unconfirmed streak=$streak)"
+                )
                 significantMotionManager.arm { handleSignificantMotion() }
             }
         }
@@ -656,12 +711,22 @@ class RecordingController @Inject constructor(
      * undersampling — hence physical movement ([motionVariance]) is weighted heavily: any real walk
      * shakes the device and is never suppressed, even at a noisy-GPS place with no GPS speed.
      */
-    private fun isDriftAt(lat: Double, lon: Double, speedMps: Float, motionVariance: Float): Boolean {
+    private fun isDriftAt(
+        lat: Double,
+        lon: Double,
+        speedMps: Float,
+        motionVariance: Float
+    ): Boolean {
         if (currentState != DevicePhysicalState.STATIONARY) return false
         val anchor = stationaryAnchor ?: return true
         if (speedMps >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOVING_SPEED_MPS) return false
         if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
-        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(anchor.first, anchor.second, lat, lon)
+        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+            anchor.first,
+            anchor.second,
+            lat,
+            lon
+        )
         return d < stationaryNoiseRadius()
     }
 
@@ -696,7 +761,12 @@ class RecordingController @Inject constructor(
         val cLon = stat.sumOf { it.lon } / stat.size
         val rms = kotlin.math.sqrt(
             stat.sumOf {
-                val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon)
+                val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
+                    cLat,
+                    cLon,
+                    it.lat,
+                    it.lon
+                )
                 d * d
             } / stat.size,
         )
@@ -771,6 +841,7 @@ class RecordingController @Inject constructor(
         const val FIX_WINDOW_MS = 6 * 60_000L
         const val RECENT_MOTION_WINDOW_MS = 90_000L
         const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius
+
         // Significant-motion re-arm backoff: base << streak, capped. 30s,1m,2m,4m,8m,16m,30m(cap).
         const val SIG_MOTION_BASE_BACKOFF_MS = 30_000L
         const val SIG_MOTION_MAX_BACKOFF_SHIFTS = 6

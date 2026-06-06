@@ -24,7 +24,11 @@ class TrainingRepository @Inject constructor(
         )
     }
 
-    suspend fun addTransportExample(features: FloatArray, label: Int, fromUserConfirmation: Boolean) {
+    suspend fun addTransportExample(
+        features: FloatArray,
+        label: Int,
+        fromUserConfirmation: Boolean
+    ) {
         dao.insertTransportExample(
             TransportTrainingExampleEntity(
                 features = encode(features),
@@ -48,6 +52,7 @@ class TrainingRepository @Inject constructor(
      *  unconsumed count forever). Returns the number purged. */
     suspend fun purgeStaleStateExamples() =
         dao.deleteStateExamplesNotVersion(Features.STATE_FEATURE_SCHEMA_VERSION)
+
     suspend fun purgeStaleTransportExamples() =
         dao.deleteTransportExamplesNotVersion(Features.TRANSPORT_FEATURE_SCHEMA_VERSION)
 

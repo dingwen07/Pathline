@@ -36,14 +36,30 @@ class BackupWorker @AssistedInject constructor(
 
     private fun evaluate(job: String, result: BackupResult): Outcome = when (result) {
         is BackupResult.Backed -> {
-            AppLog.i(TAG, "backup ok: wrote=${result.report.partitionsWritten} failed=${result.report.partitionsFailed}")
+            AppLog.i(
+                TAG,
+                "backup ok: wrote=${result.report.partitionsWritten} failed=${result.report.partitionsFailed}"
+            )
             if (result.report.partitionsFailed > 0) Outcome.RETRY else Outcome.OK
         }
-        is BackupResult.Exported -> { AppLog.i(TAG, "gpx ok: wrote=${result.count} file(s)"); Outcome.OK }
+
+        is BackupResult.Exported -> {
+            AppLog.i(TAG, "gpx ok: wrote=${result.count} file(s)"); Outcome.OK
+        }
+
         BackupResult.NoDestination -> Outcome.OK
-        BackupResult.NeedsReclaim -> { AppLog.w(TAG, "$job: SAF grant lost; awaiting reclaim"); Outcome.OK }
-        BackupResult.KeyUnavailable -> { AppLog.w(TAG, "$job: key unavailable; awaiting password"); Outcome.OK }
-        is BackupResult.Error -> { AppLog.w(TAG, "$job error: ${result.message}"); Outcome.RETRY }
+        BackupResult.NeedsReclaim -> {
+            AppLog.w(TAG, "$job: SAF grant lost; awaiting reclaim"); Outcome.OK
+        }
+
+        BackupResult.KeyUnavailable -> {
+            AppLog.w(TAG, "$job: key unavailable; awaiting password"); Outcome.OK
+        }
+
+        is BackupResult.Error -> {
+            AppLog.w(TAG, "$job error: ${result.message}"); Outcome.RETRY
+        }
+
         is BackupResult.Restored -> Outcome.OK
     }
 
