@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -166,9 +167,24 @@ class TimelineRepository @Inject constructor(
      */
     suspend fun confirmTripMode(tripId: Long, mode: TransportMode) {
         val trip = tripDao.byId(tripId) ?: return
-        tripDao.update(trip.copy(mode = mode, modeConfidence = 1f, confirmed = true))
-
         val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
+
+        // Rebuild geometry from the fixes in recorded order, like convertItemType does -- otherwise
+        // confirming the mode left the stored polyline untouched, so a trip scrambled by an earlier
+        // overlapping merge kept its straight spike. Too few fixes to draw a line: just relabel.
+        val points = samples.map { it.latitude to it.longitude }
+        val relabeled = trip.copy(mode = mode, modeConfidence = 1f, confirmed = true)
+        tripDao.update(
+            if (points.size >= 2) {
+                relabeled.copy(
+                    encodedPolyline = Geo.encodePolyline(points),
+                    distanceMeters = Geo.pathLengthMeters(points),
+                )
+            } else {
+                relabeled
+            },
+        )
+
         if (samples.size >= 2 && mode in TransportMode.MODEL_CLASSES) {
             trainingRepository.addTransportExample(
                 features = Features.transportFeatures(samples),

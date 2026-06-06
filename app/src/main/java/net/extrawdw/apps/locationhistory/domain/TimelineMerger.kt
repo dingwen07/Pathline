@@ -133,14 +133,24 @@ class TimelineMerger @Inject constructor(
             // separate legs of the same mode (e.g. two walks with a stop between) and is left alone.
             if (b.startMs - a.endMs > Constants.MERGE_GAP_MS) continue
 
-            val points =
-                Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
+            // Chaining a's points then b's is only chronological when b starts after a ends. If they
+            // overlap in time -- e.g. a converted stay (a tight cluster of fixes) sitting *inside* a
+            // longer walk -- appending b's cluster after a's far endpoint draws a straight spike back
+            // to it, so rebuild from the fixes in time order. The consecutive case just concatenates.
+            val (polyline, distance) =
+                if (b.startMs < a.endMs) {
+                    rebuildTripGeometry(minOf(a.startMs, b.startMs), maxOf(a.endMs, b.endMs))
+                        ?: concatGeometry(a, b)
+                } else {
+                    concatGeometry(a, b)
+                }
             tripDao.update(
                 a.copy(
+                    startMs = minOf(a.startMs, b.startMs),
                     toVisitId = b.toVisitId ?: a.toVisitId,
                     endMs = maxOf(a.endMs, b.endMs),
-                    distanceMeters = Geo.pathLengthMeters(points),
-                    encodedPolyline = Geo.encodePolyline(points),
+                    distanceMeters = distance,
+                    encodedPolyline = polyline,
                     modeConfidence = maxOf(a.modeConfidence, b.modeConfidence),
                     confirmed = a.confirmed || b.confirmed,
                 ),
@@ -149,6 +159,24 @@ class TimelineMerger @Inject constructor(
             return true
         }
         return false
+    }
+
+    /** Fuse two trips' geometry by chaining their polylines end-to-end (correct when b follows a). */
+    private fun concatGeometry(a: TripEntity, b: TripEntity): Pair<String, Double> {
+        val points = Geo.decodePolyline(a.encodedPolyline) + Geo.decodePolyline(b.encodedPolyline)
+        return Geo.encodePolyline(points) to Geo.pathLengthMeters(points)
+    }
+
+    /**
+     * Rebuild a trip's polyline + distance from the time-ordered fixes in [startMs, endMs] so the
+     * path follows the order they were actually recorded, not the order two overlapping trips happen
+     * to be chained in. Returns null when the span has too few usable fixes to form a line.
+     */
+    private suspend fun rebuildTripGeometry(startMs: Long, endMs: Long): Pair<String, Double>? {
+        val points = sampleDao.rangeForComputation(startMs, endMs + 1)
+            .map { it.latitude to it.longitude }
+        if (points.size < 2) return null
+        return Geo.encodePolyline(points) to Geo.pathLengthMeters(points)
     }
 
     private fun samePlace(a: VisitEntity, b: VisitEntity): Boolean = when {

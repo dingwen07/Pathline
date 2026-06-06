@@ -77,18 +77,18 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         if (samples.isEmpty()) return Result.success()
 
         val confirmedVisits = visitDao.confirmedOverlapping(loadStart, loadEnd)
+        // A confirmed trip hand-classifies a span as movement, so it must suppress stay re-detection
+        // there like a confirmed visit does -- otherwise converting a stay to a moving segment instantly
+        // re-detects it (the raw fixes still look stationary), resurrecting the visit just converted away.
+        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd)
         val latest = sampleDao.mostRecent()
         // Detect stays over the full window (true extents), keep those that touch this day, and skip
-        // any already covered by a confirmed (ground-truth) visit.
+        // any already covered by a confirmed (ground-truth) visit or a confirmed trip.
         val candidates = visitDetector.detectVisits(samples)
             .filter { it.overlaps(dayStart, dayEnd) }
             .filterNot { candidate ->
-                confirmedVisits.any {
-                    it.overlaps(
-                        candidate.startMs,
-                        candidate.endMs + 1
-                    )
-                }
+                confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } ||
+                        confirmedTrips.any { candidate.overlaps(it.startMs, it.endMs + 1) }
             }
             .toMutableList()
 
@@ -96,7 +96,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             val overlapsDetected =
                 candidates.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
             val overlapsConfirmed =
-                confirmedVisits.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
+                confirmedVisits.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) } ||
+                        confirmedTrips.any { ongoing.overlaps(it.startMs, it.endMs + 1) }
             if (!overlapsDetected && !overlapsConfirmed) candidates.add(ongoing)
         }
 
