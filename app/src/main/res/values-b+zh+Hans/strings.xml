@@ -11,6 +11,8 @@
     <string name="recording_stopped_text">将 Pathline 从最近任务中移除后，记录已停止。下次打开应用时会自动恢复记录。</string>
     <string name="recording_stopped_action_resume">恢复记录</string>
     <string name="recording_stopped_action_keep_on">关闭后继续记录</string>
+    <string name="recording_terminated_title">记录已停止</string>
+    <string name="recording_terminated_text">Pathline 已被停止，且未能自动恢复记录。点按“恢复记录”即可重新开始记录，或打开应用。</string>
 
     <!-- ============================ Common actions ============================ -->
     <string name="action_save">保存</string>
@@ -169,6 +171,9 @@
     <string name="perm_phone_desc">读取蜂窝信号强度以改进位置判断。即使拒绝，Pathline 也能正常使用。</string>
     <string name="onboarding_background_title">在后台持续记录</string>
     <string name="onboarding_background_body">为了构建完整的时间线，位置访问需要设置为“始终允许”，这样 Pathline 才能在应用关闭时继续记录。Android 会在下一个界面单独请求此项。</string>
+    <string name="onboarding_oem_autostart_title">保持 Pathline 运行</string>
+    <string name="onboarding_oem_autostart_body">您的设备可能会阻止 Pathline 在后台运行或自动启动，这可能会中断位置记录。为帮助保持时间线完整，您可以在系统设置中允许 Pathline 自启动（有时称为自动启动或后台启动）。</string>
+    <string name="onboarding_oem_autostart_action_open">打开自启动设置</string>
     <string name="action_get_started">开始使用</string>
     <string name="action_restore_backup">从备份恢复</string>
     <string name="action_allow_access">允许访问</string>

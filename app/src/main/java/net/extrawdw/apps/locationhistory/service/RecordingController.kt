@@ -57,10 +57,13 @@ class RecordingController @Inject constructor(
 ) {
     @Volatile
     private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
+
     @Volatile
     private var lastArActivity: String? = null
+
     @Volatile
     private var lastArConfidence: Int? = null
+
     @Volatile
     private var serviceState: DevicePhysicalState? = null
     private val recentSpeeds = ArrayDeque<Float>()
@@ -78,6 +81,7 @@ class RecordingController @Inject constructor(
 
     private val recentFixes = ArrayDeque<Fix>()
     private val fixLock = Any()
+
     @Volatile
     private var stationaryAnchor: Pair<Double, Double>? = null
 
@@ -87,6 +91,7 @@ class RecordingController @Inject constructor(
     /** Consecutive unconfirmed significant-motion triggers in the current stay -> backoff growth. */
     @Volatile
     private var sigMotionFalseStreak = 0
+
     @Volatile
     private var sigMotionRearmJob: Job? = null
 
@@ -130,6 +135,7 @@ class RecordingController @Inject constructor(
         geofenceManager.clearAll()
         significantMotionManager.disarm()
         recorderService.stop()
+        workScheduler.cancelRecordingWatchdog()
     }
 
     /**
@@ -143,6 +149,7 @@ class RecordingController @Inject constructor(
         settingsRepository.setTrackingEnabled(true)
         startTracking()
         workScheduler.schedulePeriodicTimelineMaintenance()
+        workScheduler.scheduleRecordingWatchdog()
         workScheduler.schedulePeriodicBackup()
     }
 
@@ -243,29 +250,46 @@ class RecordingController @Inject constructor(
     }
 
     /**
-     * Re-arm passive system triggers from background-only startup events. Package replacement can
-     * arrive while the app is not eligible to start a location FGS, so the foreground recorder is
-     * resumed later from the activity self-heal path.
+     * Make sure the foreground recorder is actually running when it should be, and tell the user when
+     * it can't be brought back. Shared by two background-only triggers:
+     *  - a package replacement (`ACTION_MY_PACKAGE_REPLACED`, which kills the process and stops the
+     *    service) — one of the background FGS-start exemptions, alongside `BOOT_COMPLETED`, and
+     *    `location` is not on the Android 14 boot-launch denylist, so the start usually succeeds;
+     *  - the periodic [net.extrawdw.apps.locationhistory.work.RecordingWatchdogWorker], which catches a
+     *    process kill / silent service death that `START_STICKY` didn't recover.
+     *
+     * Fast no-op when the recorder is already up, so the 15-minute watchdog doesn't re-arm AR/geofences
+     * on every tick. When the recorder is down it re-arms the passive triggers (so a later AR/geofence
+     * event can still revive it) and tries the foreground start; if the platform refuses it — e.g. a
+     * plain worker has no background-start exemption — it posts an alert so the user can resume. A true
+     * force-stop / OEM kill can't be recovered here: a stopped app's receivers and workers never run.
      */
-    suspend fun rearmPassiveSignalsIfPreviouslyEnabled() {
+    suspend fun ensureRecorderRunning(trigger: String) {
+        if (recorderService.isRecording) return
         if (!settingsRepository.settings.first().trackingEnabled) {
-            AppLog.i(TAG, "passive rearm: tracking disabled, nothing to do")
+            AppLog.i(TAG, "$trigger: tracking disabled, nothing to do")
             return
         }
         if (isAutostartSuppressed()) {
-            AppLog.i(
-                TAG,
-                "passive rearm: autostart suppressed (paused since task removal) — skipping"
-            )
+            AppLog.i(TAG, "$trigger: autostart suppressed (paused since task removal) — skipping")
             return
         }
         if (!recognitionManager.hasPermission()) {
-            AppLog.w(TAG, "passive rearm: missing activity-recognition permission")
+            AppLog.w(TAG, "$trigger: missing activity-recognition permission")
             return
         }
-        AppLog.i(TAG, "passive rearm: restoring AR/geofences without foreground recorder")
+        AppLog.i(TAG, "$trigger: recorder down — re-arming and restarting")
         enableTracking()
         geofenceManager.restore()
+        val profile = settingsRepository.settings.first().powerProfile
+        if (recorderService.start(currentState, profile)) {
+            repairStationaryFromStoredSamples()
+        } else {
+            // Background FGS start refused. AR/geofences are still armed (a passive trigger can revive
+            // recording), but tell the user so they can resume now instead of recording staying off.
+            AppLog.w(TAG, "$trigger: foreground start denied — notifying user")
+            Notifications.notifyRecordingNeedsResume(context)
+        }
     }
 
     /** A single current fix, used to bootstrap recording and to anchor a stationary visit. */

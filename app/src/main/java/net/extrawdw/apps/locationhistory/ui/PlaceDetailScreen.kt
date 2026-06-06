@@ -151,9 +151,11 @@ fun PlaceDetailDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier
-            .fillMaxSize()
-            .predictiveBack(backProgress)) {
+        Surface(
+            Modifier
+                .fillMaxSize()
+                .predictiveBack(backProgress)
+        ) {
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -173,12 +175,16 @@ fun PlaceDetailDialog(
                     )
                 },
             ) { padding ->
-                Column(Modifier
-                    .fillMaxSize()
-                    .padding(padding)) {
-                    Box(Modifier
-                        .fillMaxWidth()
-                        .height(280.dp)) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                    ) {
                         // Compose the map only once the place is loaded, so its camera can be seeded
                         // at the place in the constructor (no world-view flash, like the editor).
                         place?.let { p ->

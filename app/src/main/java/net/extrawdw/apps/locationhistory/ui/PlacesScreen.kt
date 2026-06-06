@@ -97,9 +97,11 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 Card(onClick = { detailPlaceId = place.id }, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Place, contentDescription = null)
-                        Column(Modifier
-                            .padding(start = 12.dp)
-                            .weight(1f)) {
+                        Column(
+                            Modifier
+                                .padding(start = 12.dp)
+                                .weight(1f)
+                        ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(place.name, style = MaterialTheme.typography.titleMedium)
                                 if (place.fixed) {

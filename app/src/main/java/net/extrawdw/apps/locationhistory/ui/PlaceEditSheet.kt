@@ -71,9 +71,11 @@ fun PlaceEditDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier
-            .fillMaxSize()
-            .predictiveBack(backProgress)) {
+        Surface(
+            Modifier
+                .fillMaxSize()
+                .predictiveBack(backProgress)
+        ) {
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -101,10 +103,12 @@ fun PlaceEditDialog(
                     )
                 },
             ) { padding ->
-                Column(Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp)) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(horizontal = 16.dp)
+                ) {
                     OutlinedTextField(
                         value = name, onValueChange = { name = it },
                         label = { Text(stringResource(R.string.field_name)) }, singleLine = true,
@@ -145,9 +149,11 @@ fun PlaceEditDialog(
                         Switch(checked = fixed, onCheckedChange = { fixed = it })
                     }
                     // Map fills the rest with no scrolling parent, so gestures aren't intercepted.
-                    Box(Modifier
-                        .fillMaxWidth()
-                        .weight(1f)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
                         GoogleMap(
                             modifier = Modifier.fillMaxSize(),
                             cameraPositionState = cameraPositionState,

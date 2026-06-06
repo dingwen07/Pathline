@@ -64,9 +64,11 @@ fun SplitEditorPanel(
     onSplitIndexChange: (Int?) -> Unit = {},
     onReclassifyType: (SegmentType?) -> Unit = {},
 ) {
-    Column(Modifier
-        .fillMaxWidth()
-        .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 stringResource(R.string.split_edit_title),
@@ -182,9 +184,11 @@ private fun SideCard(
     onType: (SegmentType) -> Unit,
 ) {
     val context = LocalContext.current
-    OutlinedCard(Modifier
-        .fillMaxWidth()
-        .padding(top = 12.dp)) {
+    OutlinedCard(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text(
                 title,

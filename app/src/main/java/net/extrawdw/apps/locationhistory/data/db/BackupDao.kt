@@ -135,16 +135,22 @@ interface BackupDao {
 
     @Query("DELETE FROM trips")
     suspend fun clearTrips()
+
     @Query("DELETE FROM visits")
     suspend fun clearVisits()
+
     @Query("DELETE FROM location_samples")
     suspend fun clearSamples()
+
     @Query("DELETE FROM geofences")
     suspend fun clearGeofences()
+
     @Query("DELETE FROM places")
     suspend fun clearPlaces()
+
     @Query("DELETE FROM state_training_examples")
     suspend fun clearStateExamples()
+
     @Query("DELETE FROM transport_training_examples")
     suspend fun clearTransportExamples()
 }

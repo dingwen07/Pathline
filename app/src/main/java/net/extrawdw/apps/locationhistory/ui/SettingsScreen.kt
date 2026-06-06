@@ -87,9 +87,11 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     val profiles = PowerProfile.entries
-                    SingleChoiceSegmentedButtonRow(Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)) {
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
                         profiles.forEachIndexed { index, profile ->
                             SegmentedButton(
                                 selected = settings.powerProfile == profile,

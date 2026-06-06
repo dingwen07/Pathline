@@ -38,6 +38,7 @@ class LocationRecorderService : LifecycleService() {
 
     @Inject
     lateinit var controller: RecordingController
+
     @Inject
     lateinit var serviceController: RecorderServiceController
 

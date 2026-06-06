@@ -60,16 +60,22 @@ object DatabaseModule {
 
     @Provides
     fun provideLocationSampleDao(db: AppDatabase): LocationSampleDao = db.locationSampleDao()
+
     @Provides
     fun providePlaceDao(db: AppDatabase): PlaceDao = db.placeDao()
+
     @Provides
     fun provideVisitDao(db: AppDatabase): VisitDao = db.visitDao()
+
     @Provides
     fun provideTripDao(db: AppDatabase): TripDao = db.tripDao()
+
     @Provides
     fun provideTrainingDao(db: AppDatabase): TrainingDao = db.trainingDao()
+
     @Provides
     fun provideGeofenceDao(db: AppDatabase): GeofenceDao = db.geofenceDao()
+
     @Provides
     fun provideBackupDao(db: AppDatabase): BackupDao = db.backupDao()
 

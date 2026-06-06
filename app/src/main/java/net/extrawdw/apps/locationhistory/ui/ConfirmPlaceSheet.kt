@@ -92,9 +92,11 @@ fun ConfirmPlaceSheet(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
+        ) {
             Text(
                 stringResource(R.string.assign_place_title),
                 style = MaterialTheme.typography.titleLarge,
@@ -112,9 +114,11 @@ fun ConfirmPlaceSheet(
                     .padding(top = 8.dp),
             )
 
-            LazyColumn(Modifier
-                .heightIn(max = 380.dp)
-                .padding(top = 8.dp)) {
+            LazyColumn(
+                Modifier
+                    .heightIn(max = 380.dp)
+                    .padding(top = 8.dp)
+            ) {
                 if (results.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.search_results_header)) }
                     items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->

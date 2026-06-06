@@ -11,6 +11,8 @@
     <string name="recording_stopped_text">Pathline stopped recording when you removed it from Recents. It resumes automatically the next time you open the app.</string>
     <string name="recording_stopped_action_resume">Resume</string>
     <string name="recording_stopped_action_keep_on">Always keep recording</string>
+    <string name="recording_terminated_title">Recording stopped</string>
+    <string name="recording_terminated_text">Pathline was stopped and couldn\'t resume recording on its own. Tap Resume to start recording again, or open the app.</string>
 
     <!-- ============================ Common actions ============================ -->
     <string name="action_save">Save</string>
@@ -180,6 +182,9 @@
     <string name="perm_phone_desc">Reads cell-signal strength to improve location context. Pathline works fine if you deny this.</string>
     <string name="onboarding_background_title">Keep recording in the background</string>
     <string name="onboarding_background_body">To build a complete timeline, location access needs to be set to \"Allow all the time\" so Pathline keeps recording when the app is closed. Android asks for this separately on the next screen.</string>
+    <string name="onboarding_oem_autostart_title">Keep Pathline running</string>
+    <string name="onboarding_oem_autostart_body">Your device might prevent Pathline from running in the background or starting automatically, which can interrupt location recording. To help keep your timeline complete, you can allow Pathline to auto-start (sometimes called auto-launch or background startup) in your device settings.</string>
+    <string name="onboarding_oem_autostart_action_open">Open auto-start settings</string>
     <string name="action_get_started">Get started</string>
     <string name="action_restore_backup">Restore from a backup</string>
     <string name="action_allow_access">Allow access</string>

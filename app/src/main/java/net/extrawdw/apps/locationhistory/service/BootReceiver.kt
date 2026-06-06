@@ -19,8 +19,10 @@ class BootReceiver : BroadcastReceiver() {
 
     @Inject
     lateinit var controller: RecordingController
+
     @Inject
     lateinit var settingsRepository: SettingsRepository
+
     @Inject
     lateinit var workScheduler: WorkScheduler
 
@@ -38,8 +40,9 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 if (settingsRepository.settings.first().trackingEnabled) {
                     workScheduler.schedulePeriodicTimelineMaintenance()
+                    workScheduler.scheduleRecordingWatchdog()
                     if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-                        controller.rearmPassiveSignalsIfPreviouslyEnabled()
+                        controller.ensureRecorderRunning("package-replaced")
                     } else {
                         controller.resumeIfPreviouslyEnabled()
                     }

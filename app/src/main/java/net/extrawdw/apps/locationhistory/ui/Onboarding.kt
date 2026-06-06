@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +55,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.backup.BackupOperationController
+import net.extrawdw.apps.locationhistory.core.OemAutostart
 import net.extrawdw.apps.locationhistory.backup.ManagedKind
 import net.extrawdw.apps.locationhistory.backup.ManagedState
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
@@ -175,13 +177,15 @@ class OnboardingViewModel @Inject constructor(
     fun dismissManaged() = controller.dismiss()
 }
 
-private enum class OnboardingStep { WELCOME, PERMISSIONS, BACKGROUND }
+private enum class OnboardingStep { WELCOME, PERMISSIONS, BACKGROUND, AUTOSTART }
 
 /**
  * First-run onboarding. Introduces the app, then walks the user through granting foreground
- * permissions (location, activity recognition, notifications) and finally "Allow all the time"
- * background location, which Android requires as a separate step. Each permission step advances
- * automatically once granted; the user can skip the optional background step.
+ * permissions (location, activity recognition, notifications) and "Allow all the time" background
+ * location, which Android requires as a separate step. Each permission step advances automatically
+ * once granted; the user can skip the optional background step. On Chinese-OEM skins that block
+ * background auto-start ([OemAutostart]) a final step points the user at the vendor setting they need
+ * to enable; on stock Android that step is absent entirely.
  */
 @Composable
 fun OnboardingScreen(
@@ -192,6 +196,22 @@ fun OnboardingScreen(
     var step by remember { mutableStateOf(OnboardingStep.WELCOME) }
 
     val activity = androidx.compose.ui.platform.LocalContext.current
+
+    // The OEM auto-start step only exists on skins that block background launch; on stock Android the
+    // flow ends at BACKGROUND. Drive the step dots off this computed list so the dot count matches.
+    val autostartApplicable = remember { OemAutostart.isRestrictedDevice() }
+    val steps = remember(autostartApplicable) {
+        buildList {
+            add(OnboardingStep.WELCOME)
+            add(OnboardingStep.PERMISSIONS)
+            add(OnboardingStep.BACKGROUND)
+            if (autostartApplicable) add(OnboardingStep.AUTOSTART)
+        }
+    }
+    // Leaving the background step goes to the auto-start step where applicable, otherwise finishes.
+    val proceedFromBackground = {
+        if (autostartApplicable) step = OnboardingStep.AUTOSTART else onFinish(permissions.granted)
+    }
     val restoreNeedsPassword by viewModel.restoreNeedsPassword.collectAsState()
     val restoreSucceeded by viewModel.restoreSucceeded.collectAsState()
     val managed by viewModel.managed.collectAsState()
@@ -220,7 +240,7 @@ fun OnboardingScreen(
             OnboardingStep.BACKGROUND
     }
     LaunchedEffect(permissions.backgroundGranted) {
-        if (step == OnboardingStep.BACKGROUND && permissions.backgroundGranted) onFinish(permissions.granted)
+        if (step == OnboardingStep.BACKGROUND && permissions.backgroundGranted) proceedFromBackground()
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -230,7 +250,11 @@ fun OnboardingScreen(
                 .safeDrawingPadding()
                 .padding(horizontal = 28.dp, vertical = 24.dp),
         ) {
-            StepDots(step.ordinal, OnboardingStep.entries.size, Modifier.padding(bottom = 8.dp))
+            StepDots(
+                steps.indexOf(step).coerceAtLeast(0),
+                steps.size,
+                Modifier.padding(bottom = 8.dp)
+            )
             Column(
                 Modifier
                     .weight(1f)
@@ -246,6 +270,13 @@ fun OnboardingScreen(
                         icon = Icons.Filled.LocationOn,
                         title = stringResource(R.string.onboarding_background_title),
                         body = stringResource(R.string.onboarding_background_body),
+                        rows = emptyList(),
+                    )
+
+                    OnboardingStep.AUTOSTART -> PermissionContent(
+                        icon = Icons.Filled.Settings,
+                        title = stringResource(R.string.onboarding_oem_autostart_title),
+                        body = stringResource(R.string.onboarding_oem_autostart_body),
                         rows = emptyList(),
                     )
                 }
@@ -276,13 +307,23 @@ fun OnboardingScreen(
 
                 OnboardingStep.BACKGROUND -> {
                     PrimaryButton(stringResource(if (permissions.backgroundGranted) R.string.action_finish else R.string.action_allow_all_time)) {
-                        if (permissions.backgroundGranted) onFinish(permissions.granted)
+                        if (permissions.backgroundGranted) proceedFromBackground()
                         else permissions.requestBackground()
+                    }
+                    TextButton(
+                        onClick = { proceedFromBackground() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.action_maybe_later)) }
+                }
+
+                OnboardingStep.AUTOSTART -> {
+                    PrimaryButton(stringResource(R.string.onboarding_oem_autostart_action_open)) {
+                        OemAutostart.openSettings(activity)
                     }
                     TextButton(
                         onClick = { onFinish(permissions.granted) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text(stringResource(R.string.action_maybe_later)) }
+                    ) { Text(stringResource(R.string.action_finish)) }
                 }
             }
         }
@@ -413,9 +454,11 @@ private fun PermissionContent(
 
 @Composable
 private fun PrimaryButton(label: String, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier
-        .fillMaxWidth()
-        .padding(top = 8.dp)) {
+    Button(
+        onClick = onClick, modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+    ) {
         Text(label)
     }
 }

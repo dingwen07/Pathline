@@ -232,9 +232,11 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         val diagnosticsBackProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier
-            .fillMaxSize()
-            .predictiveBack(diagnosticsBackProgress)) {
+        Surface(
+            Modifier
+                .fillMaxSize()
+                .predictiveBack(diagnosticsBackProgress)
+        ) {
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -265,9 +267,11 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                 },
             ) { padding ->
                 val files = remember(diagnostics) { viewModel.logFiles() }
-                LazyColumn(Modifier
-                    .fillMaxSize()
-                    .padding(padding)) {
+                LazyColumn(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
                     item {
                         DebugCard("Recorder") {
                             diagnostics.recorderRows.forEach { (label, value) ->
@@ -371,9 +375,11 @@ private fun LogFileDialog(
     ) {
         DisableDialogDim()
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(Modifier
-            .fillMaxSize()
-            .predictiveBack(backProgress)) {
+        Surface(
+            Modifier
+                .fillMaxSize()
+                .predictiveBack(backProgress)
+        ) {
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -398,9 +404,11 @@ private fun LogFileDialog(
                 },
             ) { padding ->
                 val emptyText = stringResource(R.string.diag_log_empty)
-                SelectionContainer(Modifier
-                    .fillMaxSize()
-                    .padding(padding)) {
+                SelectionContainer(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
                     Text(
                         content.ifEmpty { emptyText },
                         modifier = Modifier
@@ -430,9 +438,11 @@ private fun DisableDialogDim() {
 
 @Composable
 private fun DebugCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()

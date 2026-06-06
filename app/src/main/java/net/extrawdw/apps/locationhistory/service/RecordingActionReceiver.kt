@@ -28,9 +28,12 @@ class RecordingActionReceiver : BroadcastReceiver() {
         if (action != ACTION_RESUME_RECORDING && action != ACTION_KEEP_RECORDING_ON_CLOSE) return
 
         AppLog.i(TAG, "notification action $action")
-        // Dismiss the alert regardless of which action was tapped.
-        context.getSystemService(NotificationManager::class.java)
-            ?.cancel(Notifications.RECORDING_STOPPED_NOTIFICATION_ID)
+        // Dismiss either alert (task-removal pause or post-update resume) regardless of which action
+        // was tapped — both surface the same Resume button.
+        context.getSystemService(NotificationManager::class.java)?.apply {
+            cancel(Notifications.RECORDING_STOPPED_NOTIFICATION_ID)
+            cancel(Notifications.RECORDING_TERMINATED_NOTIFICATION_ID)
+        }
 
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {

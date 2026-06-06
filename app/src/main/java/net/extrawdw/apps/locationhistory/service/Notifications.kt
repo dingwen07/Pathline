@@ -31,6 +31,7 @@ object Notifications {
      */
     const val ALERT_CHANNEL_ID = "pathline_alerts"
     const val RECORDING_STOPPED_NOTIFICATION_ID = 7002
+    const val RECORDING_TERMINATED_NOTIFICATION_ID = 7003
 
     /**
      * A context whose resources resolve against the app's per-app language (the Android 13+
@@ -110,6 +111,41 @@ object Notifications {
             .build()
         context.getSystemService(NotificationManager::class.java)
             ?.notify(RECORDING_STOPPED_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Alert (popup, silent) telling the user that recording stopped and could not restart on its own,
+     * so a tap is needed to resume. Posted when the recorder should be running but the foreground
+     * service isn't (e.g. the platform refused a background restart after a package replace, or a
+     * watchdog found it dead). Tapping Resume (or opening the app) brings the recorder back up.
+     */
+    fun notifyRecordingNeedsResume(context: Context) {
+        ensureAlertChannel(context)
+        val res = localized(context)
+        val text = res.getString(R.string.recording_terminated_text)
+        val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
+            .setContentTitle(res.getString(R.string.recording_terminated_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(contentIntent(context))
+            .setSmallIcon(R.drawable.ic_stat_recording)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            // Reinforce the channel's heads-up-but-silent intent (no default sound/vibration).
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(0)
+            .setVibrate(longArrayOf(0L))
+            // The watchdog re-posts this every tick while the recorder stays down; only pop the
+            // heads-up the first time so a persistent outage doesn't nag every 15 minutes.
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .addAction(
+                0,
+                res.getString(R.string.recording_stopped_action_resume),
+                actionIntent(context, RecordingActionReceiver.ACTION_RESUME_RECORDING, 3),
+            )
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            ?.notify(RECORDING_TERMINATED_NOTIFICATION_ID, notification)
     }
 
     private fun actionIntent(context: Context, action: String, requestCode: Int): PendingIntent {

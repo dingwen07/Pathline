@@ -84,6 +84,28 @@ class WorkScheduler @Inject constructor(
     }
 
     /**
+     * Periodic liveness watchdog for the recorder. Runs at the WorkManager minimum interval and, when
+     * tracking is on but the foreground service isn't running, restarts it (or alerts the user if a
+     * background start is refused). Deliberately *unconstrained* — battery-low and idle are exactly
+     * when an aggressive system kills the recorder, so the check must still run. It self-gates on the
+     * tracking preference, so a stray tick after the user turns recording off is a cheap no-op.
+     */
+    fun scheduleRecordingWatchdog() {
+        val request = PeriodicWorkRequestBuilder<RecordingWatchdogWorker>(15, TimeUnit.MINUTES)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            WORK_RECORDING_WATCHDOG,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    fun cancelRecordingWatchdog() {
+        workManager.cancelUniqueWork(WORK_RECORDING_WATCHDOG)
+    }
+
+    /**
      * Retrain the models — only ever while charging and battery-not-low. Enqueue this after
      * enough new user-confirmed examples have accumulated.
      */
@@ -140,6 +162,7 @@ class WorkScheduler @Inject constructor(
 
     companion object {
         const val WORK_TIMELINE_PERIODIC = "timeline-maintenance-periodic"
+        const val WORK_RECORDING_WATCHDOG = "recording-watchdog"
         const val WORK_MODEL_TRAINING = "model-training"
         const val WORK_BACKUP = "saf-backup"
         const val WORK_BACKUP_NOW = "saf-backup-now"
