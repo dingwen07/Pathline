@@ -105,6 +105,7 @@ private const val TODAY_PAGE = 100_000 // anchor; pages below are past days, non
 @Composable
 fun TimelineScreen(
     onOpenSettings: () -> Unit = {},
+    mapOnScreen: Boolean = true,
     viewModel: TimelineViewModel = hiltViewModel(),
 ) {
     val mapState by viewModel.mapState.collectAsStateWithLifecycle()
@@ -121,6 +122,11 @@ fun TimelineScreen(
     val scaffoldState = rememberBottomSheetScaffoldState()
     val scope = rememberCoroutineScope()
 
+    // Free the map's GPU surface when it isn't on screen and we're backgrounded (or under memory
+    // pressure). cameraPositionState above survives the unmount, so the camera is restored on
+    // remount, and the map's content is declarative so it rebuilds automatically.
+    val showMap = rememberMapComposed(onScreen = mapOnScreen)
+
     var confirmVisit by remember { mutableStateOf<VisitEntity?>(null) }
     var editItem by remember { mutableStateOf<TimelineItem?>(null) }
     var editSamples by remember { mutableStateOf<List<LocationSampleEntity>>(emptyList()) }
@@ -134,7 +140,7 @@ fun TimelineScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val hasFineLocation = remember {
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
     }
 
     val editBackProgress by rememberPredictiveBackProgress(enabled = editItem != null) {
@@ -159,11 +165,32 @@ fun TimelineScreen(
         if (editing || mapFitKey == null || fittedMapKey == mapFitKey) return@LaunchedEffect
         val bounds = mapState.boundsOrNull()
         if (bounds != null) {
-            runCatching { cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120)) }
-                .onFailure { cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(bounds.center, 15f)) }
+            runCatching {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngBounds(
+                        bounds,
+                        120
+                    )
+                )
+            }
+                .onFailure {
+                    cameraPositionState.move(
+                        CameraUpdateFactory.newLatLngZoom(
+                            bounds.center,
+                            15f
+                        )
+                    )
+                }
         } else {
             viewModel.currentLatLng()?.let {
-                cameraPositionState.move(CameraUpdateFactory.newCameraPosition(CameraPosition.fromLatLngZoom(it, 15f)))
+                cameraPositionState.move(
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.fromLatLngZoom(
+                            it,
+                            15f
+                        )
+                    )
+                )
             }
         }
         fittedMapKey = mapFitKey
@@ -184,14 +211,14 @@ fun TimelineScreen(
 
     @Composable
     fun TimelinePanel(expanded: Boolean) {
-            AnimatedContent(
-                targetState = editItem,
-                transitionSpec = {
-                    (slideInVertically { h -> h / 3 } + fadeIn(tween(200))) togetherWith
+        AnimatedContent(
+            targetState = editItem,
+            transitionSpec = {
+                (slideInVertically { h -> h / 3 } + fadeIn(tween(200))) togetherWith
                         (slideOutVertically { h -> h / 3 } + fadeOut(tween(200)))
-                },
-                label = "sheet",
-            ) { ed ->
+            },
+            label = "sheet",
+        ) { ed ->
             if (ed != null) {
                 Box(
                     Modifier.graphicsLayer {
@@ -202,8 +229,14 @@ fun TimelineScreen(
                     SplitEditorPanel(
                         samples = editSamples,
                         initialType = ed.currentType(),
-                        onSplit = { i, l, r -> viewModel.splitItem(ed, i, l, r); editItem = null; splitIndex = null; reclassifyType = null },
-                        onConvert = { t -> viewModel.convertItem(ed, t); editItem = null; splitIndex = null; reclassifyType = null },
+                        onSplit = { i, l, r ->
+                            viewModel.splitItem(ed, i, l, r); editItem = null; splitIndex =
+                            null; reclassifyType = null
+                        },
+                        onConvert = { t ->
+                            viewModel.convertItem(ed, t); editItem = null; splitIndex =
+                            null; reclassifyType = null
+                        },
                         onCancel = { editItem = null; splitIndex = null; reclassifyType = null },
                         onSplitIndexChange = { splitIndex = it },
                         onReclassifyType = { reclassifyType = it },
@@ -220,7 +253,9 @@ fun TimelineScreen(
                     )
                     HorizontalPager(
                         state = pagerState,
-                        modifier = if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(520.dp),
+                        modifier = if (expanded) Modifier.fillMaxSize() else Modifier
+                            .fillMaxWidth()
+                            .height(520.dp),
                     ) { page ->
                         val day = dayForPage(page)
                         val dayTimeline by remember(day) { viewModel.timelineFor(day) }
@@ -237,26 +272,61 @@ fun TimelineScreen(
                                 contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
                             ) {
                                 if (dayTimeline.items.isEmpty()) {
-                                    item { EmptyDay(Modifier.fillParentMaxWidth().padding(32.dp)) }
+                                    item { EmptyDay(Modifier
+                                        .fillParentMaxWidth()
+                                        .padding(32.dp)) }
                                 }
-                                itemsIndexed(dayTimeline.items, key = { _, it -> it.itemKey() }) { index, item ->
+                                itemsIndexed(
+                                    dayTimeline.items,
+                                    key = { _, it -> it.itemKey() }) { index, item ->
                                     when (item) {
                                         is TimelineItem.VisitItem -> VisitRow(
                                             item = item,
                                             isFirst = index == 0,
                                             isLast = index == dayTimeline.items.lastIndex,
-                                            topColor = tripJoinColor(dayTimeline.items.getOrNull(index - 1), first = true),
-                                            bottomColor = tripJoinColor(dayTimeline.items.getOrNull(index + 1), first = false),
+                                            topColor = tripJoinColor(
+                                                dayTimeline.items.getOrNull(
+                                                    index - 1
+                                                ), first = true
+                                            ),
+                                            bottomColor = tripJoinColor(
+                                                dayTimeline.items.getOrNull(
+                                                    index + 1
+                                                ), first = false
+                                            ),
                                             onConfirm = { confirmVisit = item.visit },
-                                            onOpenPlace = { item.visit.placeId?.let { detailPlaceId = it } },
+                                            onOpenPlace = {
+                                                item.visit.placeId?.let {
+                                                    detailPlaceId = it
+                                                }
+                                            },
                                             onEditPlace = { item.place?.let { editPlace = it } },
-                                            onEditSamples = { editItem = item; scope.launch { editSamples = viewModel.samplesFor(item) } },
+                                            onEditSamples = {
+                                                editItem = item; scope.launch {
+                                                editSamples = viewModel.samplesFor(item)
+                                            }
+                                            },
                                         )
+
                                         is TimelineItem.TripItem -> TripRow(
                                             item = item,
-                                            onConfirmTripMode = { id, mode -> viewModel.confirmTripMode(id, mode) },
-                                            onMarkStationary = { viewModel.convertItem(item, SegmentType.Stationary) },
-                                            onEdit = { editItem = item; scope.launch { editSamples = viewModel.samplesFor(item) } },
+                                            onConfirmTripMode = { id, mode ->
+                                                viewModel.confirmTripMode(
+                                                    id,
+                                                    mode
+                                                )
+                                            },
+                                            onMarkStationary = {
+                                                viewModel.convertItem(
+                                                    item,
+                                                    SegmentType.Stationary
+                                                )
+                                            },
+                                            onEdit = {
+                                                editItem = item; scope.launch {
+                                                editSamples = viewModel.samplesFor(item)
+                                            }
+                                            },
                                         )
                                     }
                                 }
@@ -265,61 +335,90 @@ fun TimelineScreen(
                     }
                 }
             }
-            }
+        }
     }
 
     @Composable
-    fun MapPanel(contentPadding: PaddingValues, recenterBottomPadding: androidx.compose.ui.unit.Dp) {
+    fun MapPanel(
+        contentPadding: PaddingValues,
+        recenterBottomPadding: androidx.compose.ui.unit.Dp
+    ) {
         Box(Modifier.fillMaxSize()) {
-            GoogleMap(
-                modifier = Modifier.fillMaxSize(),
-                cameraPositionState = cameraPositionState,
-                mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
-                contentPadding = contentPadding,
-                properties = MapProperties(isMyLocationEnabled = hasFineLocation),
-                uiSettings = MapUiSettings(
-                    zoomControlsEnabled = false,
-                    myLocationButtonEnabled = false,
-                ),
-            ) {
-                val dim = editing
-                if (mapState.rawPath.size >= 2) {
-                    Polyline(points = mapState.rawPath, color = Color(0x33888888), width = 5f)
-                }
-                mapState.segments.forEach { seg ->
-                    Polyline(
-                        points = seg.points,
-                        color = if (dim) Color(0x33888888) else modeColor(seg.mode),
-                        width = if (seg.confirmed) 16f else 11f,
-                    )
-                }
-                // Yellow place rings (fill only, no edge).
-                mapState.placeRings.forEach { ring ->
-                    Circle(center = ring.center, radius = ring.radiusMeters, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = PLACE_RING.copy(alpha = if (dim) 0.06f else 0.18f))
-                }
-                // Visits: translucent radius circle plus a fixed screen-size center dot.
-                mapState.visits.forEach { v ->
-                    Circle(center = v.center, radius = v.radiusMeters, strokeColor = Color.Transparent, strokeWidth = 0f, fillColor = VISIT_BLUE.copy(alpha = if (dim) 0.10f else 0.22f))
-                    MarkerComposable(
-                        v.center.latitude,
-                        v.center.longitude,
-                        dim,
-                        state = rememberUpdatedMarkerState(position = v.center),
-                        anchor = Offset(0.5f, 0.5f),
-                        flat = true,
-                        zIndex = 10f,
-                    ) {
-                        VisitCenterDot(VISIT_BLUE, alpha = if (dim) 0.55f else 1f)
+            if (showMap) {
+                GoogleMap(
+                    modifier = Modifier.fillMaxSize(),
+                    cameraPositionState = cameraPositionState,
+                    mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+                    contentPadding = contentPadding,
+                    properties = MapProperties(isMyLocationEnabled = hasFineLocation),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = false,
+                        myLocationButtonEnabled = false,
+                    ),
+                ) {
+                    val dim = editing
+                    if (mapState.rawPath.size >= 2) {
+                        Polyline(points = mapState.rawPath, color = Color(0x33888888), width = 5f)
                     }
-                }
-                // Split/reclassify preview.
-                if (editing && editPoints.size >= 2) {
-                    val idx = splitIndex
-                    if (idx != null && idx in 1 until editPoints.size) {
-                        Polyline(points = editPoints.subList(0, idx + 1), color = Color(0xFF2E7D32), width = 18f)
-                        Polyline(points = editPoints.subList(idx, editPoints.size), color = Color(0xFF1565C0), width = 18f)
-                    } else {
-                        Polyline(points = editPoints, color = typeColor(reclassifyType), width = 18f)
+                    mapState.segments.forEach { seg ->
+                        Polyline(
+                            points = seg.points,
+                            color = if (dim) Color(0x33888888) else modeColor(seg.mode),
+                            width = if (seg.confirmed) 16f else 11f,
+                        )
+                    }
+                    // Yellow place rings (fill only, no edge).
+                    mapState.placeRings.forEach { ring ->
+                        Circle(
+                            center = ring.center,
+                            radius = ring.radiusMeters,
+                            strokeColor = Color.Transparent,
+                            strokeWidth = 0f,
+                            fillColor = PLACE_RING.copy(alpha = if (dim) 0.06f else 0.18f)
+                        )
+                    }
+                    // Visits: translucent radius circle plus a fixed screen-size center dot.
+                    mapState.visits.forEach { v ->
+                        Circle(
+                            center = v.center,
+                            radius = v.radiusMeters,
+                            strokeColor = Color.Transparent,
+                            strokeWidth = 0f,
+                            fillColor = VISIT_BLUE.copy(alpha = if (dim) 0.10f else 0.22f)
+                        )
+                        MarkerComposable(
+                            v.center.latitude,
+                            v.center.longitude,
+                            dim,
+                            state = rememberUpdatedMarkerState(position = v.center),
+                            anchor = Offset(0.5f, 0.5f),
+                            flat = true,
+                            zIndex = 10f,
+                        ) {
+                            VisitCenterDot(VISIT_BLUE, alpha = if (dim) 0.55f else 1f)
+                        }
+                    }
+                    // Split/reclassify preview.
+                    if (editing && editPoints.size >= 2) {
+                        val idx = splitIndex
+                        if (idx != null && idx in 1 until editPoints.size) {
+                            Polyline(
+                                points = editPoints.subList(0, idx + 1),
+                                color = Color(0xFF2E7D32),
+                                width = 18f
+                            )
+                            Polyline(
+                                points = editPoints.subList(idx, editPoints.size),
+                                color = Color(0xFF1565C0),
+                                width = 18f
+                            )
+                        } else {
+                            Polyline(
+                                points = editPoints,
+                                color = typeColor(reclassifyType),
+                                width = 18f
+                            )
+                        }
                     }
                 }
             }
@@ -339,7 +438,10 @@ fun TimelineScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) {
-                    Icon(Icons.Filled.MyLocation, contentDescription = stringResource(R.string.cd_recenter))
+                    Icon(
+                        Icons.Filled.MyLocation,
+                        contentDescription = stringResource(R.string.cd_recenter)
+                    )
                 }
             }
         }
@@ -361,17 +463,23 @@ fun TimelineScreen(
         if (threePane) {
             Row(Modifier.fillMaxSize()) {
                 Surface(
-                    modifier = Modifier.width(420.dp).fillMaxHeight(),
+                    modifier = Modifier
+                        .width(420.dp)
+                        .fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 1.dp,
                 ) {
                     TimelinePanel(expanded = true)
                 }
                 Surface(
-                    modifier = Modifier.width(1.dp).fillMaxHeight(),
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight(),
                     color = MaterialTheme.colorScheme.outlineVariant,
                 ) {}
-                Box(Modifier.weight(1f).fillMaxHeight()) {
+                Box(Modifier
+                    .weight(1f)
+                    .fillMaxHeight()) {
                     MapPanel(contentPadding = PaddingValues(), recenterBottomPadding = 24.dp)
                 }
             }
@@ -381,7 +489,10 @@ fun TimelineScreen(
                 sheetPeekHeight = SHEET_PEEK,
                 sheetContent = { TimelinePanel(expanded = false) },
             ) {
-                MapPanel(contentPadding = PaddingValues(bottom = SHEET_PEEK), recenterBottomPadding = SHEET_PEEK + 24.dp)
+                MapPanel(
+                    contentPadding = PaddingValues(bottom = SHEET_PEEK),
+                    recenterBottomPadding = SHEET_PEEK + 24.dp
+                )
             }
         }
     }
@@ -401,14 +512,27 @@ fun TimelineScreen(
         PlaceEditDialog(
             place = place,
             onSave = { name, address, lat, lon, radius, fixed ->
-                viewModel.updatePlace(place.copy(name = name, address = address, latitude = lat, longitude = lon, radiusMeters = radius, fixed = fixed))
+                viewModel.updatePlace(
+                    place.copy(
+                        name = name,
+                        address = address,
+                        latitude = lat,
+                        longitude = lon,
+                        radiusMeters = radius,
+                        fixed = fixed
+                    )
+                )
                 editPlace = null
             },
             onDismiss = { editPlace = null },
         )
     }
 
-    detailPlaceId?.let { id -> PlaceDetailDialog(placeId = id, onDismiss = { detailPlaceId = null }) }
+    detailPlaceId?.let { id ->
+        PlaceDetailDialog(
+            placeId = id,
+            onDismiss = { detailPlaceId = null })
+    }
 }
 
 // --- recording-off banner ---------------------------------------------------------------------
@@ -457,7 +581,9 @@ private fun DayHeader(
     compact: Boolean = false,
 ) {
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compact) 0.dp else 4.dp),
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = if (compact) 0.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -470,7 +596,10 @@ private fun DayHeader(
             onClick = onToday,
             enabled = !isToday,
         ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.cd_jump_to_today))
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = stringResource(R.string.cd_jump_to_today)
+            )
         }
     }
     HorizontalDivider()
@@ -489,9 +618,14 @@ private fun typeColor(type: SegmentType?): Color = when (type) {
 
 private fun MapState.boundsOrNull(): LatLngBounds? {
     val points = ArrayList<LatLng>()
-    val rings = visits.map { it.center to it.radiusMeters } + placeRings.map { it.center to it.radiusMeters }
+    val rings =
+        visits.map { it.center to it.radiusMeters } + placeRings.map { it.center to it.radiusMeters }
     rings.forEach { (center, radius) ->
-        val box = net.extrawdw.apps.locationhistory.core.Geo.boundingBox(center.latitude, center.longitude, radius.coerceAtLeast(60.0))
+        val box = net.extrawdw.apps.locationhistory.core.Geo.boundingBox(
+            center.latitude,
+            center.longitude,
+            radius.coerceAtLeast(60.0)
+        )
         points.add(LatLng(box[0], box[1])); points.add(LatLng(box[2], box[3]))
     }
     segments.forEach { points.addAll(it.points) }
@@ -510,7 +644,7 @@ private fun MapState.fitKey(): String {
         val first = segment.points.firstOrNull()
         val last = segment.points.lastOrNull()
         "${segment.mode}:${segment.points.size}:${first?.latitude?.formatFit()},${first?.longitude?.formatFit()}:" +
-            "${last?.latitude?.formatFit()},${last?.longitude?.formatFit()}"
+                "${last?.latitude?.formatFit()},${last?.longitude?.formatFit()}"
     }
     val placeKey = placeRings.joinToString("|") {
         "${it.center.latitude.formatFit()},${it.center.longitude.formatFit()},${it.radiusMeters.toInt()}"
@@ -566,19 +700,37 @@ private fun VisitRow(
     onEditPlace: () -> Unit,
     onEditSamples: () -> Unit,
 ) {
-    val dotColor = if (item.confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+    val dotColor =
+        if (item.confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val surfaceColor = MaterialTheme.colorScheme.surface
     var menuOpen by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 16.dp)) {
-        Box(Modifier.width(GUTTER_WIDTH).fillMaxHeight()) {
+    Row(Modifier
+        .fillMaxWidth()
+        .height(IntrinsicSize.Min)
+        .padding(horizontal = 16.dp)) {
+        Box(Modifier
+            .width(GUTTER_WIDTH)
+            .fillMaxHeight()) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
                 val dotY = NODE_DOT_Y.toPx().coerceAtMost(size.height - 4.dp.toPx())
                 val topY = if (isFirst) dotY else 0f
                 val bottomY = if (isLast) dotY else size.height
-                if (dotY > topY) drawLine(topColor ?: lineColor, Offset(cx, topY), Offset(cx, dotY), if (topColor != null) 6.dp.toPx() else 3.dp.toPx(), StrokeCap.Round)
-                if (bottomY > dotY) drawLine(bottomColor ?: lineColor, Offset(cx, dotY), Offset(cx, bottomY), if (bottomColor != null) 6.dp.toPx() else 3.dp.toPx(), StrokeCap.Round)
+                if (dotY > topY) drawLine(
+                    topColor ?: lineColor,
+                    Offset(cx, topY),
+                    Offset(cx, dotY),
+                    if (topColor != null) 6.dp.toPx() else 3.dp.toPx(),
+                    StrokeCap.Round
+                )
+                if (bottomY > dotY) drawLine(
+                    bottomColor ?: lineColor,
+                    Offset(cx, dotY),
+                    Offset(cx, bottomY),
+                    if (bottomColor != null) 6.dp.toPx() else 3.dp.toPx(),
+                    StrokeCap.Round
+                )
                 drawCircle(surfaceColor, 9.dp.toPx(), Offset(cx, dotY))
                 drawCircle(dotColor, 6.dp.toPx(), Offset(cx, dotY))
             }
@@ -586,7 +738,9 @@ private fun VisitRow(
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(vertical = 4.dp),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -594,14 +748,25 @@ private fun VisitRow(
                         item.displayName,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f).then(if (item.place != null) Modifier.clickable(onClick = onOpenPlace) else Modifier),
+                        modifier = Modifier
+                            .weight(1f)
+                            .then(if (item.place != null) Modifier.clickable(onClick = onOpenPlace) else Modifier),
                     )
                     Box {
-                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_edit)) }
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = stringResource(R.string.cd_edit)
+                            )
+                        }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(R.string.menu_split)) }, onClick = { menuOpen = false; onEditSamples() })
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.menu_split)) },
+                                onClick = { menuOpen = false; onEditSamples() })
                             if (item.place != null) {
-                                DropdownMenuItem(text = { Text(stringResource(R.string.menu_edit_place)) }, onClick = { menuOpen = false; onEditPlace() })
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_edit_place)) },
+                                    onClick = { menuOpen = false; onEditPlace() })
                             }
                         }
                     }
@@ -615,12 +780,19 @@ private fun VisitRow(
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     if (!item.confirmed) {
                         UnconfirmedChip()
-                        AssistChip(onClick = onConfirm, label = { Text(stringResource(R.string.menu_confirm_place)) })
+                        AssistChip(
+                            onClick = onConfirm,
+                            label = { Text(stringResource(R.string.menu_confirm_place)) })
                     } else {
-                        AssistChip(onClick = onConfirm, label = { Text(stringResource(R.string.menu_change_place)) })
+                        AssistChip(
+                            onClick = onConfirm,
+                            label = { Text(stringResource(R.string.menu_change_place)) })
                     }
                 }
             }
@@ -639,12 +811,25 @@ private fun TripRow(
     val context = LocalContext.current
     val modeLabel = stringResource(trip.mode.labelRes)
     var menuOpen by remember(trip.id) { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 16.dp)) {
-        Box(Modifier.width(GUTTER_WIDTH).fillMaxHeight()) { TripLine(item, Modifier.fillMaxSize()) }
-        Column(Modifier.weight(1f).padding(top = 6.dp, bottom = 6.dp)) {
+    Row(Modifier
+        .fillMaxWidth()
+        .height(IntrinsicSize.Min)
+        .padding(horizontal = 16.dp)) {
+        Box(Modifier
+            .width(GUTTER_WIDTH)
+            .fillMaxHeight()) { TripLine(item, Modifier.fillMaxSize()) }
+        Column(Modifier
+            .weight(1f)
+            .padding(top = 6.dp, bottom = 6.dp)) {
             Box {
                 CompactTripLine(
-                    icon = { Icon(Format.transportIcon(trip.mode), modeLabel, tint = modeColor(trip.mode)) },
+                    icon = {
+                        Icon(
+                            Format.transportIcon(trip.mode),
+                            modeLabel,
+                            tint = modeColor(trip.mode)
+                        )
+                    },
                     text = stringResource(
                         R.string.trip_summary,
                         modeLabel,
@@ -657,10 +842,14 @@ private fun TripRow(
                     onEdit = onEdit,
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.menu_stationary_place)) }, onClick = { menuOpen = false; onMarkStationary() })
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.menu_stationary_place)) },
+                        onClick = { menuOpen = false; onMarkStationary() })
                     HorizontalDivider()
                     TransportMode.MODEL_CLASSES.forEach { mode ->
-                        DropdownMenuItem(text = { Text(stringResource(mode.labelRes)) }, onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })
+                        DropdownMenuItem(
+                            text = { Text(stringResource(mode.labelRes)) },
+                            onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })
                     }
                 }
             }
@@ -679,7 +868,9 @@ private fun CompactTripLine(
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(top = topPadding),
+        Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -690,8 +881,15 @@ private fun CompactTripLine(
             color = if (confirmed) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
-        AssistChip(onClick = onConfirm, label = { Text(stringResource(if (confirmed) R.string.chip_edit_mode else R.string.chip_confirm)) })
-        if (showEdit) IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cd_edit_trip)) }
+        AssistChip(
+            onClick = onConfirm,
+            label = { Text(stringResource(if (confirmed) R.string.chip_edit_mode else R.string.chip_confirm)) })
+        if (showEdit) IconButton(onClick = onEdit) {
+            Icon(
+                Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.cd_edit_trip)
+            )
+        }
     }
 }
 
@@ -712,5 +910,8 @@ private fun tripJoinColor(item: TimelineItem?, first: Boolean): Color? {
 
 @Composable
 private fun UnconfirmedChip() {
-    AssistChip(onClick = {}, enabled = false, label = { Text(stringResource(R.string.chip_unconfirmed)) })
+    AssistChip(
+        onClick = {},
+        enabled = false,
+        label = { Text(stringResource(R.string.chip_unconfirmed)) })
 }

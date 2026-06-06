@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory
 
+import android.content.ComponentCallbacks2
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
@@ -35,6 +36,7 @@ import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.ui.OnboardingScreen
 import net.extrawdw.apps.locationhistory.ui.OnboardingViewModel
 import net.extrawdw.apps.locationhistory.ui.MapExplorerScreen
+import net.extrawdw.apps.locationhistory.ui.MapMemoryPressure
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
 import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
@@ -45,8 +47,10 @@ import net.extrawdw.apps.locationhistory.work.WorkScheduler
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    @javax.inject.Inject lateinit var recordingController: RecordingController
-    @javax.inject.Inject lateinit var workScheduler: WorkScheduler
+    @javax.inject.Inject
+    lateinit var recordingController: RecordingController
+    @javax.inject.Inject
+    lateinit var workScheduler: WorkScheduler
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,12 +60,28 @@ class MainActivity : ComponentActivity() {
             recordingController.onAppForegrounded()
             workScheduler.schedulePeriodicTimelineMaintenance()
             workScheduler.schedulePeriodicBackup()
-            workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(System.currentTimeMillis()), "app_open")
+            workScheduler.enqueueTimelineMaintenanceNow(
+                TimeBuckets.dayEpoch(System.currentTimeMillis()),
+                "app_open"
+            )
         }
         setContent {
             PathlineTheme {
                 PathlineRoot()
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Back in the foreground: let the maps warm up again after any pressure-driven release.
+        MapMemoryPressure.active = false
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+            MapMemoryPressure.active = true
         }
     }
 }
@@ -78,6 +98,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
             Surface(Modifier.fillMaxSize()) {}
             return
         }
+
         false -> {
             OnboardingScreen(
                 permissions = permissions,
@@ -86,6 +107,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
             )
             return
         }
+
         else -> Unit
     }
 
@@ -116,22 +138,41 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
             var mapOpened by rememberSaveable { mutableStateOf(false) }
             LaunchedEffect(destination) { if (destination == AppDestinations.MAP) mapOpened = true }
             Box(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxSize().zIndex(if (destination == AppDestinations.TIMELINE) 1f else 0f)) {
-                    TimelineScreen(onOpenSettings = { destination = AppDestinations.SETTINGS })
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .zIndex(if (destination == AppDestinations.TIMELINE) 1f else 0f)
+                ) {
+                    TimelineScreen(
+                        onOpenSettings = { destination = AppDestinations.SETTINGS },
+                        mapOnScreen = destination == AppDestinations.TIMELINE,
+                    )
                 }
                 if (mapOpened) {
-                    Box(Modifier.fillMaxSize().zIndex(if (destination == AppDestinations.MAP) 1f else 0f)) {
-                        MapExplorerScreen()
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(if (destination == AppDestinations.MAP) 1f else 0f)
+                    ) {
+                        MapExplorerScreen(mapOnScreen = destination == AppDestinations.MAP)
                     }
                 }
                 when (destination) {
-                    AppDestinations.PLACES -> Surface(Modifier.fillMaxSize().zIndex(2f)) { PlacesScreen() }
-                    AppDestinations.SETTINGS -> Surface(Modifier.fillMaxSize().zIndex(2f)) {
+                    AppDestinations.PLACES -> Surface(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(2f)
+                    ) { PlacesScreen() }
+
+                    AppDestinations.SETTINGS -> Surface(Modifier
+                        .fillMaxSize()
+                        .zIndex(2f)) {
                         SettingsScreen(
                             permissionsGranted = permissions.granted,
                             onRequestPermissions = permissions::request,
                         )
                     }
+
                     else -> Unit
                 }
             }

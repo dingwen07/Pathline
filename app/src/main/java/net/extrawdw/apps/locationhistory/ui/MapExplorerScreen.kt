@@ -29,11 +29,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -70,12 +70,15 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
 private val TRACK_RED = ComposeColor(0x66FF1744) // translucent
 private const val DOT_DP = 3f
-private const val DOT_DP_NO_TRACK = 1.5f // dots stand alone without a track line, so draw them tinier
+private const val DOT_DP_NO_TRACK = 1.5f
 private const val MARKER_BATCH = 400 // markers added per UI-thread slice before yielding
 
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
-fun MapExplorerScreen(viewModel: MapExplorerViewModel = hiltViewModel()) {
+fun MapExplorerScreen(
+    mapOnScreen: Boolean = true,
+    viewModel: MapExplorerViewModel = hiltViewModel()
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val range by viewModel.range.collectAsStateWithLifecycle()
     val drawTrackCustom by viewModel.drawTrackCustom.collectAsStateWithLifecycle()
@@ -87,7 +90,8 @@ fun MapExplorerScreen(viewModel: MapExplorerViewModel = hiltViewModel()) {
 
     // Without a track line the dots stand on their own, so shrink them further to cut clutter.
     val drawingTrack = state.trackPoints.size >= 2
-    val dotSizePx = with(LocalDensity.current) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
+    val dotSizePx =
+        with(LocalDensity.current) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
     // Built lazily once the map (and thus BitmapDescriptorFactory) is initialized; rebuilt when the
     // dot size changes (the array also caches the size it was built for).
     val dotIcon = remember { arrayOfNulls<BitmapDescriptor>(1) }
@@ -113,41 +117,74 @@ fun MapExplorerScreen(viewModel: MapExplorerViewModel = hiltViewModel()) {
             cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(pts.first(), 15f))
         } else {
             val bounds = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-            runCatching { cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120)) }
-                .onFailure { cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)) }
+            runCatching {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngBounds(
+                        bounds,
+                        120
+                    )
+                )
+            }
+                .onFailure {
+                    cameraPositionState.move(
+                        CameraUpdateFactory.newLatLngZoom(
+                            bounds.center,
+                            14f
+                        )
+                    )
+                }
         }
         viewModel.lastFittedPoints = pts
         viewModel.cameraFramed = true
     }
 
+    // Drop the map's GPU surface when it isn't needed (backgrounded off-screen, or under memory
+    // pressure). cameraPositionState lives in the ViewModel so the camera is restored on remount.
+    val showMap = rememberMapComposed(onScreen = mapOnScreen)
+
     Box(Modifier.fillMaxSize()) {
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            mapColorScheme = ComposeMapColorScheme.DARK,
-            uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false),
-        ) {
-            if (state.trackPoints.size >= 2) {
-                Polyline(points = state.trackPoints, color = TRACK_RED, width = 6f)
-            }
-            // Red dots are plain map markers sharing a single bitmap icon (far cheaper than
-            // MarkerComposable), added in batches that yield so the UI thread never stalls.
-            MapEffect(state.dotPoints, dotSizePx) { map ->
-                markers.forEach { it.remove() }
-                markers.clear()
-                val pts = state.dotPoints
-                if (pts.isEmpty()) return@MapEffect
-                if (dotIcon[0] == null || dotIconSizePx[0] != dotSizePx) {
-                    dotIcon[0] = redDotDescriptor(dotSizePx)
-                    dotIconSizePx[0] = dotSizePx
+        if (showMap) {
+            // The markers/icon below are added imperatively against the live map; when the map
+            // leaves composition they are invalidated with it. Drop our stale references (and the
+            // icon cached against the old map's factory) so the next mount rebuilds cleanly.
+            DisposableEffect(Unit) {
+                onDispose {
+                    markers.clear()
+                    dotIcon[0] = null
+                    dotIconSizePx[0] = -1f
                 }
-                val icon = dotIcon[0]!!
-                var i = 0
-                for (p in pts) {
-                    map.addMarker(
-                        MarkerOptions().position(p).icon(icon).anchor(0.5f, 0.5f).flat(true),
-                    )?.let { markers.add(it) }
-                    if (++i % MARKER_BATCH == 0) yield()
+            }
+            GoogleMap(
+                modifier = Modifier.fillMaxSize(),
+                cameraPositionState = cameraPositionState,
+                mapColorScheme = ComposeMapColorScheme.DARK,
+                uiSettings = MapUiSettings(
+                    zoomControlsEnabled = false,
+                    myLocationButtonEnabled = false
+                ),
+            ) {
+                if (state.trackPoints.size >= 2) {
+                    Polyline(points = state.trackPoints, color = TRACK_RED, width = 6f)
+                }
+                // Red dots are plain map markers sharing a single bitmap icon (far cheaper than
+                // MarkerComposable), added in batches that yield so the UI thread never stalls.
+                MapEffect(state.dotPoints, dotSizePx) { map ->
+                    markers.forEach { it.remove() }
+                    markers.clear()
+                    val pts = state.dotPoints
+                    if (pts.isEmpty()) return@MapEffect
+                    if (dotIcon[0] == null || dotIconSizePx[0] != dotSizePx) {
+                        dotIcon[0] = redDotDescriptor(dotSizePx)
+                        dotIconSizePx[0] = dotSizePx
+                    }
+                    val icon = dotIcon[0]!!
+                    var i = 0
+                    for (p in pts) {
+                        map.addMarker(
+                            MarkerOptions().position(p).icon(icon).anchor(0.5f, 0.5f).flat(true),
+                        )?.let { markers.add(it) }
+                        if (++i % MARKER_BATCH == 0) yield()
+                    }
                 }
             }
         }
@@ -209,7 +246,10 @@ private fun ControlBar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(12.dp),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 3.dp,
@@ -218,7 +258,9 @@ private fun ControlBar(
             // Size each segment to its content and let the row scroll horizontally on narrow
             // screens, so the selected checkmark + label stay centered instead of being squeezed.
             SingleChoiceSegmentedButtonRow(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
             ) {
                 MapRange.entries.forEachIndexed { index, r ->
                     SegmentedButton(
@@ -231,7 +273,9 @@ private fun ControlBar(
             }
             if (range == MapRange.CUSTOM) {
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -241,12 +285,19 @@ private fun ControlBar(
                     )
                     TextButton(onClick = onPickDates) { Text(stringResource(R.string.action_change)) }
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.map_draw_track), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.map_draw_track),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                     Switch(checked = drawTrackCustom, onCheckedChange = onToggleTrack)
                 }
             }
             Text(
-                if (loading) stringResource(R.string.map_loading) else pluralStringResource(R.plurals.points_count, pointCount, pointCount),
+                if (loading) stringResource(R.string.map_loading) else pluralStringResource(
+                    R.plurals.points_count,
+                    pointCount,
+                    pointCount
+                ),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
@@ -275,12 +326,18 @@ private fun DateRangePickerDialog(
     ) {
         val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
         Surface(
-            Modifier.fillMaxSize().predictiveBack(backProgress),
+            Modifier
+                .fillMaxSize()
+                .predictiveBack(backProgress),
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            Column(Modifier
+                .fillMaxSize()
+                .statusBarsPadding()) {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
@@ -296,7 +353,9 @@ private fun DateRangePickerDialog(
                         enabled = start != null && end != null,
                     ) { Text(stringResource(R.string.action_plot)) }
                 }
-                DateRangePicker(state = pickerState, modifier = Modifier.fillMaxWidth().weight(1f))
+                DateRangePicker(state = pickerState, modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f))
             }
         }
     }
@@ -311,7 +370,11 @@ private fun dayEpochToUtcMillis(dayEpoch: Long): Long =
 
 private val DAY_FMT = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
 
-private fun customRangeLabel(context: android.content.Context, startDay: Long?, endDay: Long?): String {
+private fun customRangeLabel(
+    context: android.content.Context,
+    startDay: Long?,
+    endDay: Long?
+): String {
     if (startDay == null || endDay == null) return context.getString(R.string.map_no_dates)
     val lo = minOf(startDay, endDay)
     val hi = maxOf(startDay, endDay)
