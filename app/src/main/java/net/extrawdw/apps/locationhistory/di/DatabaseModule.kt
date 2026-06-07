@@ -9,6 +9,8 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
+import net.extrawdw.apps.locationhistory.data.db.ApiAccessDatabase
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.AppMigrations
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
@@ -78,6 +80,21 @@ object DatabaseModule {
 
     @Provides
     fun provideBackupDao(db: AppDatabase): BackupDao = db.backupDao()
+
+    /**
+     * Standalone, unencrypted log DB for the third-party API audit trail (which app read what, when).
+     * Kept apart from [AppDatabase] so logging never touches the frozen v1 schema or the backup
+     * engine. A schema change here may rebuild destructively — the audit log is disposable.
+     */
+    @Provides
+    @Singleton
+    fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase =
+        Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
+            .fallbackToDestructiveMigration(dropAllTables = true)
+            .build()
+
+    @Provides
+    fun provideApiAccessDao(db: ApiAccessDatabase): ApiAccessDao = db.apiAccessDao()
 
     /** Room creates entity tables on a fresh install but never triggers — add them here. */
     private val TriggerCallback = object : RoomDatabase.Callback() {

@@ -149,6 +149,40 @@ class WorkScheduler @Inject constructor(
         )
     }
 
+    /**
+     * Daily upkeep for the third-party data API: prune the audit log and, throttled, remind the user
+     * which apps still hold access. Battery-not-low so it never fights the recorder for power.
+     */
+    fun schedulePeriodicApiAccessCheck() {
+        val constraints = Constraints.Builder()
+            .setRequiresBatteryNotLow(true)
+            .build()
+        val request = PeriodicWorkRequestBuilder<ApiAccessMaintenanceWorker>(1, TimeUnit.DAYS)
+            .setConstraints(constraints)
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            WORK_API_ACCESS, ExistingPeriodicWorkPolicy.KEEP, request,
+        )
+    }
+
+    /**
+     * Post the "an app read your Pathline data" alert for [packageName]. Called from the provider on
+     * each successful read; unique-per-app with a short initial delay so a burst of reads coalesces
+     * into a single run (KEEP drops re-enqueues while one is pending). The worker itself rate-limits
+     * repeat alerts per app — see [ApiAccessNotifyWorker].
+     */
+    fun enqueueApiAccessNotification(packageName: String) {
+        val request = OneTimeWorkRequestBuilder<ApiAccessNotifyWorker>()
+            .setInputData(workDataOf(ApiAccessNotifyWorker.KEY_PACKAGE to packageName))
+            .setInitialDelay(API_ACCESS_COALESCE_MINUTES, TimeUnit.MINUTES)
+            .build()
+        workManager.enqueueUniqueWork(
+            "$WORK_API_ACCESS_NOTIFY:$packageName",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
+
     /** Run an incremental backup as soon as constraints allow (after a manual "Back up now"). */
     fun enqueueBackupNow() {
         val request = OneTimeWorkRequestBuilder<BackupWorker>()
@@ -166,6 +200,11 @@ class WorkScheduler @Inject constructor(
         const val WORK_MODEL_TRAINING = "model-training"
         const val WORK_BACKUP = "saf-backup"
         const val WORK_BACKUP_NOW = "saf-backup-now"
+        const val WORK_API_ACCESS = "api-access-check"
+        const val WORK_API_ACCESS_NOTIFY = "api-access-notify"
+
+        /** Burst-coalescing delay before the per-app read alert runs. */
+        const val API_ACCESS_COALESCE_MINUTES = 2L
 
         fun timelineMaintenanceWorkName(dayEpoch: Long): String = "timeline-maintenance-$dayEpoch"
         fun timelineMaintenanceNowWorkName(dayEpoch: Long): String =

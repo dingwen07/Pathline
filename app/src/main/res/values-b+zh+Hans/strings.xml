@@ -310,4 +310,60 @@
     <plurals name="points_count">
         <item quantity="other">%d 个点</item>
     </plurals>
+
+    <!-- ===================== Third-party data API permissions ===================== -->
+    <!-- 系统会把 description 嵌入“允许"应用"<description>吗？”，因此为不带句号的动词短语；label 为设置中的标题。 -->
+    <string name="perm_read_timeline_label">读取 Pathline 时间线</string>
+    <string name="perm_read_timeline_description">读取 Pathline 中的访问地点和行程</string>
+    <string name="perm_read_location_history_label">读取 Pathline 位置数据</string>
+    <string name="perm_read_location_history_description">读取 Pathline 记录的原始位置采样</string>
+    <string name="perm_read_extended_history_label">读取更早的 Pathline 历史</string>
+    <string name="perm_read_extended_history_description">读取 30 天前的 Pathline 数据</string>
+
+    <!-- ===================== API 访问管理 ===================== -->
+    <string name="settings_api_access_title">访问 Pathline 数据</string>
+    <string name="settings_api_access_desc">查看哪些应用读取过您的时间线和位置历史。</string>
+    <string name="api_access_title">访问 Pathline 数据</string>
+    <string name="api_access_intro">过去 7 天内应用读取您 Pathline 数据的时间线。访问由 Android 权限控制 — 点按某个应用可在系统设置中管理。</string>
+    <string name="api_access_apps_header">拥有访问权限的应用</string>
+    <string name="api_access_no_apps">还没有应用读取过您的 Pathline 数据。</string>
+    <string name="api_access_activity_header">最近活动</string>
+    <string name="api_access_no_activity">过去 7 天内没有应用读取过您的数据。</string>
+    <string name="api_access_last_read">上次读取 %1$s</string>
+    <string name="api_access_never_read">尚未读取您的数据</string>
+    <string name="api_access_not_installed">已卸载</string>
+    <string name="api_access_revoked">访问已关闭</string>
+    <string name="api_access_event_subtitle">%1$d 个%2$s · %3$s</string>
+    <string name="api_access_today">今天</string>
+    <string name="api_access_yesterday">昨天</string>
+    <string name="api_access_export">导出日志</string>
+    <string name="api_access_export_chooser">导出 API 访问日志</string>
+    <string name="api_access_reset_backoff">重置通知计时</string>
+    <string name="api_access_backoff_reset">已重置通知计时 — 下次访问将再次提醒。</string>
+    <string name="api_access_notif_off_title">通知已关闭</string>
+    <string name="api_access_notif_off_desc">当其他应用读取您的时间线或位置历史时，Pathline 无法提醒您。请开启通知，以便随时了解谁访问了您的数据。</string>
+    <string name="api_access_notif_off_enable">开启</string>
+    <string name="api_access_notif_settings">设置</string>
+
+    <string name="api_scope_timeline">时间线</string>
+    <string name="api_scope_location_history">位置历史</string>
+    <string name="api_scope_extended_history">历史数据</string>
+    <string name="api_data_visits">访问地点</string>
+    <string name="api_data_trips">行程</string>
+    <string name="api_data_samples">位置采样</string>
+    <string name="api_data_unknown">数据</string>
+
+    <!-- 隐私通知 -->
+    <string name="api_access_channel_name">数据访问提醒</string>
+    <string name="api_access_channel_desc">当其他应用读取或仍可访问您的 Pathline 数据时提醒您。</string>
+    <string name="api_notify_read_title">有应用访问了您的 Pathline 数据</string>
+    <string name="api_notify_read_text_one">%1$s 访问了%2$s。</string>
+    <string name="api_notify_read_text_generic">%1$s 访问了您的 Pathline 数据。</string>
+    <string name="api_notify_data_visits">%1$s 个访问地点</string>
+    <string name="api_notify_data_trips">%1$s 个行程</string>
+    <string name="api_notify_data_samples">%1$s 个位置采样</string>
+    <string name="api_notify_data_separator">、</string>
+    <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
+    <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>
+    <string name="api_notify_hold_text_many">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</string>
 </resources>

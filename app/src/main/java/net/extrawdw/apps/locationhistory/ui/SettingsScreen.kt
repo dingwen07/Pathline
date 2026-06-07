@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -43,6 +44,7 @@ import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 fun SettingsScreen(
     permissionsGranted: Boolean,
     onRequestPermissions: () -> Unit,
+    onOpenApiAccess: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -161,6 +163,22 @@ fun SettingsScreen(
 
             // GPX export (open format, independent of backup)
             GpxCard()
+
+            // Access to Pathline data — third-party API audit + management
+            Card(Modifier.fillMaxWidth().clickable(onClick = onOpenApiAccess)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.settings_api_access_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        stringResource(R.string.settings_api_access_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
 
             // Diagnostics
             var showDiagnostics by remember { mutableStateOf(false) }

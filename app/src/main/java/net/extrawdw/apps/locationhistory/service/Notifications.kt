@@ -12,9 +12,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.annotation.DrawableRes
 import androidx.core.app.NotificationCompat
+import androidx.core.app.TaskStackBuilder
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
 import net.extrawdw.apps.locationhistory.MainActivity
+import net.extrawdw.apps.locationhistory.ui.ApiAccessActivity
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 
@@ -32,6 +34,14 @@ object Notifications {
     const val ALERT_CHANNEL_ID = "pathline_alerts"
     const val RECORDING_STOPPED_NOTIFICATION_ID = 7002
     const val RECORDING_TERMINATED_NOTIFICATION_ID = 7003
+
+    /** Privacy alerts: another app read Pathline data, or apps still hold access. Default importance. */
+    const val API_ACCESS_CHANNEL_ID = "pathline_api_access"
+    const val API_ACCESS_HOLD_NOTIFICATION_ID = 7005
+
+    /** Distinct, stable notification id per reading app, so multiple apps' "read" alerts coexist. */
+    fun apiAccessReadNotificationId(packageName: String): Int =
+        7100 + (packageName.hashCode() and 0x03ff)
 
     /**
      * A context whose resources resolve against the app's per-app language (the Android 13+
@@ -146,6 +156,60 @@ object Notifications {
             .build()
         context.getSystemService(NotificationManager::class.java)
             ?.notify(RECORDING_TERMINATED_NOTIFICATION_ID, notification)
+    }
+
+    fun ensureApiAccessChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(API_ACCESS_CHANNEL_ID) == null) {
+            val res = localized(context)
+            val channel = NotificationChannel(
+                API_ACCESS_CHANNEL_ID,
+                res.getString(R.string.api_access_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = res.getString(R.string.api_access_channel_desc)
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * Post a privacy alert about third-party API access. Title/text are already-resolved strings.
+     * [largeIcon], when provided, is shown on the right of the notification (e.g. the accessing app's
+     * icon); the small icon on the left stays Pathline's.
+     */
+    fun notifyApiAccess(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        text: String,
+        largeIcon: Bitmap? = null,
+    ) {
+        ensureApiAccessChannel(context)
+        val notification = NotificationCompat.Builder(context, API_ACCESS_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(apiAccessContentIntent(context))
+            .setSmallIcon(R.drawable.ic_stat_recording)
+            .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            ?.notify(notificationId, notification)
+    }
+
+    /** Deep-links the data-access notifications straight into the "Access to Pathline data" manager,
+     *  with MainActivity synthesized beneath it (via parentActivityName) so Back returns to the app. */
+    private fun apiAccessContentIntent(context: Context): PendingIntent {
+        val intent = Intent(context, ApiAccessActivity::class.java)
+        return TaskStackBuilder.create(context)
+            .addNextIntentWithParentStack(intent)
+            .getPendingIntent(
+                2001,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ) ?: contentIntent(context)
     }
 
     private fun actionIntent(context: Context, action: String, requestCode: Int): PendingIntent {

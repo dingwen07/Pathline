@@ -26,6 +26,35 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!--
+      Custom runtime permissions that gate the on-device data API (see PathlineProvider /
+      PathlineContract). A third-party app declares the ones it needs with <uses-permission> and
+      requests them at runtime; protectionLevel="dangerous" makes the system show a user-approval
+      dialog. They are intentionally NOT in a shared permission group: dangerous permissions in one
+      group are granted together from a single decision, but each of these is a separate, independent
+      consent (timeline / raw history / 30-day+ history), so each prompts and is revoked on its own.
+    -->
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_TIMELINE"
+        android:protectionLevel="dangerous"
+        android:icon="@drawable/ic_perm_timeline"
+        android:label="@string/perm_read_timeline_label"
+        android:description="@string/perm_read_timeline_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_LOCATION_HISTORY"
+        android:protectionLevel="dangerous"
+        android:icon="@drawable/ic_perm_location_history"
+        android:label="@string/perm_read_location_history_label"
+        android:description="@string/perm_read_location_history_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_EXTENDED_HISTORY"
+        android:protectionLevel="dangerous"
+        android:icon="@drawable/ic_perm_extended_history"
+        android:label="@string/perm_read_extended_history_label"
+        android:description="@string/perm_read_extended_history_description" />
+
+    <!--
       Scoped package visibility (Android 11+): see the SAF DocumentsProvider apps so we can resolve a
       backup/GPX destination's provider to a friendly app name.
     -->
@@ -70,6 +99,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- "Access to Pathline data" manager -->
+        <activity
+            android:name=".ui.ApiAccessActivity"
+            android:exported="false"
+            android:label="@string/api_access_title"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.Pathline" />
 
         <!-- Show rationale for data access -->
         <activity
@@ -137,6 +174,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          API for other apps (timeline + recorded samples). Exported, but
+          every query enforces a custom runtime permission on the caller in code (PathlineProvider),
+          and reads older than 30 days require the extended-history permission on top. The authority
+          is applicationId + ".provider"; see PathlineContract for the public surface.
+        -->
+        <provider
+            android:name=".api.PathlineProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="true" />
 
         <!-- WorkManager is configured on-demand via PathlineApp (Configuration.Provider); remove
              the default initializer so Hilt's worker factory is used. -->

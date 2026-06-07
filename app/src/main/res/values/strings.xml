@@ -221,7 +221,7 @@
     <string name="backup_dump_action">One-time dump…</string>
 
     <!-- GPX export (open format, independent of backup) -->
-    <string name="gpx_title">GPX export</string>
+    <string name="gpx_title">GPX Export</string>
     <string name="gpx_intro">Open-format weekly .gpx tracks for other apps and maps. Lat/lon/elevation/time only — not a backup, and it can\'t be restored.</string>
     <string name="gpx_unencrypted_warn">GPX files are always stored unencrypted.</string>
     <string name="gpx_auto_intro">Pick a folder to keep a GPX copy updated automatically as you record.</string>
@@ -329,4 +329,68 @@
         <item quantity="one">%d point</item>
         <item quantity="other">%d points</item>
     </plurals>
+
+    <!-- ===================== Third-party data API permissions ===================== -->
+    <!-- The system inserts the *description* into "Allow <app> to <description>?", so each is a
+         bare, lowercase verb phrase with no trailing period. The label is the Settings list title. -->
+    <string name="perm_read_timeline_label">Read Pathline timeline</string>
+    <string name="perm_read_timeline_description">read Pathline timeline of visits and trips</string>
+    <string name="perm_read_location_history_label">Read Pathline location data</string>
+    <string name="perm_read_location_history_description">read location samples recorded by Pathline</string>
+    <string name="perm_read_extended_history_label">Read extended Pathline history</string>
+    <string name="perm_read_extended_history_description">read Pathline data older than 30 days</string>
+
+    <!-- ===================== API access manager ===================== -->
+    <string name="settings_api_access_title">Access to Pathline data</string>
+    <string name="settings_api_access_desc">See which apps have read your timeline and location history.</string>
+    <string name="api_access_title">Access to Pathline data</string>
+    <string name="api_access_intro">Timeline of when apps read your Pathline data in the past 7 days. Access is controlled by Android permissions — tap an app to manage it in system settings.</string>
+    <string name="api_access_apps_header">Apps with access</string>
+    <string name="api_access_no_apps">No app has read your Pathline data.</string>
+    <string name="api_access_activity_header">Recent activity</string>
+    <string name="api_access_no_activity">No app has read your data in the past 7 days.</string>
+    <!-- "Last read 2 hours ago" -->
+    <string name="api_access_last_read">Last read %1$s</string>
+    <string name="api_access_never_read">Hasn\'t read your data yet</string>
+    <string name="api_access_not_installed">No longer installed</string>
+    <string name="api_access_revoked">Access turned off</string>
+    <!-- "<count> <data type> · <requested date range>", e.g. "12 location samples · Jun 1 – Jun 7" -->
+    <string name="api_access_event_subtitle">%1$d %2$s · %3$s</string>
+    <string name="api_access_today">Today</string>
+    <string name="api_access_yesterday">Yesterday</string>
+    <string name="api_access_export">Export log</string>
+    <string name="api_access_export_chooser">Export API access log</string>
+    <string name="api_access_reset_backoff">Reset notification timers</string>
+    <string name="api_access_backoff_reset">Notification timers reset — the next access will alert again.</string>
+    <string name="api_access_notif_off_title">Notifications are off</string>
+    <string name="api_access_notif_off_desc">Pathline can\'t alert you when another app reads your timeline or location history. Turn on notifications to stay aware of who accesses your data.</string>
+    <string name="api_access_notif_off_enable">Turn on</string>
+    <string name="api_access_notif_settings">Settings</string>
+
+    <string name="api_scope_timeline">Timeline</string>
+    <string name="api_scope_location_history">Location history</string>
+    <string name="api_scope_extended_history">Historical data</string>
+    <string name="api_data_visits">Visits</string>
+    <string name="api_data_trips">Trips</string>
+    <string name="api_data_samples">Samples</string>
+    <string name="api_data_unknown">Data</string>
+
+    <!-- Privacy notifications -->
+    <string name="api_access_channel_name">Data access alerts</string>
+    <string name="api_access_channel_desc">Warns you when another app reads your Pathline data, or still has access.</string>
+    <string name="api_notify_read_title">An app accessed your Pathline data</string>
+    <!-- "<app> accessed <data summary>." e.g. "Acme accessed 6 visits, 2,636 location samples." -->
+    <string name="api_notify_read_text_one">%1$s accessed %2$s.</string>
+    <!-- Fallback when the data summary can't be built. -->
+    <string name="api_notify_read_text_generic">%1$s accessed your Pathline data.</string>
+    <!-- Data-summary fragments, joined by api_notify_data_separator. Count is a pre-formatted string. -->
+    <string name="api_notify_data_visits">%1$s visits</string>
+    <string name="api_notify_data_trips">%1$s trips</string>
+    <string name="api_notify_data_samples">%1$s location samples</string>
+    <!-- Quoted so the trailing space survives resource trimming: "<a>, <b>". -->
+    <string name="api_notify_data_separator">", "</string>
+    <string name="api_notify_hold_title">App still has access to your Pathline data</string>
+    <string name="api_notify_hold_text_one">%1$s has access to your timeline and location history.</string>
+    <!-- "<app> and <N> more apps have access…" -->
+    <string name="api_notify_hold_text_many">%1$s and %2$d more apps have access to your timeline and location history.</string>
 </resources>

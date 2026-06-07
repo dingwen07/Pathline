@@ -1,6 +1,7 @@
 package net.extrawdw.apps.locationhistory
 
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,6 +37,7 @@ import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.ui.OnboardingScreen
 import net.extrawdw.apps.locationhistory.ui.OnboardingViewModel
+import net.extrawdw.apps.locationhistory.ui.ApiAccessActivity
 import net.extrawdw.apps.locationhistory.ui.MapExplorerScreen
 import net.extrawdw.apps.locationhistory.ui.MapMemoryPressure
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
@@ -61,6 +64,7 @@ class MainActivity : ComponentActivity() {
             recordingController.onAppForegrounded()
             workScheduler.schedulePeriodicTimelineMaintenance()
             workScheduler.schedulePeriodicBackup()
+            workScheduler.schedulePeriodicApiAccessCheck()
             workScheduler.enqueueTimelineMaintenanceNow(
                 TimeBuckets.dayEpoch(System.currentTimeMillis()),
                 "app_open"
@@ -90,6 +94,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     var destination by rememberSaveable { mutableStateOf(AppDestinations.TIMELINE) }
+    val context = LocalContext.current
     val permissions = rememberPathlinePermissions()
     val onboardingComplete by onboardingViewModel.onboardingComplete.collectAsStateWithLifecycle()
 
@@ -173,6 +178,9 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                         SettingsScreen(
                             permissionsGranted = permissions.granted,
                             onRequestPermissions = permissions::request,
+                            onOpenApiAccess = {
+                                context.startActivity(Intent(context, ApiAccessActivity::class.java))
+                            },
                         )
                     }
 
