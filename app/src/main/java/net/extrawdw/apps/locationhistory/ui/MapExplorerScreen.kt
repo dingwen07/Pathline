@@ -42,8 +42,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -320,47 +318,36 @@ private fun DateRangePickerDialog(
     )
     // Full-screen dialog so the official Material date-range calendar has room for the weekday
     // header (S M T W T F S) and doesn't clip the Sunday column.
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
-    ) {
-        val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(
+    FullScreenDialog(onDismiss = onDismiss) { requestClose ->
+        Column(
             Modifier
                 .fillMaxSize()
-                .predictiveBack(backProgress),
-            color = MaterialTheme.colorScheme.surface,
+                .statusBarsPadding()
         ) {
-            Column(
+            Row(
                 Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-                    Spacer(Modifier.weight(1f))
-                    val start = pickerState.selectedStartDateMillis
-                    val end = pickerState.selectedEndDateMillis
-                    Button(
-                        onClick = {
-                            if (start != null && end != null) {
-                                onConfirm(utcMillisToDayEpoch(start), utcMillisToDayEpoch(end))
-                            }
-                        },
-                        enabled = start != null && end != null,
-                    ) { Text(stringResource(R.string.action_plot)) }
-                }
-                DateRangePicker(
-                    state = pickerState, modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                )
+                TextButton(onClick = { requestClose(onDismiss) }) { Text(stringResource(R.string.action_cancel)) }
+                Spacer(Modifier.weight(1f))
+                val start = pickerState.selectedStartDateMillis
+                val end = pickerState.selectedEndDateMillis
+                Button(
+                    onClick = {
+                        if (start != null && end != null) {
+                            requestClose { onConfirm(utcMillisToDayEpoch(start), utcMillisToDayEpoch(end)) }
+                        }
+                    },
+                    enabled = start != null && end != null,
+                ) { Text(stringResource(R.string.action_plot)) }
             }
+            DateRangePicker(
+                state = pickerState, modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
         }
     }
 }

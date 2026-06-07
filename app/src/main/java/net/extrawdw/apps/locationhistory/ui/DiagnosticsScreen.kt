@@ -1,7 +1,6 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import android.content.Context
-import android.view.WindowManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,26 +26,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -227,124 +220,114 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
-    ) {
-        val diagnosticsBackProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(
-            Modifier
-                .fillMaxSize()
-                .predictiveBack(diagnosticsBackProgress)
-        ) {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text(stringResource(R.string.diagnostics_title)) },
-                        navigationIcon = {
-                            IconButton(onClick = onDismiss) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = stringResource(R.string.action_close)
-                                )
-                            }
-                        },
-                        actions = {
-                            IconButton(onClick = { viewModel.refresh() }) {
-                                Icon(
-                                    Icons.Filled.Refresh,
-                                    contentDescription = stringResource(R.string.cd_refresh_diagnostics)
-                                )
-                            }
-                            IconButton(onClick = { shareLogs(context) }) {
-                                Icon(
-                                    Icons.Filled.Share,
-                                    contentDescription = stringResource(R.string.cd_share_logs)
-                                )
-                            }
-                        },
-                    )
-                },
-            ) { padding ->
-                val files = remember(diagnostics) { viewModel.logFiles() }
-                LazyColumn(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                ) {
-                    item {
-                        DebugCard("Recorder") {
-                            diagnostics.recorderRows.forEach { (label, value) ->
-                                StatRow(
-                                    label,
-                                    value
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        val stats = diagnostics.db
-                        DebugCard("Internal data") {
-                            StatRow(
-                                "Location samples",
-                                "${stats.samples} (${stats.excluded} excluded)"
+    FullScreenDialog(onDismiss = onDismiss) { requestClose ->
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.diagnostics_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = { requestClose(onDismiss) }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.action_close)
                             )
-                            StatRow("Visits", stats.visits.toString())
-                            StatRow("Trips", stats.trips.toString())
-                            StatRow("Places", stats.places.toString())
-                            StatRow("Last fix", stats.lastFix)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.refresh() }) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = stringResource(R.string.cd_refresh_diagnostics)
+                            )
+                        }
+                        IconButton(onClick = { shareLogs(context) }) {
+                            Icon(
+                                Icons.Filled.Share,
+                                contentDescription = stringResource(R.string.cd_share_logs)
+                            )
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            val files = remember(diagnostics) { viewModel.logFiles() }
+            LazyColumn(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                item {
+                    DebugCard("Recorder") {
+                        diagnostics.recorderRows.forEach { (label, value) ->
+                            StatRow(
+                                label,
+                                value
+                            )
                         }
                     }
-                    item {
-                        DebugCard("Models") {
-                            diagnostics.modelRows.forEach { (label, value) ->
-                                StatRow(
-                                    label,
-                                    value
-                                )
-                            }
+                }
+                item {
+                    val stats = diagnostics.db
+                    DebugCard("Internal data") {
+                        StatRow(
+                            "Location samples",
+                            "${stats.samples} (${stats.excluded} excluded)"
+                        )
+                        StatRow("Visits", stats.visits.toString())
+                        StatRow("Trips", stats.trips.toString())
+                        StatRow("Places", stats.places.toString())
+                        StatRow("Last fix", stats.lastFix)
+                    }
+                }
+                item {
+                    DebugCard("Models") {
+                        diagnostics.modelRows.forEach { (label, value) ->
+                            StatRow(
+                                label,
+                                value
+                            )
                         }
                     }
-                    item {
-                        DebugCard("Workers") {
-                            diagnostics.workerRows.forEach {
-                                StatRow(
-                                    it.label,
-                                    "${it.state} · attempts ${it.attempts} · ${it.id}"
-                                )
-                            }
+                }
+                item {
+                    DebugCard("Workers") {
+                        diagnostics.workerRows.forEach {
+                            StatRow(
+                                it.label,
+                                "${it.state} · attempts ${it.attempts} · ${it.id}"
+                            )
                         }
                     }
-                    item {
+                }
+                item {
+                    Text(
+                        stringResource(R.string.diag_session_logs),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+                items(files, key = { it.name }) { f ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { openFile = f }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        Text(f.name, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            stringResource(R.string.diag_session_logs),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            "${f.length() / 1024} KB · ${fileTime(f)}",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    items(files, key = { it.name }) { f ->
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { openFile = f }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                        ) {
-                            Text(f.name, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "${f.length() / 1024} KB · ${fileTime(f)}",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        HorizontalDivider()
-                    }
-                    if (files.isEmpty()) {
-                        item {
-                            Text(
-                                stringResource(R.string.diag_no_logs),
-                                Modifier.padding(16.dp)
-                            )
-                        }
+                    HorizontalDivider()
+                }
+                if (files.isEmpty()) {
+                    item {
+                        Text(
+                            stringResource(R.string.diag_no_logs),
+                            Modifier.padding(16.dp)
+                        )
                     }
                 }
             }
@@ -369,70 +352,50 @@ private fun LogFileDialog(
     onDismiss: () -> Unit,
     onShare: () -> Unit,
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
-    ) {
-        DisableDialogDim()
-        val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(
-            Modifier
-                .fillMaxSize()
-                .predictiveBack(backProgress)
-        ) {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text(file.name) },
-                        navigationIcon = {
-                            IconButton(onClick = onDismiss) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = stringResource(R.string.cd_close_log)
-                                )
-                            }
-                        },
-                        actions = {
-                            IconButton(onClick = onShare) {
-                                Icon(
-                                    Icons.Filled.Share,
-                                    contentDescription = stringResource(R.string.cd_share_log)
-                                )
-                            }
-                        },
-                    )
-                },
-            ) { padding ->
-                val emptyText = stringResource(R.string.diag_log_empty)
-                SelectionContainer(
-                    Modifier
+    FullScreenDialog(onDismiss = onDismiss, dim = false) { requestClose ->
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(file.name) },
+                    navigationIcon = {
+                        IconButton(onClick = { requestClose(onDismiss) }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.cd_close_log)
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onShare) {
+                            Icon(
+                                Icons.Filled.Share,
+                                contentDescription = stringResource(R.string.cd_share_log)
+                            )
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            val emptyText = stringResource(R.string.diag_log_empty)
+            SelectionContainer(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                Text(
+                    content.ifEmpty { emptyText },
+                    modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
-                ) {
-                    Text(
-                        content.ifEmpty { emptyText },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .horizontalScroll(rememberScrollState())
-                            .padding(12.dp),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 12.sp,
-                        softWrap = false,
-                    )
-                }
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                        .padding(12.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 12.sp,
+                    softWrap = false,
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun DisableDialogDim() {
-    val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-    SideEffect {
-        window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        window?.setDimAmount(0f)
     }
 }
 

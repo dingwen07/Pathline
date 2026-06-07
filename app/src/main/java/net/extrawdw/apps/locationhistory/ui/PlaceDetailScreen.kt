@@ -17,7 +17,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -33,8 +32,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -146,123 +143,113 @@ fun PlaceDetailDialog(
         derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
-    ) {
-        val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(
-            Modifier
-                .fillMaxSize()
-                .predictiveBack(backProgress)
-        ) {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = {
-                            Text(
-                                place?.name ?: stringResource(R.string.place_default_name)
-                            )
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = onDismiss) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = stringResource(R.string.action_close)
-                                )
-                            }
-                        },
-                    )
-                },
-            ) { padding ->
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                    ) {
-                        // Compose the map only once the place is loaded, so its camera can be seeded
-                        // at the place in the constructor (no world-view flash, like the editor).
-                        place?.let { p ->
-                            PlaceDetailMap(
-                                place = p,
-                                visibleMarkers = visibleMarkers,
-                                followList = hasScrolled,
-                            )
-                        }
-                    }
-                    place?.let { p ->
-                        val visitsLabel =
-                            pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
+    FullScreenDialog(onDismiss = onDismiss) { requestClose ->
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
                         Text(
-                            if (p.fixed) {
-                                stringResource(
-                                    R.string.place_detail_summary_locked,
-                                    visitsLabel,
-                                    p.radiusMeters.toInt()
-                                )
-                            } else {
-                                stringResource(
-                                    R.string.place_detail_summary,
-                                    visitsLabel,
-                                    p.radiusMeters.toInt()
-                                )
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            place?.name ?: stringResource(R.string.place_default_name)
                         )
-                        p.address?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { requestClose(onDismiss) }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.action_close)
                             )
                         }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)
+                ) {
+                    // Compose the map only once the place is loaded, so its camera can be seeded
+                    // at the place in the constructor (no world-view flash, like the editor).
+                    place?.let { p ->
+                        PlaceDetailMap(
+                            place = p,
+                            visibleMarkers = visibleMarkers,
+                            followList = hasScrolled,
+                        )
                     }
-                    HorizontalDivider()
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                        items(visits, key = { it.id }) { v ->
-                            val context = LocalContext.current
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                            ) {
-                                Text(
-                                    Format.date(v.dayEpoch),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    stringResource(
-                                        R.string.time_range_duration,
-                                        Format.time(v.startMs),
-                                        Format.time(v.endMs),
-                                        Format.duration(context, v.startMs, v.endMs),
+                }
+                place?.let { p ->
+                    val visitsLabel =
+                        pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
+                    Text(
+                        if (p.fixed) {
+                            stringResource(
+                                R.string.place_detail_summary_locked,
+                                visitsLabel,
+                                p.radiusMeters.toInt()
+                            )
+                        } else {
+                            stringResource(
+                                R.string.place_detail_summary,
+                                visitsLabel,
+                                p.radiusMeters.toInt()
+                            )
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    p.address?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                }
+                HorizontalDivider()
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    items(visits, key = { it.id }) { v ->
+                        val context = LocalContext.current
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                Format.date(v.dayEpoch),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                stringResource(
+                                    R.string.time_range_duration,
+                                    Format.time(v.startMs),
+                                    Format.time(v.endMs),
+                                    Format.duration(context, v.startMs, v.endMs),
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                stringResource(
+                                    R.string.visit_detail_stats,
+                                    v.radiusMeters.toInt(),
+                                    pluralStringResource(
+                                        R.plurals.fixes_count,
+                                        v.sampleCount,
+                                        v.sampleCount
                                     ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    stringResource(
-                                        R.string.visit_detail_stats,
-                                        v.radiusMeters.toInt(),
-                                        pluralStringResource(
-                                            R.plurals.fixes_count,
-                                            v.sampleCount,
-                                            v.sampleCount
-                                        ),
-                                        (v.reliability * 100).toInt(),
-                                    ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            HorizontalDivider()
+                                    (v.reliability * 100).toInt(),
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        HorizontalDivider()
                     }
                 }
             }

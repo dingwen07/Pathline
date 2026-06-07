@@ -13,7 +13,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -31,8 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Circle
@@ -66,30 +63,22 @@ fun PlaceEditDialog(
         position = CameraPosition.fromLatLngZoom(center, 16f)
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
-    ) {
-        val backProgress by rememberPredictiveBackProgress(onDismiss = onDismiss)
-        Surface(
-            Modifier
-                .fillMaxSize()
-                .predictiveBack(backProgress)
-        ) {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text(stringResource(R.string.place_edit_title)) },
-                        navigationIcon = {
-                            IconButton(onClick = onDismiss) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = stringResource(R.string.action_close)
-                                )
-                            }
-                        },
-                        actions = {
-                            TextButton(onClick = {
+    FullScreenDialog(onDismiss = onDismiss) { requestClose ->
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.place_edit_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = { requestClose(onDismiss) }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.action_close)
+                            )
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = {
+                            requestClose {
                                 onSave(
                                     name,
                                     address.ifBlank { null },
@@ -98,77 +87,77 @@ fun PlaceEditDialog(
                                     radius.toDouble(),
                                     fixed
                                 )
-                            }) { Text(stringResource(R.string.action_save)) }
-                        },
-                    )
-                },
-            ) { padding ->
-                Column(
+                            }
+                        }) { Text(stringResource(R.string.action_save)) }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp)
+            ) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.field_name)) }, singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                )
+                OutlinedTextField(
+                    value = address, onValueChange = { address = it },
+                    label = { Text(stringResource(R.string.field_address)) }, singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                )
+                Text(
+                    stringResource(R.string.place_edit_radius_hint, radius.toInt()),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Slider(value = radius, onValueChange = { radius = it }, valueRange = 20f..300f)
+                Row(
                     Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
-                        value = name, onValueChange = { name = it },
-                        label = { Text(stringResource(R.string.field_name)) }, singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                    )
-                    OutlinedTextField(
-                        value = address, onValueChange = { address = it },
-                        label = { Text(stringResource(R.string.field_address)) }, singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                    )
-                    Text(
-                        stringResource(R.string.place_edit_radius_hint, radius.toInt()),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    Slider(value = radius, onValueChange = { radius = it }, valueRange = 20f..300f)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.place_lock_title),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                stringResource(R.string.place_lock_desc),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Switch(checked = fixed, onCheckedChange = { fixed = it })
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.place_lock_title),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            stringResource(R.string.place_lock_desc),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                    // Map fills the rest with no scrolling parent, so gestures aren't intercepted.
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
+                    Switch(checked = fixed, onCheckedChange = { fixed = it })
+                }
+                // Map fills the rest with no scrolling parent, so gestures aren't intercepted.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    GoogleMap(
+                        modifier = Modifier.fillMaxSize(),
+                        cameraPositionState = cameraPositionState,
+                        mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+                        uiSettings = MapUiSettings(zoomControlsEnabled = false),
+                        onMapClick = { center = it },
                     ) {
-                        GoogleMap(
-                            modifier = Modifier.fillMaxSize(),
-                            cameraPositionState = cameraPositionState,
-                            mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
-                            uiSettings = MapUiSettings(zoomControlsEnabled = false),
-                            onMapClick = { center = it },
-                        ) {
-                            Circle(
-                                center = center,
-                                radius = radius.toDouble(),
-                                strokeColor = androidx.compose.ui.graphics.Color(0xFF1E88E5),
-                                strokeWidth = 4f,
-                                fillColor = androidx.compose.ui.graphics.Color(0x331E88E5),
-                            )
-                        }
+                        Circle(
+                            center = center,
+                            radius = radius.toDouble(),
+                            strokeColor = androidx.compose.ui.graphics.Color(0xFF1E88E5),
+                            strokeWidth = 4f,
+                            fillColor = androidx.compose.ui.graphics.Color(0x331E88E5),
+                        )
                     }
                 }
             }
