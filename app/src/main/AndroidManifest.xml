@@ -26,6 +26,19 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!--
+      Coarse gate for the whole data provider: an install-time (normal) permission, auto-granted to any
+      app that declares <uses-permission> for it - no runtime prompt. It is required on the provider
+      below, so an app that did not opt in can neither resolve nor query the API at all. This only marks
+      "this app intends to use the Pathline API"; the per-collection READ_* permissions below (dangerous,
+      runtime, user-approved) remain the actual data gates.
+    -->
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.API"
+        android:protectionLevel="normal"
+        android:label="@string/perm_api_label"
+        android:description="@string/perm_api_description" />
+
+    <!--
       On-device data-API permissions (see PathlineProvider / PathlineContract). READ_TIMELINE_ROUTE and
       READ_LOCATION_HISTORY share a group on purpose: both expose the precise path, so they grant and
       revoke as one tier; READ_TIMELINE stays outside it so a timeline-only caller never gains routes.
@@ -188,14 +201,17 @@
         </provider>
 
         <!--
-          API for other apps (timeline + recorded samples). Exported, but
-          every query enforces a custom runtime permission on the caller in code (PathlineProvider),
-          and reads older than 30 days require the extended-history permission on top. The authority
-          is applicationId + ".provider"; see PathlineContract for the public surface.
+          API for other apps (timeline + recorded samples). Exported, but android:permission gates the
+          whole provider behind the auto-granted ".permission.API" above: a caller that did not declare
+          it cannot resolve or reach the provider. Past that gate, every query additionally enforces a
+          custom runtime permission on the caller in code (PathlineProvider), and reads older than 30
+          days require the extended-history permission on top. The authority is applicationId +
+          ".provider"; see PathlineContract for the public surface.
         -->
         <provider
             android:name=".api.PathlineProvider"
             android:authorities="${applicationId}.provider"
+            android:permission="net.extrawdw.apps.locationhistory.permission.API"
             android:exported="true" />
 
         <!-- WorkManager is configured on-demand via PathlineApp (Configuration.Provider); remove

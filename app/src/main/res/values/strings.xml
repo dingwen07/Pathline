@@ -333,6 +333,8 @@
     <!-- ===================== Third-party data API permissions ===================== -->
     <!-- The system inserts the *description* into "Allow <app> to <description>?", so each is a
          bare, lowercase verb phrase with no trailing period. The label is the Settings list title. -->
+    <string name="perm_api_label">Use the Pathline data API</string>
+    <string name="perm_api_description">access the Pathline data API</string>
     <string name="perm_read_timeline_label">Read Pathline timeline</string>
     <string name="perm_read_timeline_description">read Pathline timeline of visits and trips</string>
     <string name="perm_read_timeline_route_label">Read Pathline trip routes</string>

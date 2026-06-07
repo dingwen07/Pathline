@@ -7,9 +7,13 @@ import android.net.Uri
  *
  * Other apps installed on the same device can read the user's timeline (visits + trips) and raw
  * recorded location samples through a [android.content.ContentProvider] exposed at [AUTHORITY].
- * Access is gated by four custom runtime permissions (see [Permissions]); a consumer must declare
- * the ones it needs with `<uses-permission>` AND request them at runtime — the user approves each
- * in the system permission dialog, exactly like the platform location permissions.
+ *
+ * Reaching the provider at all requires the install-time [Permissions.API] permission: a consumer
+ * declares `<uses-permission>` for it and the system auto-grants it (no runtime prompt). An app that
+ * does not declare it cannot resolve or query the provider. Past that gate, access to data is gated
+ * by four custom runtime permissions (see [Permissions]); a consumer must declare the ones it needs
+ * with `<uses-permission>` AND request them at runtime — the user approves each in the system
+ * permission dialog, exactly like the platform location permissions.
  *
  * This file is intentionally self-contained and dependency-free so it can be copied verbatim into a
  * consumer app. Nothing here is loaded by Pathline at runtime beyond the constant values; the
@@ -77,8 +81,18 @@ object PathlineContract {
         const val GROUP: String = "group"
     }
 
-    /** The four custom permissions a consumer declares and requests at runtime. */
+    /** The custom permissions a consumer declares. [API] is the install-time gate for the whole
+     *  provider; the rest are runtime permissions requested per data tier. */
     object Permissions {
+        /**
+         * Coarse, install-time gate for the entire provider (`protectionLevel="normal"`). The system
+         * auto-grants it to any app that declares `<uses-permission>` for it — no runtime prompt. An
+         * app that does not declare it cannot resolve or query the provider at all. It is necessary
+         * but not sufficient: every read still requires the relevant runtime permission(s) below.
+         */
+        const val API: String =
+            "net.extrawdw.apps.locationhistory.permission.API"
+
         /** Read timeline items: [Visits] and [Trips] (trip routes excluded — see below). */
         const val READ_TIMELINE: String =
             "net.extrawdw.apps.locationhistory.permission.READ_TIMELINE"

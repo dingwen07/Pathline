@@ -313,6 +313,8 @@
 
     <!-- ===================== Third-party data API permissions ===================== -->
     <!-- 系统会把 description 嵌入“允许"应用"<description>吗？”，因此为不带句号的动词短语；label 为设置中的标题。 -->
+    <string name="perm_api_label">使用 Pathline 数据 API</string>
+    <string name="perm_api_description">访问 Pathline 数据 API</string>
     <string name="perm_read_timeline_label">读取 Pathline 时间线</string>
     <string name="perm_read_timeline_description">读取 Pathline 中的访问地点和行程</string>
     <string name="perm_read_timeline_route_label">读取 Pathline 行程轨迹</string>
