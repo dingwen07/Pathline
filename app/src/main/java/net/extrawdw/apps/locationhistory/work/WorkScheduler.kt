@@ -166,18 +166,27 @@ class WorkScheduler @Inject constructor(
     }
 
     /**
-     * Post the "an app read your Pathline data" alert for [packageName]. Called from the provider on
-     * each successful read; unique-per-app with a short initial delay so a burst of reads coalesces
-     * into a single run (KEEP drops re-enqueues while one is pending). The worker itself rate-limits
-     * repeat alerts per app — see [ApiAccessNotifyWorker].
+     * Post the "an app accessed your Pathline data" alert for [packageName] — a successful read, or a
+     * [denied] (unauthorized) attempt. Called from the provider on each access; unique-per-app *and per
+     * kind* (KEEP drops re-enqueues while one is pending) so a read and a denial never displace each
+     * other. A read carries a short initial delay so a burst coalesces into a single run; a **denial is
+     * a security-relevant event and fires immediately (no delay)**. The worker still rate-limits repeat
+     * alerts per app on independent back-off lanes — see [ApiAccessNotifyWorker].
      */
-    fun enqueueApiAccessNotification(packageName: String) {
+    fun enqueueApiAccessNotification(packageName: String, denied: Boolean = false) {
         val request = OneTimeWorkRequestBuilder<ApiAccessNotifyWorker>()
-            .setInputData(workDataOf(ApiAccessNotifyWorker.KEY_PACKAGE to packageName))
-            .setInitialDelay(API_ACCESS_COALESCE_MINUTES, TimeUnit.MINUTES)
+            .setInputData(
+                workDataOf(
+                    ApiAccessNotifyWorker.KEY_PACKAGE to packageName,
+                    ApiAccessNotifyWorker.KEY_DENIED to denied,
+                ),
+            )
+            // Denials are immediate; only routine reads wait to coalesce a burst.
+            .apply { if (!denied) setInitialDelay(API_ACCESS_COALESCE_MINUTES, TimeUnit.MINUTES) }
             .build()
+        val kind = if (denied) "denied" else "read"
         workManager.enqueueUniqueWork(
-            "$WORK_API_ACCESS_NOTIFY:$packageName",
+            "$WORK_API_ACCESS_NOTIFY:$kind:$packageName",
             ExistingWorkPolicy.KEEP,
             request,
         )

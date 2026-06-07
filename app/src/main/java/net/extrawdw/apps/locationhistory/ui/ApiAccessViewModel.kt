@@ -103,7 +103,7 @@ class ApiAccessViewModel @Inject constructor(
             val iso = DateTimeFormatter.ISO_INSTANT
             fun esc(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
             val sb = StringBuilder(
-                "timestamp,app_package,app_name,data_type,requested_start,requested_end,row_count,group\n"
+                "timestamp,app_package,app_name,data_type,requested_start,requested_end,row_count,group,denied_permission\n"
             )
             for (e in events) {
                 sb.append(esc(iso.format(Instant.ofEpochMilli(e.timestampMs)))).append(',')
@@ -113,7 +113,8 @@ class ApiAccessViewModel @Inject constructor(
                     .append(esc(iso.format(Instant.ofEpochMilli(e.startMs)))).append(',')
                     .append(esc(iso.format(Instant.ofEpochMilli(e.endMs)))).append(',')
                     .append(e.rowCount).append(',')
-                    .append(e.groupId?.toString() ?: "").append('\n')
+                    .append(e.groupId?.toString() ?: "").append(',')
+                    .append(esc(e.deniedPermission ?: "")).append('\n')
             }
             val dir = File(context.filesDir, "logs").apply { mkdirs() }
             File(dir, "pathline-api-access.csv").apply { writeText(sb.toString()) }

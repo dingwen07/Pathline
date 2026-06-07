@@ -43,6 +43,10 @@ object Notifications {
     fun apiAccessReadNotificationId(packageName: String): Int =
         7100 + (packageName.hashCode() and 0x03ff)
 
+    /** Distinct id per app for a "denied access" alert, so it coexists with that app's read alert. */
+    fun apiAccessDeniedNotificationId(packageName: String): Int =
+        8200 + (packageName.hashCode() and 0x03ff)
+
     /**
      * A context whose resources resolve against the app's per-app language (the Android 13+
      * "App language" preference). These notifications are posted from [LocationRecorderService] and

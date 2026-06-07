@@ -49,6 +49,12 @@ data class ApiAccessEventEntity(
      * where the route is not applicable. Surfaced in the access manager so the audit trail is honest.
      */
     val routeWithheld: Boolean? = null,
+    /**
+     * Non-null when this was a **valid** request (known collection, required `start` present) that was
+     * rejected because the caller lacks this permission — it read nothing (`rowCount` is 0). Null for a
+     * successful read. Denied events are kept for the audit trail but never trigger a user alert.
+     */
+    val deniedPermission: String? = null,
 )
 
 /** Last-access summary for one app, projected over the log. */

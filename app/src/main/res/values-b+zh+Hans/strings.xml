@@ -339,6 +339,7 @@
     <string name="api_access_revoked">访问已关闭</string>
     <string name="api_access_event_subtitle">%1$d 个%2$s · %3$s</string>
     <string name="api_access_route_withheld_suffix"> · 已隐藏轨迹</string>
+    <string name="api_access_event_denied">已拒绝：%1$s · %2$s</string>
     <string name="api_access_today">今天</string>
     <string name="api_access_yesterday">昨天</string>
     <string name="api_access_export">导出日志</string>
@@ -366,6 +367,8 @@
     <string name="api_notify_read_title">有应用访问了您的 Pathline 数据</string>
     <string name="api_notify_read_text_one">%1$s 访问了%2$s。</string>
     <string name="api_notify_read_text_generic">%1$s 访问了您的 Pathline 数据。</string>
+    <string name="api_notify_denied_title">有应用被拒绝访问您的 Pathline 数据</string>
+    <string name="api_notify_denied_text_one">%1$s 在没有权限的情况下尝试访问%2$s。</string>
     <string name="api_notify_data_visits">%1$s 个访问地点</string>
     <string name="api_notify_data_trips">%1$s 个行程</string>
     <string name="api_notify_data_samples">%1$s 个位置采样</string>

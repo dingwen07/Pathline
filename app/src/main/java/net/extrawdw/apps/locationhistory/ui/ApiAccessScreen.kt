@@ -510,7 +510,9 @@ private fun GroupMemberRow(event: ApiAccessEventEntity, zone: ZoneId) {
 @Composable
 private fun groupSummary(events: List<ApiAccessEventEntity>): String {
     val nf = remember { NumberFormat.getInstance() }
-    val maxByType = events.groupBy { it.dataType }.mapValues { (_, e) -> e.maxOf { it.rowCount } }
+    // Counts come from successful reads only; the request count still reflects every call in the group.
+    val maxByType = events.filter { it.deniedPermission == null }
+        .groupBy { it.dataType }.mapValues { (_, e) -> e.maxOf { it.rowCount } }
     val parts = listOfNotNull(
         maxByType["visits"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_visits)}" },
         maxByType["trips"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_trips)}" },
@@ -633,14 +635,21 @@ private fun ScopeChips(granted: List<ApiScope>, declared: List<ApiScope>) {
     }
 }
 
-/** Event subtitle ("6 trips · last 24 h"), with a route-withheld note when the polyline was nulled. */
+/** Event subtitle ("6 trips · last 24 h"), or a "denied" line for a blocked request, with a
+ *  route-withheld note when the polyline was nulled. */
 @Composable
 private fun eventSubtitle(event: ApiAccessEventEntity, zone: ZoneId): String {
+    val range = formatRequestedRange(event.startMs, event.endMs, zone)
+    event.deniedPermission?.let { permission ->
+        val scope = ApiScope.entries.firstOrNull { it.permission == permission }
+        val label = stringResource(scope?.labelRes ?: R.string.api_data_unknown)
+        return stringResource(R.string.api_access_event_denied, label, range)
+    }
     val base = stringResource(
         R.string.api_access_event_subtitle,
         event.rowCount,
         dataTypeLabel(event.dataType),
-        formatRequestedRange(event.startMs, event.endMs, zone),
+        range,
     )
     return if (event.routeWithheld == true) {
         base + stringResource(R.string.api_access_route_withheld_suffix)

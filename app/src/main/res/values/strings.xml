@@ -362,6 +362,8 @@
     <string name="api_access_event_subtitle">%1$d %2$s · %3$s</string>
     <!-- Appended to a trips read when the route column was withheld (caller lacked route permission). -->
     <string name="api_access_route_withheld_suffix"> · route withheld</string>
+    <!-- A request that was rejected for lack of a permission. %1$s = scope, %2$s = requested range. -->
+    <string name="api_access_event_denied">Denied: %1$s · %2$s</string>
     <string name="api_access_today">Today</string>
     <string name="api_access_yesterday">Yesterday</string>
     <string name="api_access_export">Export log</string>
@@ -391,6 +393,9 @@
     <string name="api_notify_read_text_one">%1$s accessed %2$s.</string>
     <!-- Fallback when the data summary can't be built. -->
     <string name="api_notify_read_text_generic">%1$s accessed your Pathline data.</string>
+    <!-- An app tried to read data it isn't permitted to. "<app> was denied access to <scopes>." -->
+    <string name="api_notify_denied_title">An app was denied access to your Pathline data</string>
+    <string name="api_notify_denied_text_one">%1$s tried to access %2$s without permission.</string>
     <!-- Data-summary fragments, joined by api_notify_data_separator. Count is a pre-formatted string. -->
     <string name="api_notify_data_visits">%1$s visits</string>
     <string name="api_notify_data_trips">%1$s trips</string>

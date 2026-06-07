@@ -88,26 +88,32 @@ class PathlineProvider : ContentProvider() {
         val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
         require(end > start) { "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'" }
 
-        // Base permission for the requested collection.
+        val dataType = uri.lastPathSegment ?: "?"
         val basePermission = when (code) {
             CODE_VISITS, CODE_TRIPS -> PathlineContract.Permissions.READ_TIMELINE
             CODE_SAMPLES -> PathlineContract.Permissions.READ_LOCATION_HISTORY
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        enforce(basePermission)
-
-        // Reaching past the 30-day window requires the extended-history permission. The window is
-        // never silently narrowed — an under-permissioned caller is rejected outright.
-        val extendedCutoff = now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS
-        if (start < extendedCutoff) {
-            enforce(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
-        }
 
         // Optional batch-correlation key — honoured only when ~now (fail-open: stale/invalid -> null,
-        // never an error). Reads sharing it from one app are aggregated in the access manager.
+        // never an error). Parsed before enforcement so a denied read is grouped too. Reads sharing it
+        // from one app are aggregated in the access manager.
         val rawGroup = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
         val groupId = rawGroup?.takeIf {
             it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
+        }
+
+        // Enforce each required permission. A well-formed request the caller isn't authorized for is
+        // recorded as a denied event (read nothing -> rowCount 0, no user notification) and then
+        // rejected; the window is never silently narrowed.
+        fun requirePermission(permission: String) {
+            if (holds(permission)) return
+            logAccess(dataType, start, end, rowCount = 0, now, groupId, routeWithheld = null, deniedPermission = permission)
+            throw SecurityException("Caller must hold $permission")
+        }
+        requirePermission(basePermission)
+        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
+            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
         }
 
         // A trip's encoded route is the raw movement path, so it sits behind the location-trail tier:
@@ -126,7 +132,7 @@ class PathlineProvider : ContentProvider() {
             CODE_SAMPLES -> samplesCursor(start, end)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        logAccess(uri.lastPathSegment ?: "?", start, end, cursor.count, now, groupId, routeWithheld)
+        logAccess(dataType, start, end, cursor.count, now, groupId, routeWithheld, deniedPermission = null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
@@ -141,6 +147,7 @@ class PathlineProvider : ContentProvider() {
         nowMs: Long,
         groupId: Long?,
         routeWithheld: Boolean?,
+        deniedPermission: String?,
     ) {
         val pkg = callingPackage ?: "unknown"
         runCatching {
@@ -155,12 +162,16 @@ class PathlineProvider : ContentProvider() {
                         timestampMs = nowMs,
                         groupId = groupId,
                         routeWithheld = routeWithheld,
+                        deniedPermission = deniedPermission,
                     ),
                 )
             }
         }
-        // Schedule the user-facing "an app read your data" alert via WorkManager (coalesced + rate-limited).
-        runCatching { entryPoint.workScheduler().enqueueApiAccessNotification(pkg) }
+        // Alert the user about this access — a successful read OR a denied (unauthorized) attempt, on
+        // separate per-app back-off lanes. Coalesced + rate-limited by WorkManager / the worker.
+        runCatching {
+            entryPoint.workScheduler().enqueueApiAccessNotification(pkg, denied = deniedPermission != null)
+        }
     }
 
     private fun visitsCursor(start: Long, end: Long): Cursor = runBlocking {
@@ -244,11 +255,6 @@ class PathlineProvider : ContentProvider() {
     private fun holds(permission: String): Boolean {
         val ctx: Context = context ?: throw SecurityException("Provider not attached")
         return ctx.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-    }
-
-    /** Throw [SecurityException] unless the IPC caller (or our own process) holds [permission]. */
-    private fun enforce(permission: String) {
-        if (!holds(permission)) throw SecurityException("Caller must hold $permission")
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? =
