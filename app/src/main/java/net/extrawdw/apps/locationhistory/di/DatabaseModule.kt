@@ -88,10 +88,25 @@ object DatabaseModule {
      */
     @Provides
     @Singleton
-    fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase =
-        Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
-            .fallbackToDestructiveMigration(dropAllTables = true)
-            .build()
+    fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase {
+        fun build(): ApiAccessDatabase =
+            Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
+                .fallbackToDestructiveMigration(dropAllTables = true)
+                .build()
+
+        val db = build()
+        return try {
+            // The schema of this disposable audit DB can change without a version bump. Force the open
+            // now: a schema-identity mismatch throws here, and since the log is disposable we simply
+            // drop the file and recreate it fresh with the current schema (no migration).
+            db.openHelper.writableDatabase
+            db
+        } catch (t: Throwable) {
+            runCatching { db.close() }
+            context.deleteDatabase(ApiAccessDatabase.NAME)
+            build()
+        }
+    }
 
     @Provides
     fun provideApiAccessDao(db: ApiAccessDatabase): ApiAccessDao = db.apiAccessDao()

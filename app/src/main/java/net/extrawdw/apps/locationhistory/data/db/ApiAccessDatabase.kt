@@ -36,6 +36,13 @@ data class ApiAccessEventEntity(
     val rowCount: Int,
     /** When the read happened (epoch ms). */
     val timestampMs: Long,
+    /**
+     * Optional batch-correlation key supplied by the caller (see `PathlineContract.QueryParams.GROUP`),
+     * validated to be within the grouping window. Rows that share it (same package) are aggregated as
+     * one expandable entry in the access manager. Null when the caller didn't group, or sent a stale/
+     * invalid value.
+     */
+    val groupId: Long? = null,
 )
 
 /** Last-access summary for one app, projected over the log. */

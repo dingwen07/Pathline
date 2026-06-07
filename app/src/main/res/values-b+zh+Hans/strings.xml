@@ -338,6 +338,7 @@
     <string name="api_access_yesterday">昨天</string>
     <string name="api_access_export">导出日志</string>
     <string name="api_access_export_chooser">导出 API 访问日志</string>
+    <string name="api_access_group_requests">%1$d 次请求</string>
     <string name="api_access_reset_backoff">重置通知计时</string>
     <string name="api_access_backoff_reset">已重置通知计时 — 下次访问将再次提醒。</string>
     <string name="api_access_notif_off_title">通知已关闭</string>

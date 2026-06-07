@@ -103,20 +103,34 @@ class PathlineProvider : ContentProvider() {
             enforce(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
         }
 
+        // Optional batch-correlation key — honoured only when ~now (fail-open: stale/invalid -> null,
+        // never an error). Reads sharing it from one app are aggregated in the access manager.
+        val rawGroup = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
+        val groupId = rawGroup?.takeIf {
+            it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
+        }
+
         val cursor = when (code) {
             CODE_VISITS -> visitsCursor(start, end)
             CODE_TRIPS -> tripsCursor(start, end)
             CODE_SAMPLES -> samplesCursor(start, end)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        logAccess(uri.lastPathSegment ?: "?", start, end, cursor.count, now)
+        logAccess(uri.lastPathSegment ?: "?", start, end, cursor.count, now, groupId)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** Append one row to the audit log so the in-app access manager and warnings can surface it.
      *  Best-effort: a logging failure must never break a caller's read. */
-    private fun logAccess(dataType: String, startMs: Long, endMs: Long, rowCount: Int, nowMs: Long) {
+    private fun logAccess(
+        dataType: String,
+        startMs: Long,
+        endMs: Long,
+        rowCount: Int,
+        nowMs: Long,
+        groupId: Long?,
+    ) {
         val pkg = callingPackage ?: "unknown"
         runCatching {
             runBlocking {
@@ -128,6 +142,7 @@ class PathlineProvider : ContentProvider() {
                         endMs = endMs,
                         rowCount = rowCount,
                         timestampMs = nowMs,
+                        groupId = groupId,
                     ),
                 )
             }
@@ -238,5 +253,8 @@ class PathlineProvider : ContentProvider() {
         const val CODE_VISITS = 1
         const val CODE_TRIPS = 2
         const val CODE_SAMPLES = 3
+
+        /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
+        const val GROUP_FUTURE_TOLERANCE_MS = 5_000L
     }
 }

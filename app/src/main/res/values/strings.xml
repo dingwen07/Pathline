@@ -360,6 +360,7 @@
     <string name="api_access_yesterday">Yesterday</string>
     <string name="api_access_export">Export log</string>
     <string name="api_access_export_chooser">Export API access log</string>
+    <string name="api_access_group_requests">%1$d requests</string>
     <string name="api_access_reset_backoff">Reset notification timers</string>
     <string name="api_access_backoff_reset">Notification timers reset — the next access will alert again.</string>
     <string name="api_access_notif_off_title">Notifications are off</string>

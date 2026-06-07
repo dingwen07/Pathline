@@ -35,6 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -82,6 +84,7 @@ import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
 import net.extrawdw.apps.locationhistory.data.repo.ApiScope
 import java.io.File
+import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -100,6 +103,8 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val infoByPackage = remember(apps) { apps.associateBy { it.packageName } }
+    // Expand state for aggregated access groups, keyed by "package|groupId".
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
 
@@ -194,6 +199,7 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                                 events = dayEvents,
                                 infoByPackage = infoByPackage,
                                 zone = zone,
+                                expandedGroups = expandedGroups,
                             )
                         }
                     }
@@ -307,8 +313,10 @@ private fun DayEventGroup(
     events: List<ApiAccessEventEntity>,
     infoByPackage: Map<String, ApiAppRow>,
     zone: ZoneId,
+    expandedGroups: MutableMap<String, Boolean>,
 ) {
-    val iconCenters = remember(events) { mutableStateMapOf<Long, Float>() }
+    val entries = remember(events) { buildDayEntries(events) }
+    val iconCenters = remember(entries) { mutableStateMapOf<Long, Float>() }
     val iconSize = 32.dp
     val iconGap = 4.dp
     val color = MaterialTheme.colorScheme.outlineVariant
@@ -316,14 +324,14 @@ private fun DayEventGroup(
         Modifier
             .fillMaxWidth()
             .drawBehind {
-                if (events.size >= 2) {
+                if (entries.size >= 2) {
                     val x = 48.dp.toPx() + 20.dp.toPx()
                     val skip = iconSize.toPx() / 2f + iconGap.toPx()
                     val dotRadius = 1.5.dp.toPx()
                     val targetPitch = 11.dp.toPx()
-                    events.zipWithNext().forEach { (from, to) ->
-                        val startCenter = iconCenters[from.id] ?: return@forEach
-                        val endCenter = iconCenters[to.id] ?: return@forEach
+                    entries.zipWithNext().forEach { (from, to) ->
+                        val startCenter = iconCenters[from.anchorId] ?: return@forEach
+                        val endCenter = iconCenters[to.anchorId] ?: return@forEach
                         val startY = startCenter + skip
                         val endY = endCenter - skip
                         val availableHeight = endY - startY
@@ -344,16 +352,176 @@ private fun DayEventGroup(
                 }
         },
     ) {
-        events.forEach { event ->
-            EventRow(
-                event = event,
-                appLabel = infoByPackage[event.packageName]?.label ?: event.packageName,
-                icon = infoByPackage[event.packageName]?.icon,
-                zone = zone,
-                onIconCenterMeasured = { centerY -> iconCenters[event.id] = centerY },
-            )
+        entries.forEach { entry ->
+            when (entry) {
+                is SingleEntry -> {
+                    val e = entry.event
+                    EventRow(
+                        event = e,
+                        appLabel = infoByPackage[e.packageName]?.label ?: e.packageName,
+                        icon = infoByPackage[e.packageName]?.icon,
+                        zone = zone,
+                        onIconCenterMeasured = { centerY -> iconCenters[entry.anchorId] = centerY },
+                    )
+                }
+
+                is GroupEntry -> {
+                    val isExpanded = expandedGroups[entry.key] == true
+                    GroupRow(
+                        entry = entry,
+                        appLabel = infoByPackage[entry.packageName]?.label ?: entry.packageName,
+                        icon = infoByPackage[entry.packageName]?.icon,
+                        zone = zone,
+                        expanded = isExpanded,
+                        onToggle = { expandedGroups[entry.key] = !isExpanded },
+                        onIconCenterMeasured = { centerY -> iconCenters[entry.anchorId] = centerY },
+                    )
+                    if (isExpanded) {
+                        entry.events.forEach { member -> GroupMemberRow(member, zone) }
+                    }
+                }
+            }
         }
     }
+}
+
+/** One timeline entry: a single ungrouped read, or several reads aggregated under one batch group. */
+private sealed interface DayEntry {
+    val anchorId: Long
+    val sortKey: Long
+}
+
+private data class SingleEntry(val event: ApiAccessEventEntity) : DayEntry {
+    override val anchorId get() = event.id
+    override val sortKey get() = event.timestampMs
+}
+
+private data class GroupEntry(
+    val packageName: String,
+    val groupId: Long,
+    val events: List<ApiAccessEventEntity>,
+) : DayEntry {
+    val key get() = "$packageName|$groupId"
+    override val anchorId get() = events.minOf { it.id }
+    override val sortKey get() = events.maxOf { it.timestampMs }
+}
+
+/** Collapse same-(package, group) reads into one expandable entry; ungrouped reads stay individual. */
+private fun buildDayEntries(events: List<ApiAccessEventEntity>): List<DayEntry> {
+    val groups = linkedMapOf<String, MutableList<ApiAccessEventEntity>>()
+    val out = ArrayList<DayEntry>()
+    for (e in events) {
+        val g = e.groupId
+        if (g == null) {
+            out.add(SingleEntry(e))
+        } else {
+            groups.getOrPut("${e.packageName}|$g") { mutableListOf() }.add(e)
+        }
+    }
+    for ((_, list) in groups) {
+        if (list.size == 1) {
+            out.add(SingleEntry(list[0]))
+        } else {
+            out.add(GroupEntry(list[0].packageName, list[0].groupId!!, list.sortedByDescending { it.timestampMs }))
+        }
+    }
+    return out.sortedByDescending { it.sortKey }
+}
+
+/** Collapsed header for an access group: app · "N requests · 6 visits, 2,636 samples" · expand chevron. */
+@Composable
+private fun GroupRow(
+    entry: GroupEntry,
+    appLabel: String,
+    icon: ImageBitmap?,
+    zone: ZoneId,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onIconCenterMeasured: (Float) -> Unit,
+) {
+    val density = LocalDensity.current
+    val iconCenterFromRowTop = with(density) { (8.dp + 32.dp / 2).toPx() }
+    val time = remember(entry.sortKey) {
+        DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+            .format(Instant.ofEpochMilli(entry.sortKey).atZone(zone))
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .heightIn(min = 64.dp)
+            .clickable(onClick = onToggle)
+            .onGloballyPositioned { coordinates ->
+                onIconCenterMeasured(coordinates.positionInParent().y + iconCenterFromRowTop)
+            },
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            time,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(48.dp).padding(top = 14.dp),
+        )
+        TimelineIconColumn(icon = icon)
+        Column(Modifier.weight(1f).padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
+            Text(appLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                groupSummary(entry.events),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp, end = 4.dp),
+        )
+    }
+}
+
+/** A single request inside an expanded group — indented under the group, no icon/connector. */
+@Composable
+private fun GroupMemberRow(event: ApiAccessEventEntity, zone: ZoneId) {
+    val time = remember(event.timestampMs) {
+        DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+            .format(Instant.ofEpochMilli(event.timestampMs).atZone(zone))
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 88.dp, top = 2.dp, bottom = 6.dp, end = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            time,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            stringResource(
+                R.string.api_access_event_subtitle,
+                event.rowCount,
+                dataTypeLabel(event.dataType),
+                formatRequestedRange(event.startMs, event.endMs, zone),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** "3 requests · 6 visits, 8 trips, 2,636 location samples" — counts use the max per type. */
+@Composable
+private fun groupSummary(events: List<ApiAccessEventEntity>): String {
+    val nf = remember { NumberFormat.getInstance() }
+    val maxByType = events.groupBy { it.dataType }.mapValues { (_, e) -> e.maxOf { it.rowCount } }
+    val parts = listOfNotNull(
+        maxByType["visits"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_visits)}" },
+        maxByType["trips"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_trips)}" },
+        maxByType["samples"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_samples)}" },
+    )
+    val requests = stringResource(R.string.api_access_group_requests, events.size)
+    return if (parts.isEmpty()) requests
+    else "$requests · " + parts.joinToString(stringResource(R.string.api_notify_data_separator))
 }
 
 /** The leading column of a timeline row: the app icon aligned with the shared day connector. */

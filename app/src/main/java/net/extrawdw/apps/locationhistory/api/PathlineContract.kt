@@ -51,6 +51,10 @@ object PathlineContract {
      *  window reaching further back than this needs [Permissions.READ_EXTENDED_HISTORY]. */
     const val EXTENDED_HISTORY_WINDOW_MS: Long = 30L * 24 * 60 * 60 * 1000
 
+    /** A [QueryParams.GROUP] value is honoured only when it is within this window of the request's
+     *  receipt time; older/invalid values are ignored and the read is logged ungrouped. */
+    const val GROUP_WINDOW_MS: Long = 120_000
+
     /** Query-string parameters accepted on every collection URI. */
     object QueryParams {
         /** Inclusive start of the window, epoch milliseconds. Required. */
@@ -58,6 +62,15 @@ object PathlineContract {
 
         /** Exclusive end of the window, epoch milliseconds. Optional; defaults to the current time. */
         const val END: String = "end"
+
+        /**
+         * Optional batch-correlation key: a **wall-clock epoch-ms** value at/near "now" (within
+         * [GROUP_WINDOW_MS] of when the request is received). Reads that carry the same value from the
+         * same app — across endpoints — are shown as one expandable group in Pathline's access manager.
+         * Invalid, stale, or far-future values are ignored (the read is still logged, just ungrouped).
+         * It never affects what data is returned, only how the access is displayed.
+         */
+        const val GROUP: String = "group"
     }
 
     /** The three custom permissions a consumer declares and requests at runtime. */
