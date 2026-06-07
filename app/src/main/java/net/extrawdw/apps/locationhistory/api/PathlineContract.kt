@@ -7,7 +7,7 @@ import android.net.Uri
  *
  * Other apps installed on the same device can read the user's timeline (visits + trips) and raw
  * recorded location samples through a [android.content.ContentProvider] exposed at [AUTHORITY].
- * Access is gated by three custom runtime permissions (see [Permissions]); a consumer must declare
+ * Access is gated by four custom runtime permissions (see [Permissions]); a consumer must declare
  * the ones it needs with `<uses-permission>` AND request them at runtime — the user approves each
  * in the system permission dialog, exactly like the platform location permissions.
  *
@@ -35,6 +35,10 @@ import android.net.Uri
  *
  * ## Permission tiers
  * - `visits` / `trips` require [Permissions.READ_TIMELINE].
+ * - A trip's [Trips.ENCODED_POLYLINE] (the precise route) is only populated when the caller also
+ *   holds [Permissions.READ_TIMELINE_ROUTE] **or** [Permissions.READ_LOCATION_HISTORY]; otherwise
+ *   that single column comes back `null` while the rest of the trip row is returned normally. A
+ *   timeline-only caller therefore sees trips but not their tracks.
  * - `samples` require [Permissions.READ_LOCATION_HISTORY].
  * - Reading anything **older than 30 days** (a window whose `start` predates `now - 30 days`)
  *   additionally requires [Permissions.READ_EXTENDED_HISTORY]. Without it the query throws a
@@ -73,13 +77,22 @@ object PathlineContract {
         const val GROUP: String = "group"
     }
 
-    /** The three custom permissions a consumer declares and requests at runtime. */
+    /** The four custom permissions a consumer declares and requests at runtime. */
     object Permissions {
-        /** Read timeline items: [Visits] and [Trips]. */
+        /** Read timeline items: [Visits] and [Trips] (trip routes excluded — see below). */
         const val READ_TIMELINE: String =
             "net.extrawdw.apps.locationhistory.permission.READ_TIMELINE"
 
-        /** Read raw recorded [Samples]. */
+        /**
+         * Unlocks the [Trips.ENCODED_POLYLINE] column (a trip's precise route). Requested in addition
+         * to [READ_TIMELINE]. Grouped with [READ_LOCATION_HISTORY] (a precise-path sensitivity tier),
+         * and [READ_LOCATION_HISTORY] alone also unlocks the route — a sample reader can reconstruct
+         * it regardless.
+         */
+        const val READ_TIMELINE_ROUTE: String =
+            "net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTE"
+
+        /** Read raw recorded [Samples]. Also unlocks [Trips.ENCODED_POLYLINE]. */
         const val READ_LOCATION_HISTORY: String =
             "net.extrawdw.apps.locationhistory.permission.READ_LOCATION_HISTORY"
 
@@ -152,7 +165,11 @@ object PathlineContract {
         const val MODE_CONFIDENCE: String = "mode_confidence"
         /** Total distance traveled in meters. */
         const val DISTANCE_METERS: String = "distance_meters"
-        /** The route as a Google-format encoded polyline (precision 5). */
+        /**
+         * The route as a Google-format encoded polyline (precision 5), or `null` when the caller
+         * lacks both [Permissions.READ_TIMELINE_ROUTE] and [Permissions.READ_LOCATION_HISTORY].
+         * Consumers must handle a null value (a timeline-only caller always sees null here).
+         */
         const val ENCODED_POLYLINE: String = "encoded_polyline"
         /** 1 when the user has confirmed the trip's mode, else 0. */
         const val CONFIRMED: String = "confirmed"

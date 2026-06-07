@@ -110,13 +110,23 @@ class PathlineProvider : ContentProvider() {
             it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
         }
 
+        // A trip's encoded route is the raw movement path, so it sits behind the location-trail tier:
+        // a timeline-only caller still gets trip rows but with the polyline column nulled. Either the
+        // route permission or full location-history unlocks it (a sample reader can rebuild the path).
+        val routeWithheld: Boolean? = if (code == CODE_TRIPS) {
+            !(holds(PathlineContract.Permissions.READ_TIMELINE_ROUTE) ||
+                holds(PathlineContract.Permissions.READ_LOCATION_HISTORY))
+        } else {
+            null
+        }
+
         val cursor = when (code) {
             CODE_VISITS -> visitsCursor(start, end)
-            CODE_TRIPS -> tripsCursor(start, end)
+            CODE_TRIPS -> tripsCursor(start, end, includeRoute = routeWithheld == false)
             CODE_SAMPLES -> samplesCursor(start, end)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        logAccess(uri.lastPathSegment ?: "?", start, end, cursor.count, now, groupId)
+        logAccess(uri.lastPathSegment ?: "?", start, end, cursor.count, now, groupId, routeWithheld)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
@@ -130,6 +140,7 @@ class PathlineProvider : ContentProvider() {
         rowCount: Int,
         nowMs: Long,
         groupId: Long?,
+        routeWithheld: Boolean?,
     ) {
         val pkg = callingPackage ?: "unknown"
         runCatching {
@@ -143,6 +154,7 @@ class PathlineProvider : ContentProvider() {
                         rowCount = rowCount,
                         timestampMs = nowMs,
                         groupId = groupId,
+                        routeWithheld = routeWithheld,
                     ),
                 )
             }
@@ -180,7 +192,7 @@ class PathlineProvider : ContentProvider() {
         cursor
     }
 
-    private fun tripsCursor(start: Long, end: Long): Cursor = runBlocking {
+    private fun tripsCursor(start: Long, end: Long, includeRoute: Boolean): Cursor = runBlocking {
         val trips = entryPoint.tripDao().overlapping(start, end)
         val cursor = MatrixCursor(PathlineContract.Trips.COLUMNS, trips.size)
         for (t in trips) {
@@ -192,7 +204,7 @@ class PathlineProvider : ContentProvider() {
                     t.mode.name,
                     t.modeConfidence,
                     t.distanceMeters,
-                    t.encodedPolyline,
+                    if (includeRoute) t.encodedPolyline else null,
                     if (t.confirmed) 1 else 0,
                     t.fromVisitId,
                     t.toVisitId,
@@ -228,12 +240,15 @@ class PathlineProvider : ContentProvider() {
         cursor
     }
 
+    /** True when the IPC caller (or our own process) holds [permission]. */
+    private fun holds(permission: String): Boolean {
+        val ctx: Context = context ?: throw SecurityException("Provider not attached")
+        return ctx.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    }
+
     /** Throw [SecurityException] unless the IPC caller (or our own process) holds [permission]. */
     private fun enforce(permission: String) {
-        val ctx: Context = context ?: throw SecurityException("Provider not attached")
-        if (ctx.checkCallingOrSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-            throw SecurityException("Caller must hold $permission")
-        }
+        if (!holds(permission)) throw SecurityException("Caller must hold $permission")
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? =

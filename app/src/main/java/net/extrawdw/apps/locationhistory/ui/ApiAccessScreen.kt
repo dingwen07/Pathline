@@ -16,6 +16,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -497,12 +499,7 @@ private fun GroupMemberRow(event: ApiAccessEventEntity, zone: ZoneId) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            stringResource(
-                R.string.api_access_event_subtitle,
-                event.rowCount,
-                dataTypeLabel(event.dataType),
-                formatRequestedRange(event.startMs, event.endMs, zone),
-            ),
+            eventSubtitle(event, zone),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -575,12 +572,7 @@ private fun EventRow(
         Column(Modifier.weight(1f).padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
             Text(appLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                stringResource(
-                    R.string.api_access_event_subtitle,
-                    event.rowCount,
-                    dataTypeLabel(event.dataType),
-                    formatRequestedRange(event.startMs, event.endMs, zone),
-                ),
+                eventSubtitle(event, zone),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -612,10 +604,14 @@ private fun AppRow(app: ApiAppRow, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScopeChips(granted: List<ApiScope>, declared: List<ApiScope>) {
     if (declared.isEmpty()) return
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy((-8).dp),
+    ) {
         val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
         if (granted.isEmpty()) {
             AssistChip(
@@ -634,6 +630,22 @@ private fun ScopeChips(granted: List<ApiScope>, declared: List<ApiScope>) {
                 )
             }
         }
+    }
+}
+
+/** Event subtitle ("6 trips · last 24 h"), with a route-withheld note when the polyline was nulled. */
+@Composable
+private fun eventSubtitle(event: ApiAccessEventEntity, zone: ZoneId): String {
+    val base = stringResource(
+        R.string.api_access_event_subtitle,
+        event.rowCount,
+        dataTypeLabel(event.dataType),
+        formatRequestedRange(event.startMs, event.endMs, zone),
+    )
+    return if (event.routeWithheld == true) {
+        base + stringResource(R.string.api_access_route_withheld_suffix)
+    } else {
+        base
     }
 }
 

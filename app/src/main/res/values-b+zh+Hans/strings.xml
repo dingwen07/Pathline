@@ -315,10 +315,14 @@
     <!-- 系统会把 description 嵌入“允许"应用"<description>吗？”，因此为不带句号的动词短语；label 为设置中的标题。 -->
     <string name="perm_read_timeline_label">读取 Pathline 时间线</string>
     <string name="perm_read_timeline_description">读取 Pathline 中的访问地点和行程</string>
+    <string name="perm_read_timeline_route_label">读取 Pathline 行程轨迹</string>
+    <string name="perm_read_timeline_route_description">读取 Pathline 记录的行程精确轨迹</string>
     <string name="perm_read_location_history_label">读取 Pathline 位置数据</string>
     <string name="perm_read_location_history_description">读取 Pathline 记录的原始位置采样</string>
     <string name="perm_read_extended_history_label">读取更早的 Pathline 历史</string>
     <string name="perm_read_extended_history_description">读取 30 天前的 Pathline 数据</string>
+    <string name="perm_group_location_history_label">Pathline 位置历史</string>
+    <string name="perm_group_location_history_description">读取 Pathline 记录的精确轨迹和原始位置采样</string>
 
     <!-- ===================== API 访问管理 ===================== -->
     <string name="settings_api_access_title">访问 Pathline 数据</string>
@@ -334,6 +338,7 @@
     <string name="api_access_not_installed">已卸载</string>
     <string name="api_access_revoked">访问已关闭</string>
     <string name="api_access_event_subtitle">%1$d 个%2$s · %3$s</string>
+    <string name="api_access_route_withheld_suffix"> · 已隐藏轨迹</string>
     <string name="api_access_today">今天</string>
     <string name="api_access_yesterday">昨天</string>
     <string name="api_access_export">导出日志</string>
@@ -347,6 +352,7 @@
     <string name="api_access_notif_settings">设置</string>
 
     <string name="api_scope_timeline">时间线</string>
+    <string name="api_scope_timeline_route">行程轨迹</string>
     <string name="api_scope_location_history">位置历史</string>
     <string name="api_scope_extended_history">历史数据</string>
     <string name="api_data_visits">访问地点</string>

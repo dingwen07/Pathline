@@ -1,0 +1,24 @@
+<!-- Icon shown in the system permission UI for READ_TIMELINE_ROUTE (a trip's encoded route). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- The traced path between two endpoints. -->
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5,19 L9,11 L14,14 L19,5" />
+    <!-- Start node. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M5,19 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+    <!-- End node. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M19,5 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+</vector>

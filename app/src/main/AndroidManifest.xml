@@ -26,13 +26,16 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!--
-      Custom runtime permissions that gate the on-device data API (see PathlineProvider /
-      PathlineContract). A third-party app declares the ones it needs with <uses-permission> and
-      requests them at runtime; protectionLevel="dangerous" makes the system show a user-approval
-      dialog. They are intentionally NOT in a shared permission group: dangerous permissions in one
-      group are granted together from a single decision, but each of these is a separate, independent
-      consent (timeline / raw history / 30-day+ history), so each prompts and is revoked on its own.
+      On-device data-API permissions (see PathlineProvider / PathlineContract). READ_TIMELINE_ROUTE and
+      READ_LOCATION_HISTORY share a group on purpose: both expose the precise path, so they grant and
+      revoke as one tier; READ_TIMELINE stays outside it so a timeline-only caller never gains routes.
     -->
+    <permission-group
+        android:name="net.extrawdw.apps.locationhistory.permission-group.LOCATION_HISTORY"
+        android:icon="@drawable/ic_perm_location_history"
+        android:label="@string/perm_group_location_history_label"
+        android:description="@string/perm_group_location_history_description" />
+
     <permission
         android:name="net.extrawdw.apps.locationhistory.permission.READ_TIMELINE"
         android:protectionLevel="dangerous"
@@ -41,8 +44,17 @@
         android:description="@string/perm_read_timeline_description" />
 
     <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTE"
+        android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.LOCATION_HISTORY"
+        android:icon="@drawable/ic_perm_route"
+        android:label="@string/perm_read_timeline_route_label"
+        android:description="@string/perm_read_timeline_route_description" />
+
+    <permission
         android:name="net.extrawdw.apps.locationhistory.permission.READ_LOCATION_HISTORY"
         android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.LOCATION_HISTORY"
         android:icon="@drawable/ic_perm_location_history"
         android:label="@string/perm_read_location_history_label"
         android:description="@string/perm_read_location_history_description" />

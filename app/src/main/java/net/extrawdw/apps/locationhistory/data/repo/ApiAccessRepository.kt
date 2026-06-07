@@ -24,6 +24,7 @@ import javax.inject.Singleton
 /** A scope another app can request, paired with the OS permission that gates it. */
 enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) {
     TIMELINE(PathlineContract.Permissions.READ_TIMELINE, R.string.api_scope_timeline),
+    TIMELINE_ROUTE(PathlineContract.Permissions.READ_TIMELINE_ROUTE, R.string.api_scope_timeline_route),
     LOCATION_HISTORY(PathlineContract.Permissions.READ_LOCATION_HISTORY, R.string.api_scope_location_history),
     EXTENDED_HISTORY(PathlineContract.Permissions.READ_EXTENDED_HISTORY, R.string.api_scope_extended_history);
 

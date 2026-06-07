@@ -43,6 +43,12 @@ data class ApiAccessEventEntity(
      * invalid value.
      */
     val groupId: Long? = null,
+    /**
+     * For a `trips` read, whether the `encoded_polyline` (route) column was withheld because the
+     * caller held neither READ_TIMELINE_ROUTE nor READ_LOCATION_HISTORY. Null for non-trip reads,
+     * where the route is not applicable. Surfaced in the access manager so the audit trail is honest.
+     */
+    val routeWithheld: Boolean? = null,
 )
 
 /** Last-access summary for one app, projected over the log. */

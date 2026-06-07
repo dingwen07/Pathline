@@ -335,10 +335,14 @@
          bare, lowercase verb phrase with no trailing period. The label is the Settings list title. -->
     <string name="perm_read_timeline_label">Read Pathline timeline</string>
     <string name="perm_read_timeline_description">read Pathline timeline of visits and trips</string>
+    <string name="perm_read_timeline_route_label">Read Pathline trip routes</string>
+    <string name="perm_read_timeline_route_description">read the precise route of trips recorded by Pathline</string>
     <string name="perm_read_location_history_label">Read Pathline location data</string>
     <string name="perm_read_location_history_description">read location samples recorded by Pathline</string>
     <string name="perm_read_extended_history_label">Read extended Pathline history</string>
     <string name="perm_read_extended_history_description">read Pathline data older than 30 days</string>
+    <string name="perm_group_location_history_label">Pathline location history</string>
+    <string name="perm_group_location_history_description">read precise routes and raw location samples recorded by Pathline</string>
 
     <!-- ===================== API access manager ===================== -->
     <string name="settings_api_access_title">Access to Pathline data</string>
@@ -356,6 +360,8 @@
     <string name="api_access_revoked">Access turned off</string>
     <!-- "<count> <data type> · <requested date range>", e.g. "12 location samples · Jun 1 – Jun 7" -->
     <string name="api_access_event_subtitle">%1$d %2$s · %3$s</string>
+    <!-- Appended to a trips read when the route column was withheld (caller lacked route permission). -->
+    <string name="api_access_route_withheld_suffix"> · route withheld</string>
     <string name="api_access_today">Today</string>
     <string name="api_access_yesterday">Yesterday</string>
     <string name="api_access_export">Export log</string>
@@ -369,6 +375,7 @@
     <string name="api_access_notif_settings">Settings</string>
 
     <string name="api_scope_timeline">Timeline</string>
+    <string name="api_scope_timeline_route">Trip routes</string>
     <string name="api_scope_location_history">Location history</string>
     <string name="api_scope_extended_history">Historical data</string>
     <string name="api_data_visits">Visits</string>
