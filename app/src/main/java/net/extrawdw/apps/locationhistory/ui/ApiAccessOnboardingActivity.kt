@@ -101,12 +101,20 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
             MODE_MANAGE -> if (state.apiAccessEnabled || state.apiAccessConsentNeverAsk) {
                 openManager(); finish(); return
             }
-            MODE_ENABLE -> if (state.apiAccessEnabled) { finish(); return }
+
+            MODE_ENABLE -> if (state.apiAccessEnabled) {
+                finish(); return
+            }
+
             MODE_REQUEST -> when {
                 // Already on -> nothing to ask; return success without any UI.
-                state.apiAccessEnabled -> { setResultForRequest(enabled = true); finish(); return }
+                state.apiAccessEnabled -> {
+                    setResultForRequest(enabled = true); finish(); return
+                }
                 // The user chose "don't ask again" -> never prompt for a request; decline silently.
-                state.apiAccessConsentNeverAsk -> { setResultForRequest(enabled = false); finish(); return }
+                state.apiAccessConsentNeverAsk -> {
+                    setResultForRequest(enabled = false); finish(); return
+                }
             }
         }
 
@@ -118,9 +126,20 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
                     // The switch is an explicit "turn it on" gesture, so "don't ask again" doesn't fit
                     // there; the row tap and third-party requests still offer it.
                     showNeverAsk = mode != MODE_ENABLE,
-                    onTurnOn = { decide(mode, enabledAfter = true) { settings.setApiAccessEnabled(true) } },
+                    onTurnOn = {
+                        decide(mode, enabledAfter = true) {
+                            settings.setApiAccessEnabled(
+                                true
+                            )
+                        }
+                    },
                     onNotNow = { decide(mode, enabledAfter = false) { /* leave off */ } },
-                    onNeverAsk = { decide(mode, enabledAfter = false) { settings.setApiAccessConsentNeverAsk(true) } },
+                    onNeverAsk = {
+                        decide(
+                            mode,
+                            enabledAfter = false
+                        ) { settings.setApiAccessConsentNeverAsk(true) }
+                    },
                 )
             }
         }
@@ -156,10 +175,17 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
     private fun resolveRequester(): RequesterInfo? {
         val pkg = (callingPackage ?: referrer?.host)?.takeIf { it != packageName } ?: return null
         val pm = packageManager
-        val pkgInfo = runCatching { pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS) }.getOrNull()
+        val pkgInfo =
+            runCatching { pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS) }.getOrNull()
         val appInfo = pkgInfo?.applicationInfo
-        val label = appInfo?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() } ?: pkg
-        val icon = appInfo?.let { runCatching { pm.getApplicationIcon(it).toBitmap().asImageBitmap() }.getOrNull() }
+        val label =
+            appInfo?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() }
+                ?: pkg
+        val icon = appInfo?.let {
+            runCatching {
+                pm.getApplicationIcon(it).toBitmap().asImageBitmap()
+            }.getOrNull()
+        }
         // The Pathline scopes this app declares with <uses-permission> — what it's asking to be able to
         // read (same set the "Access to Pathline data" manager shows per app).
         val declared = pkgInfo?.requestedPermissions?.toSet().orEmpty()
@@ -184,10 +210,16 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
         const val MODE_REQUEST = 2
 
         fun manageIntent(context: Context): Intent =
-            Intent(context, ApiAccessOnboardingActivity::class.java).putExtra(EXTRA_MODE, MODE_MANAGE)
+            Intent(context, ApiAccessOnboardingActivity::class.java).putExtra(
+                EXTRA_MODE,
+                MODE_MANAGE
+            )
 
         fun enableIntent(context: Context): Intent =
-            Intent(context, ApiAccessOnboardingActivity::class.java).putExtra(EXTRA_MODE, MODE_ENABLE)
+            Intent(context, ApiAccessOnboardingActivity::class.java).putExtra(
+                EXTRA_MODE,
+                MODE_ENABLE
+            )
     }
 }
 
@@ -206,10 +238,26 @@ private data class ApiPermInfo(
 
 /** The permissions an app can be granted, shown with their friendly labels (not raw permission names). */
 private val API_PERMISSIONS = listOf(
-    ApiPermInfo(R.drawable.ic_perm_timeline, R.string.perm_read_timeline_label, R.string.perm_read_timeline_description),
-    ApiPermInfo(R.drawable.ic_perm_route, R.string.perm_read_timeline_route_label, R.string.perm_read_timeline_route_description),
-    ApiPermInfo(R.drawable.ic_perm_location_history, R.string.perm_read_location_history_label, R.string.perm_read_location_history_description),
-    ApiPermInfo(R.drawable.ic_perm_extended_history, R.string.perm_read_extended_history_label, R.string.perm_read_extended_history_description),
+    ApiPermInfo(
+        R.drawable.ic_perm_timeline,
+        R.string.perm_read_timeline_label,
+        R.string.perm_read_timeline_description
+    ),
+    ApiPermInfo(
+        R.drawable.ic_perm_route,
+        R.string.perm_read_timeline_route_label,
+        R.string.perm_read_timeline_route_description
+    ),
+    ApiPermInfo(
+        R.drawable.ic_perm_location_history,
+        R.string.perm_read_location_history_label,
+        R.string.perm_read_location_history_description
+    ),
+    ApiPermInfo(
+        R.drawable.ic_perm_extended_history,
+        R.string.perm_read_extended_history_label,
+        R.string.perm_read_extended_history_description
+    ),
 )
 
 @Composable
@@ -336,8 +384,10 @@ private fun RequesterCard(requester: RequesterInfo) {
                     fontWeight = FontWeight.SemiBold,
                 )
                 if (requester.declaredScopes.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy((-8).dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy((-8).dp)
+                    ) {
                         requester.declaredScopes.forEach { scope ->
                             AssistChip(
                                 onClick = {},

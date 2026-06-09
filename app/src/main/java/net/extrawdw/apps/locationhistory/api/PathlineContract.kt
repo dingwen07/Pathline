@@ -381,7 +381,7 @@ object PathlineContract {
             CONTENT_URI.buildUpon().appendPath(placeId.toString()).appendPath(VISITS_PATH).build()
 
         /**
-         * A single place's **visit history**: every visit attributed to the place in the path, newest
+         * A single place's **visit history**: every visit attributed to the place in the path, oldest
          * first, queried at `content://…/places/<placeId>/visits`.
          *
          * These rows are intentionally **lean** — they carry no place name or address, because the
