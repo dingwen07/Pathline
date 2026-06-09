@@ -42,10 +42,11 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
             ?: return Result.success()
         val denied = inputData.getBoolean(KEY_DENIED, false)
         val now = System.currentTimeMillis()
-        val prefs = ctx.getSharedPreferences(ApiAccessRepository.READ_NOTIFY_PREFS, Context.MODE_PRIVATE)
+        val prefs =
+            ctx.getSharedPreferences(ApiAccessRepository.READ_NOTIFY_PREFS, Context.MODE_PRIVATE)
 
-        // Read and denied alerts ride independent back-off lanes (so a denial isn't muffled by a recent
-        // read, and vice versa); both are cleared together by the "reset notification timers" action.
+        // Read and denied alerts ride independent back-off lanes; both are cleared together by the
+        // "reset notification timers" action.
         val lane = if (denied) "denied:" else ""
         val last = prefs.getLong("${lane}last:$pkg", 0L)
         var count = prefs.getInt("${lane}count:$pkg", 0)
@@ -60,13 +61,15 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
 
         // Summarize this app's activity since the last alert on this lane (or the recent burst window).
         val sinceMs = max(last, now - SUMMARY_WINDOW_MS)
-        val recent = runCatching { repo.readsForPackageSince(pkg, sinceMs) }.getOrDefault(emptyList())
+        val recent =
+            runCatching { repo.readsForPackageSince(pkg, sinceMs) }.getOrDefault(emptyList())
 
         val notificationId: Int
         val title: String
         val text: String
         if (denied) {
-            val scopes = deniedSummary(ctx, recent) ?: return Result.success() // nothing denied in window
+            val scopes =
+                deniedSummary(ctx, recent) ?: return Result.success() // nothing denied in window
             notificationId = Notifications.apiAccessDeniedNotificationId(pkg)
             title = ctx.getString(R.string.api_notify_denied_title)
             text = ctx.getString(R.string.api_notify_denied_text_one, label, scopes)
@@ -109,12 +112,34 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
         val reads = events.filter { it.deniedPermission == null }
         if (reads.isEmpty()) return null
         // Use the max row count per type (repeated identical reads shouldn't inflate the number).
-        val maxByType = reads.groupBy { it.dataType }.mapValues { (_, e) -> e.maxOf { it.rowCount } }
+        val maxByType =
+            reads.groupBy { it.dataType }.mapValues { (_, e) -> e.maxOf { it.rowCount } }
         val nf = NumberFormat.getInstance()
         val parts = buildList {
-            maxByType["visits"]?.let { add(ctx.getString(R.string.api_notify_data_visits, nf.format(it))) }
-            maxByType["trips"]?.let { add(ctx.getString(R.string.api_notify_data_trips, nf.format(it))) }
-            maxByType["samples"]?.let { add(ctx.getString(R.string.api_notify_data_samples, nf.format(it))) }
+            maxByType["visits"]?.let {
+                add(
+                    ctx.getString(
+                        R.string.api_notify_data_visits,
+                        nf.format(it)
+                    )
+                )
+            }
+            maxByType["trips"]?.let {
+                add(
+                    ctx.getString(
+                        R.string.api_notify_data_trips,
+                        nf.format(it)
+                    )
+                )
+            }
+            maxByType["samples"]?.let {
+                add(
+                    ctx.getString(
+                        R.string.api_notify_data_samples,
+                        nf.format(it)
+                    )
+                )
+            }
         }
         if (parts.isEmpty()) return null
         return parts.joinToString(ctx.getString(R.string.api_notify_data_separator))
@@ -126,8 +151,10 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
 
         private const val BASE_INTERVAL_MS = 60L * 60 * 1000        // 1h after the first alert
         private const val CAP_INTERVAL_MS = 24L * 60 * 60 * 1000    // back-off caps at 24h
-        private const val RESET_MS = 48L * 60 * 60 * 1000           // quiet this long -> reset escalation
-        private const val SUMMARY_WINDOW_MS = 30L * 60 * 1000       // window summarized in the alert
+        private const val RESET_MS =
+            48L * 60 * 60 * 1000           // quiet this long -> reset escalation
+        private const val SUMMARY_WINDOW_MS =
+            30L * 60 * 1000       // window summarized in the alert
         private const val MAX_COUNT = 6                             // 1h<<6 already exceeds the cap
     }
 }

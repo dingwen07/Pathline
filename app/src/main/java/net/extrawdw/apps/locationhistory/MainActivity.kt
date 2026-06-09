@@ -179,7 +179,12 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                             permissionsGranted = permissions.granted,
                             onRequestPermissions = permissions::request,
                             onOpenApiAccess = {
-                                context.startActivity(Intent(context, ApiAccessActivity::class.java))
+                                context.startActivity(
+                                    Intent(
+                                        context,
+                                        ApiAccessActivity::class.java
+                                    )
+                                )
                             },
                         )
                     }

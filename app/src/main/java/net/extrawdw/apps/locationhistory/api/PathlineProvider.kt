@@ -108,7 +108,16 @@ class PathlineProvider : ContentProvider() {
         // rejected; the window is never silently narrowed.
         fun requirePermission(permission: String) {
             if (holds(permission)) return
-            logAccess(dataType, start, end, rowCount = 0, now, groupId, routeWithheld = null, deniedPermission = permission)
+            logAccess(
+                dataType,
+                start,
+                end,
+                rowCount = 0,
+                now,
+                groupId,
+                routeWithheld = null,
+                deniedPermission = permission
+            )
             throw SecurityException("Caller must hold $permission")
         }
         requirePermission(basePermission)
@@ -121,7 +130,7 @@ class PathlineProvider : ContentProvider() {
         // route permission or full location-history unlocks it (a sample reader can rebuild the path).
         val routeWithheld: Boolean? = if (code == CODE_TRIPS) {
             !(holds(PathlineContract.Permissions.READ_TIMELINE_ROUTE) ||
-                holds(PathlineContract.Permissions.READ_LOCATION_HISTORY))
+                    holds(PathlineContract.Permissions.READ_LOCATION_HISTORY))
         } else {
             null
         }
@@ -132,7 +141,16 @@ class PathlineProvider : ContentProvider() {
             CODE_SAMPLES -> samplesCursor(start, end)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        logAccess(dataType, start, end, cursor.count, now, groupId, routeWithheld, deniedPermission = null)
+        logAccess(
+            dataType,
+            start,
+            end,
+            cursor.count,
+            now,
+            groupId,
+            routeWithheld,
+            deniedPermission = null
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
@@ -170,7 +188,8 @@ class PathlineProvider : ContentProvider() {
         // Alert the user about this access — a successful read OR a denied (unauthorized) attempt, on
         // separate per-app back-off lanes. Coalesced + rate-limited by WorkManager / the worker.
         runCatching {
-            entryPoint.workScheduler().enqueueApiAccessNotification(pkg, denied = deniedPermission != null)
+            entryPoint.workScheduler()
+                .enqueueApiAccessNotification(pkg, denied = deniedPermission != null)
         }
     }
 

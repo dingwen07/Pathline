@@ -58,7 +58,9 @@ class ApiAccessViewModel @Inject constructor(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
-    init { refresh() }
+    init {
+        refresh()
+    }
 
     /** Recompute the app list + grant state from the packages seen in the log. */
     fun refresh() {
@@ -111,7 +113,9 @@ class ApiAccessViewModel @Inject constructor(
     }
 
     private fun decodeIcon(bytes: ByteArray): ImageBitmap? =
-        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size).asImageBitmap() }.getOrNull()
+        runCatching {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size).asImageBitmap()
+        }.getOrNull()
 
     /** Write the entire log to a CSV in filesDir/logs (served by the FileProvider) and return it. */
     suspend fun exportCsv(): File? = withContext(Dispatchers.IO) {

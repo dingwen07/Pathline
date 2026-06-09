@@ -337,7 +337,12 @@ private fun DateRangePickerDialog(
                 Button(
                     onClick = {
                         if (start != null && end != null) {
-                            requestClose { onConfirm(utcMillisToDayEpoch(start), utcMillisToDayEpoch(end)) }
+                            requestClose {
+                                onConfirm(
+                                    utcMillisToDayEpoch(start),
+                                    utcMillisToDayEpoch(end)
+                                )
+                            }
                         }
                     },
                     enabled = start != null && end != null,

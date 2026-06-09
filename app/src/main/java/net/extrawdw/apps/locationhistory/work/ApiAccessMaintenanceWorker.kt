@@ -42,9 +42,18 @@ class ApiAccessMaintenanceWorker @AssistedInject constructor(
                 val text = if (holders.size == 1) {
                     ctx.getString(R.string.api_notify_hold_text_one, holders[0].label)
                 } else {
-                    ctx.getString(R.string.api_notify_hold_text_many, holders[0].label, holders.size - 1)
+                    ctx.getString(
+                        R.string.api_notify_hold_text_many,
+                        holders[0].label,
+                        holders.size - 1
+                    )
                 }
-                Notifications.notifyApiAccess(ctx, Notifications.API_ACCESS_HOLD_NOTIFICATION_ID, title, text)
+                Notifications.notifyApiAccess(
+                    ctx,
+                    Notifications.API_ACCESS_HOLD_NOTIFICATION_ID,
+                    title,
+                    text
+                )
                 prefs.edit { putLong(KEY_LAST_REMINDER, now) }
             }
         }

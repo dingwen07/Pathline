@@ -165,7 +165,9 @@ fun SettingsScreen(
             GpxCard()
 
             // Access to Pathline data — third-party API audit + management
-            Card(Modifier.fillMaxWidth().clickable(onClick = onOpenApiAccess)) {
+            Card(Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenApiAccess)) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
                         stringResource(R.string.settings_api_access_title),

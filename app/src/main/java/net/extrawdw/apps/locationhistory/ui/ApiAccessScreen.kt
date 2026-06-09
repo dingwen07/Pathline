@@ -134,7 +134,7 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
     var notificationsGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED,
+                    PackageManager.PERMISSION_GRANTED,
         )
     }
     val notifLauncher = rememberLauncherForActivityResult(
@@ -164,7 +164,8 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
             },
             onResetBackoff = {
                 viewModel.resetNotificationBackoff()
-                Toast.makeText(context, R.string.api_access_backoff_reset, Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, R.string.api_access_backoff_reset, Toast.LENGTH_SHORT)
+                    .show()
             },
         )
     }
@@ -175,17 +176,26 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                 title = { Text(stringResource(R.string.api_access_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_close))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_close)
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = { showMaintenanceDialog = true }) {
-                        Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(R.string.api_access_maintenance))
+                        Icon(
+                            Icons.Filled.RestartAlt,
+                            contentDescription = stringResource(R.string.api_access_maintenance)
+                        )
                     }
                     IconButton(onClick = {
                         scope.launch { viewModel.exportCsv()?.let { shareCsv(context, it) } }
                     }) {
-                        Icon(Icons.Filled.IosShare, contentDescription = stringResource(R.string.api_access_export))
+                        Icon(
+                            Icons.Filled.IosShare,
+                            contentDescription = stringResource(R.string.api_access_export)
+                        )
                     }
                 },
             )
@@ -194,7 +204,9 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { viewModel.refresh() },
-            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = padding.calculateTopPadding()),
         ) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -238,7 +250,9 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                     item { EmptyText(stringResource(R.string.api_access_no_activity)) }
                 } else {
                     val zone = ZoneId.systemDefault()
-                    val grouped = events.groupBy { Instant.ofEpochMilli(it.timestampMs).atZone(zone).toLocalDate() }
+                    val grouped = events.groupBy {
+                        Instant.ofEpochMilli(it.timestampMs).atZone(zone).toLocalDate()
+                    }
                     grouped.forEach { (date, dayEvents) ->
                         item(key = "h-$date") { DayHeader(date, zone) }
                         item(key = "events-$date") {
@@ -323,7 +337,11 @@ private fun SectionHeader(text: String) {
 
 @Composable
 private fun EmptyText(text: String) {
-    Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
@@ -345,9 +363,16 @@ private fun DayHeader(date: LocalDate, zone: ZoneId) {
 @Composable
 private fun AppIconCircle(icon: ImageBitmap?, size: Dp) {
     if (icon != null) {
-        Image(icon, contentDescription = null, modifier = Modifier.size(size).clip(CircleShape))
+        Image(icon, contentDescription = null, modifier = Modifier
+            .size(size)
+            .clip(CircleShape))
     } else {
-        Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant))
+        Box(
+            Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
     }
 }
 
@@ -397,7 +422,7 @@ private fun DayEventGroup(
                         }
                     }
                 }
-        },
+            },
     ) {
         entries.forEach { entry ->
             when (entry) {
@@ -469,7 +494,12 @@ private fun buildDayEntries(events: List<ApiAccessEventEntity>): List<DayEntry> 
         if (list.size == 1) {
             out.add(SingleEntry(list[0]))
         } else {
-            out.add(GroupEntry(list[0].packageName, list[0].groupId!!, list.sortedByDescending { it.timestampMs }))
+            out.add(
+                GroupEntry(
+                    list[0].packageName,
+                    list[0].groupId!!,
+                    list.sortedByDescending { it.timestampMs })
+            )
         }
     }
     return out.sortedByDescending { it.sortKey }
@@ -507,11 +537,19 @@ private fun GroupRow(
             time,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(48.dp).padding(top = 14.dp),
+            modifier = Modifier
+                .width(48.dp)
+                .padding(top = 14.dp),
         )
         TimelineIconColumn(icon = icon)
-        Column(Modifier.weight(1f).padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
-            Text(appLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Column(Modifier
+            .weight(1f)
+            .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
+            Text(
+                appLabel,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
             Text(
                 groupSummary(entry.events),
                 style = MaterialTheme.typography.bodySmall,
@@ -535,7 +573,9 @@ private fun GroupMemberRow(event: ApiAccessEventEntity, zone: ZoneId) {
             .format(Instant.ofEpochMilli(event.timestampMs).atZone(zone))
     }
     Row(
-        Modifier.fillMaxWidth().padding(start = 88.dp, top = 2.dp, bottom = 6.dp, end = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 88.dp, top = 2.dp, bottom = 6.dp, end = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
@@ -576,7 +616,9 @@ private fun TimelineIconColumn(icon: ImageBitmap?) {
     val iconSize = 32.dp
     val iconTop = 8.dp
     Box(
-        Modifier.width(40.dp).fillMaxHeight(),
+        Modifier
+            .width(40.dp)
+            .fillMaxHeight(),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -615,11 +657,19 @@ private fun EventRow(
             time,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(48.dp).padding(top = 14.dp),
+            modifier = Modifier
+                .width(48.dp)
+                .padding(top = 14.dp),
         )
         TimelineIconColumn(icon = icon)
-        Column(Modifier.weight(1f).padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
-            Text(appLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Column(Modifier
+            .weight(1f)
+            .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
+            Text(
+                appLabel,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
             val denied = event.deniedPermission != null
             Text(
                 eventSubtitle(event, zone),
@@ -680,8 +730,13 @@ private fun MaintenanceDialog(
             }
             Column {
                 Row(
-                    Modifier.fillMaxWidth()
-                        .toggleable(value = enabled, onValueChange = { enabled = it }, role = Role.Switch)
+                    Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = enabled,
+                            onValueChange = { enabled = it },
+                            role = Role.Switch
+                        )
                         .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -715,7 +770,10 @@ private fun MaintenanceDialog(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { onCleanupNow(selectedDays) }, modifier = Modifier.align(Alignment.End)) {
+                TextButton(
+                    onClick = { onCleanupNow(selectedDays) },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
                     Text(stringResource(R.string.api_access_cleanup_now))
                 }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
@@ -736,22 +794,34 @@ private fun MaintenanceDialog(
 @Composable
 private fun AppRow(app: ApiAppRow, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIconCircle(app.icon, 40.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(app.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                app.label,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
             val subtitle = when {
                 !app.installed -> stringResource(R.string.api_access_not_installed)
                 app.lastAccessMs != null -> stringResource(
                     R.string.api_access_last_read,
                     DateUtils.getRelativeTimeSpanString(app.lastAccessMs).toString(),
                 )
+
                 else -> stringResource(R.string.api_access_never_read)
             }
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             ScopeChips(granted = app.granted, declared = app.declared)
         }
     }
@@ -770,7 +840,12 @@ private fun ScopeChips(granted: List<ApiScope>, declared: List<ApiScope>) {
             AssistChip(
                 onClick = {},
                 enabled = false,
-                label = { Text(stringResource(R.string.api_access_revoked), style = MaterialTheme.typography.labelSmall) },
+                label = {
+                    Text(
+                        stringResource(R.string.api_access_revoked),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                },
                 colors = AssistChipDefaults.assistChipColors(disabledLabelColor = labelColor),
             )
         } else {
@@ -778,7 +853,12 @@ private fun ScopeChips(granted: List<ApiScope>, declared: List<ApiScope>) {
                 AssistChip(
                     onClick = {},
                     enabled = false,
-                    label = { Text(stringResource(scope.labelRes), style = MaterialTheme.typography.labelSmall) },
+                    label = {
+                        Text(
+                            stringResource(scope.labelRes),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    },
                     colors = AssistChipDefaults.assistChipColors(disabledLabelColor = labelColor),
                 )
             }
@@ -834,7 +914,10 @@ private fun formatRequestedRange(startMs: Long, endMs: Long, zone: ZoneId): Stri
 private fun openAppSettings(context: Context, pkg: String) {
     runCatching {
         context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", pkg, null)
+            )
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
     }
@@ -842,12 +925,18 @@ private fun openAppSettings(context: Context, pkg: String) {
 
 private fun shareCsv(context: Context, file: File) {
     val authority = "${context.packageName}.fileprovider"
-    val uri = runCatching { FileProvider.getUriForFile(context, authority, file) }.getOrNull() ?: return
+    val uri =
+        runCatching { FileProvider.getUriForFile(context, authority, file) }.getOrNull() ?: return
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/csv"
         putExtra(Intent.EXTRA_STREAM, uri)
         putExtra(Intent.EXTRA_SUBJECT, file.name)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(Intent.createChooser(intent, context.getString(R.string.api_access_export_chooser)))
+    context.startActivity(
+        Intent.createChooser(
+            intent,
+            context.getString(R.string.api_access_export_chooser)
+        )
+    )
 }

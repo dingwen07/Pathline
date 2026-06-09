@@ -121,34 +121,46 @@ object PathlineContract {
      */
     object Visits {
         const val PATH: String = "visits"
-        @JvmField val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
         const val CONTENT_TYPE: String =
             "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.visit"
 
         /** Stable visit id (the cursor's `_id`). */
         const val ID: String = "_id"
+
         /** Start of the stay, epoch milliseconds. */
         const val START_MS: String = "start_ms"
+
         /** End of the stay, epoch milliseconds. Equal to "now" for an ongoing visit. */
         const val END_MS: String = "end_ms"
+
         /** Id of the matched place, or null when the visit is unconfirmed / has only a candidate. */
         const val PLACE_ID: String = "place_id"
+
         /** Best available human name: the matched place's name, else the candidate name, else null. */
         const val PLACE_NAME: String = "place_name"
+
         /** Visit centroid latitude. */
         const val LATITUDE: String = "latitude"
+
         /** Visit centroid longitude. */
         const val LONGITUDE: String = "longitude"
+
         /** Approximate radius of the stay in meters. */
         const val RADIUS_METERS: String = "radius_meters"
+
         /** Place-attribution confidence in [0,1]. */
         const val CONFIDENCE: String = "confidence"
+
         /** 1 when the user has confirmed the place attribution, else 0. */
         const val CONFIRMED: String = "confirmed"
+
         /** 1 when this is the still-open current visit, else 0. */
         const val IS_ONGOING: String = "is_ongoing"
 
-        @JvmField val COLUMNS: Array<String> = arrayOf(
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(
             ID, START_MS, END_MS, PLACE_ID, PLACE_NAME, LATITUDE, LONGITUDE,
             RADIUS_METERS, CONFIDENCE, CONFIRMED, IS_ONGOING,
         )
@@ -160,39 +172,50 @@ object PathlineContract {
      */
     object Trips {
         const val PATH: String = "trips"
-        @JvmField val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
         const val CONTENT_TYPE: String =
             "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.trip"
 
         /** Stable trip id (the cursor's `_id`). */
         const val ID: String = "_id"
+
         /** Start of the movement, epoch milliseconds. */
         const val START_MS: String = "start_ms"
+
         /** End of the movement, epoch milliseconds. */
         const val END_MS: String = "end_ms"
+
         /**
          * Transport mode, one of: `WALKING`, `RUNNING`, `CYCLING`, `CAR`, `BUS`, `RAIL`, `FERRY`,
          * `FLIGHT`, `UNKNOWN`.
          */
         const val MODE: String = "mode"
+
         /** Confidence of the [MODE] classification in [0,1]. */
         const val MODE_CONFIDENCE: String = "mode_confidence"
+
         /** Total distance traveled in meters. */
         const val DISTANCE_METERS: String = "distance_meters"
+
         /**
          * The route as a Google-format encoded polyline (precision 5), or `null` when the caller
          * lacks both [Permissions.READ_TIMELINE_ROUTE] and [Permissions.READ_LOCATION_HISTORY].
          * Consumers must handle a null value (a timeline-only caller always sees null here).
          */
         const val ENCODED_POLYLINE: String = "encoded_polyline"
+
         /** 1 when the user has confirmed the trip's mode, else 0. */
         const val CONFIRMED: String = "confirmed"
+
         /** Visit id this movement departs from, or null. */
         const val FROM_VISIT_ID: String = "from_visit_id"
+
         /** Visit id this movement arrives at, or null. */
         const val TO_VISIT_ID: String = "to_visit_id"
 
-        @JvmField val COLUMNS: Array<String> = arrayOf(
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(
             ID, START_MS, END_MS, MODE, MODE_CONFIDENCE, DISTANCE_METERS,
             ENCODED_POLYLINE, CONFIRMED, FROM_VISIT_ID, TO_VISIT_ID,
         )
@@ -204,43 +227,68 @@ object PathlineContract {
      */
     object Samples {
         const val PATH: String = "samples"
-        @JvmField val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
         const val CONTENT_TYPE: String =
             "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.sample"
 
         /** Stable sample id (the cursor's `_id`). */
         const val ID: String = "_id"
+
         /** Time of the fix, epoch milliseconds. */
         const val TIMESTAMP_MS: String = "timestamp_ms"
         const val LATITUDE: String = "latitude"
         const val LONGITUDE: String = "longitude"
+
         /** Altitude in meters, or null if unavailable. */
         const val ALTITUDE: String = "altitude"
+
         /** Horizontal accuracy radius in meters, or null. */
         const val ACCURACY: String = "accuracy"
+
         /** Bearing in degrees, or null. */
         const val BEARING: String = "bearing"
+
         /** Ground speed in meters/second, or null. */
         const val SPEED: String = "speed"
+
         /** Location provider that produced the fix (e.g. `fused`, `gps`), or null. */
         const val PROVIDER: String = "provider"
+
         /** 1 if the fix was reported as a mock location, else 0. */
         const val IS_MOCK: String = "is_mock"
+
         /**
          * Classified physical state at the time of the fix, one of: `STATIONARY`, `WALKING`,
          * `RUNNING`, `CYCLING`, `IN_VEHICLE`, `UNKNOWN`.
          */
         const val DEVICE_STATE: String = "device_state"
+
         /** Raw Activity-Recognition activity string, or null. */
         const val AR_ACTIVITY: String = "ar_activity"
+
         /** Active network transport (`WIFI`, `CELLULAR`, ...), or null. */
         const val NETWORK_TRANSPORT: String = "network_transport"
+
         /** 1 when this fix is used in timeline computation, 0 when excluded (e.g. mock / drift). */
         const val INCLUDED_IN_COMPUTATION: String = "included_in_computation"
 
-        @JvmField val COLUMNS: Array<String> = arrayOf(
-            ID, TIMESTAMP_MS, LATITUDE, LONGITUDE, ALTITUDE, ACCURACY, BEARING, SPEED,
-            PROVIDER, IS_MOCK, DEVICE_STATE, AR_ACTIVITY, NETWORK_TRANSPORT, INCLUDED_IN_COMPUTATION,
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(
+            ID,
+            TIMESTAMP_MS,
+            LATITUDE,
+            LONGITUDE,
+            ALTITUDE,
+            ACCURACY,
+            BEARING,
+            SPEED,
+            PROVIDER,
+            IS_MOCK,
+            DEVICE_STATE,
+            AR_ACTIVITY,
+            NETWORK_TRANSPORT,
+            INCLUDED_IN_COMPUTATION,
         )
     }
 }

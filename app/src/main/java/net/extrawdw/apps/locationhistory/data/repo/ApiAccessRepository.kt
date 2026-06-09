@@ -24,9 +24,18 @@ import javax.inject.Singleton
 /** A scope another app can request, paired with the OS permission that gates it. */
 enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) {
     TIMELINE(PathlineContract.Permissions.READ_TIMELINE, R.string.api_scope_timeline),
-    TIMELINE_ROUTE(PathlineContract.Permissions.READ_TIMELINE_ROUTE, R.string.api_scope_timeline_route),
-    LOCATION_HISTORY(PathlineContract.Permissions.READ_LOCATION_HISTORY, R.string.api_scope_location_history),
-    EXTENDED_HISTORY(PathlineContract.Permissions.READ_EXTENDED_HISTORY, R.string.api_scope_extended_history);
+    TIMELINE_ROUTE(
+        PathlineContract.Permissions.READ_TIMELINE_ROUTE,
+        R.string.api_scope_timeline_route
+    ),
+    LOCATION_HISTORY(
+        PathlineContract.Permissions.READ_LOCATION_HISTORY,
+        R.string.api_scope_location_history
+    ),
+    EXTENDED_HISTORY(
+        PathlineContract.Permissions.READ_EXTENDED_HISTORY,
+        R.string.api_scope_extended_history
+    );
 
     companion object {
         fun forDataType(dataType: String): ApiScope? = when (dataType) {
@@ -71,7 +80,10 @@ class ApiAccessRepository @Inject constructor(
     suspend fun readsSince(sinceMs: Long): List<ApiAccessEventEntity> = dao.since(sinceMs)
 
     /** One app's reads since [sinceMs] — used to summarize what it accessed in the alert. */
-    suspend fun readsForPackageSince(packageName: String, sinceMs: Long): List<ApiAccessEventEntity> =
+    suspend fun readsForPackageSince(
+        packageName: String,
+        sinceMs: Long
+    ): List<ApiAccessEventEntity> =
         dao.sinceForPackage(packageName, sinceMs)
 
     /** The full audit log, for "export all". */
@@ -100,7 +112,10 @@ class ApiAccessRepository @Inject constructor(
     }
 
     /** Deletes log rows older than [retentionDays]; returns the number removed. */
-    suspend fun cleanupOlderThan(retentionDays: Int, nowMs: Long = System.currentTimeMillis()): Int =
+    suspend fun cleanupOlderThan(
+        retentionDays: Int,
+        nowMs: Long = System.currentTimeMillis()
+    ): Int =
         dao.pruneBefore(nowMs - retentionDays.toLong() * MS_PER_DAY)
 
     /** The scheduled path: prune per the saved config, but only while auto-cleanup is enabled. */
@@ -136,14 +151,16 @@ class ApiAccessRepository @Inject constructor(
             packages
                 .filter { it != context.packageName && it != "unknown" }
                 .map { pkg ->
-                    val info = runCatching { pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS) }
-                        .getOrNull()
+                    val info =
+                        runCatching { pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS) }
+                            .getOrNull()
                     if (info != null) {
                         // Resolvable: build the live row, refresh the cache, and use the live icon
                         // (falling back to the cached icon only if rendering it failed this time).
                         val app = info.toDeclaredApp(pm)
-                        val icon = runCatching { renderIconPng(pm.getApplicationIcon(pkg)) }.getOrNull()
-                            ?: readCachedIcon(pkg)
+                        val icon =
+                            runCatching { renderIconPng(pm.getApplicationIcon(pkg)) }.getOrNull()
+                                ?: readCachedIcon(pkg)
                         writeCache(pkg, app.label, icon)
                         app.copy(iconPng = icon)
                     } else {
@@ -168,7 +185,7 @@ class ApiAccessRepository @Inject constructor(
         val granted = ApiScope.entries.filter { scope ->
             val idx = requested.indexOf(scope.permission)
             idx >= 0 && flags != null &&
-                (flags[idx] and PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
+                    (flags[idx] and PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
         }
         val label = applicationInfo
             ?.let { runCatching { pm.getApplicationLabel(it).toString() }.getOrNull() }
@@ -178,7 +195,12 @@ class ApiAccessRepository @Inject constructor(
 
     // ---- Persistent name/icon cache, on disk so it survives the audit DB being rebuilt. Labels
     //      live in a prefs file; icons are PNGs under filesDir/app_info_cache/, both keyed by package.
-    private val cacheDir: File by lazy { File(context.filesDir, "app_info_cache").apply { mkdirs() } }
+    private val cacheDir: File by lazy {
+        File(
+            context.filesDir,
+            "app_info_cache"
+        ).apply { mkdirs() }
+    }
     private val cachePrefs by lazy {
         context.getSharedPreferences("app_info_cache", Context.MODE_PRIVATE)
     }
@@ -214,6 +236,7 @@ class ApiAccessRepository @Inject constructor(
         private const val KEY_CLEANUP_RETENTION_DAYS = "retention_days"
 
         const val DEFAULT_RETENTION_DAYS = 90
+
         /** The retention windows offered in the access manager. */
         val RETENTION_DAY_OPTIONS = listOf(30, 90, 180)
     }
