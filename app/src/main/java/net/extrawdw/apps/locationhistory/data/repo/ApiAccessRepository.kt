@@ -49,6 +49,9 @@ data class DeclaredApp(
     val iconPng: ByteArray? = null,
 )
 
+/** Auto-cleanup settings for the audit log, surfaced in the access manager. */
+data class CleanupConfig(val enabled: Boolean, val retentionDays: Int)
+
 /**
  * Reads the API access audit log and cross-references the installed apps that declare Pathline's
  * permissions. Enforcement still lives entirely in the OS (the custom dangerous permissions checked
@@ -77,7 +80,38 @@ class ApiAccessRepository @Inject constructor(
     /** Every package that has ever read data (the only apps we can resolve without broad querying). */
     suspend fun loggedPackages(): Set<String> = dao.distinctPackages().toSet()
 
-    suspend fun prune(keepMs: Long, nowMs: Long) = dao.pruneBefore(nowMs - keepMs)
+    // ---- Audit-log retention / auto-cleanup. The user picks a retention window in the access manager;
+    //      [ApiAccessMaintenanceWorker] applies it on its daily run, and "Delete now" applies it on demand.
+
+    /** Reads the saved auto-cleanup config, defaulting to enabled at [DEFAULT_RETENTION_DAYS]. */
+    fun cleanupConfig(): CleanupConfig {
+        val p = cleanupPrefs
+        return CleanupConfig(
+            enabled = p.getBoolean(KEY_CLEANUP_ENABLED, true),
+            retentionDays = p.getInt(KEY_CLEANUP_RETENTION_DAYS, DEFAULT_RETENTION_DAYS),
+        )
+    }
+
+    fun setCleanupConfig(config: CleanupConfig) {
+        cleanupPrefs.edit()
+            .putBoolean(KEY_CLEANUP_ENABLED, config.enabled)
+            .putInt(KEY_CLEANUP_RETENTION_DAYS, config.retentionDays)
+            .apply()
+    }
+
+    /** Deletes log rows older than [retentionDays]; returns the number removed. */
+    suspend fun cleanupOlderThan(retentionDays: Int, nowMs: Long = System.currentTimeMillis()): Int =
+        dao.pruneBefore(nowMs - retentionDays.toLong() * MS_PER_DAY)
+
+    /** The scheduled path: prune per the saved config, but only while auto-cleanup is enabled. */
+    suspend fun runScheduledCleanup(nowMs: Long): Int {
+        val config = cleanupConfig()
+        return if (config.enabled) cleanupOlderThan(config.retentionDays, nowMs) else 0
+    }
+
+    private val cleanupPrefs by lazy {
+        context.getSharedPreferences(CLEANUP_PREFS, Context.MODE_PRIVATE)
+    }
 
     /**
      * Clear the per-app "recently notified" back-off so the next read from each app alerts immediately
@@ -169,8 +203,18 @@ class ApiAccessRepository @Inject constructor(
 
     companion object {
         private const val ICON_PX = 144
+        private const val MS_PER_DAY = 24L * 60 * 60 * 1000
 
         /** Prefs file holding the per-app read-notification back-off (shared with the notify worker). */
         const val READ_NOTIFY_PREFS = "api_access_read_notify"
+
+        /** Auto-cleanup config store. */
+        private const val CLEANUP_PREFS = "api_access_cleanup"
+        private const val KEY_CLEANUP_ENABLED = "enabled"
+        private const val KEY_CLEANUP_RETENTION_DAYS = "retention_days"
+
+        const val DEFAULT_RETENTION_DAYS = 90
+        /** The retention windows offered in the access manager. */
+        val RETENTION_DAY_OPTIONS = listOf(30, 90, 180)
     }
 }

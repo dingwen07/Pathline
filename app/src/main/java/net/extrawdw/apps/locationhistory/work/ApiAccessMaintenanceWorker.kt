@@ -13,7 +13,7 @@ import net.extrawdw.apps.locationhistory.service.Notifications
 
 /**
  * Periodic upkeep for the third-party data API (daily, see [WorkScheduler.schedulePeriodicApiAccessCheck]):
- *  1. prunes audit-log rows older than [KEEP_MS]; and
+ *  1. prunes audit-log rows per the user's auto-cleanup config (see [ApiAccessRepository.runScheduledCleanup]); and
  *  2. on a throttled cadence ([REMINDER_INTERVAL_MS]), reminds the user which apps still hold access.
  *
  * The "an app just read your data" alert is handled separately and promptly by [ApiAccessNotifyWorker];
@@ -29,7 +29,7 @@ class ApiAccessMaintenanceWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val ctx = applicationContext
         val now = System.currentTimeMillis()
-        runCatching { repo.prune(KEEP_MS, now) }
+        runCatching { repo.runScheduledCleanup(now) }
 
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val lastReminder = prefs.getLong(KEY_LAST_REMINDER, 0L)
@@ -54,7 +54,6 @@ class ApiAccessMaintenanceWorker @AssistedInject constructor(
     private companion object {
         const val PREFS = "api_access_maintenance"
         const val KEY_LAST_REMINDER = "last_reminder"
-        const val KEEP_MS = 90L * 24 * 60 * 60 * 1000
         const val REMINDER_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
     }
 }

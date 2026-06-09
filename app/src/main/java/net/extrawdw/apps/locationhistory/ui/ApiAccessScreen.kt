@@ -8,8 +8,10 @@ import android.net.Uri
 import android.provider.Settings
 import android.text.format.DateUtils
 import android.widget.Toast
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,15 +43,21 @@ import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,6 +65,8 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,14 +78,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -84,7 +99,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
+import net.extrawdw.apps.locationhistory.data.repo.ApiAccessRepository.Companion.RETENTION_DAY_OPTIONS
 import net.extrawdw.apps.locationhistory.data.repo.ApiScope
+import net.extrawdw.apps.locationhistory.data.repo.CleanupConfig
 import java.io.File
 import java.text.NumberFormat
 import java.time.Instant
@@ -93,6 +110,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -104,9 +122,11 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val cleanupConfig by viewModel.cleanupConfig.collectAsStateWithLifecycle()
     val infoByPackage = remember(apps) { apps.associateBy { it.packageName } }
     // Expand state for aggregated access groups, keyed by "package|groupId".
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+    var showMaintenanceDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
 
@@ -126,6 +146,29 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    if (showMaintenanceDialog) {
+        MaintenanceDialog(
+            config = cleanupConfig,
+            onDismiss = { showMaintenanceDialog = false },
+            onSave = { enabled, days -> viewModel.saveCleanupConfig(enabled, days) },
+            onCleanupNow = { days ->
+                scope.launch {
+                    val removed = viewModel.cleanupNow(days)
+                    val msg = if (removed > 0) {
+                        context.getString(R.string.api_access_cleanup_done, removed)
+                    } else {
+                        context.getString(R.string.api_access_cleanup_none)
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onResetBackoff = {
+                viewModel.resetNotificationBackoff()
+                Toast.makeText(context, R.string.api_access_backoff_reset, Toast.LENGTH_SHORT).show()
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -136,11 +179,8 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        viewModel.resetNotificationBackoff()
-                        Toast.makeText(context, R.string.api_access_backoff_reset, Toast.LENGTH_SHORT).show()
-                    }) {
-                        Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(R.string.api_access_reset_backoff))
+                    IconButton(onClick = { showMaintenanceDialog = true }) {
+                        Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(R.string.api_access_maintenance))
                     }
                     IconButton(onClick = {
                         scope.launch { viewModel.exportCsv()?.let { shareCsv(context, it) } }
@@ -154,11 +194,16 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { viewModel.refresh() },
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
         ) {
             LazyColumn(
                 Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 12.dp,
+                    bottom = padding.calculateBottomPadding() + 12.dp,
+                ),
             ) {
                 if (!notificationsGranted) {
                     item {
@@ -498,10 +543,12 @@ private fun GroupMemberRow(event: ApiAccessEventEntity, zone: ZoneId) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        val denied = event.deniedPermission != null
         Text(
             eventSubtitle(event, zone),
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (denied) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontStyle = if (denied) FontStyle.Italic else null,
         )
     }
 }
@@ -573,13 +620,117 @@ private fun EventRow(
         TimelineIconColumn(icon = icon)
         Column(Modifier.weight(1f).padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
             Text(appLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            val denied = event.deniedPermission != null
             Text(
                 eventSubtitle(event, zone),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (denied) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontStyle = if (denied) FontStyle.Italic else null,
             )
         }
     }
+}
+
+/**
+ * Maintenance for the audit log
+ */
+@Composable
+private fun MaintenanceDialog(
+    config: CleanupConfig,
+    onDismiss: () -> Unit,
+    onSave: (enabled: Boolean, retentionDays: Int) -> Unit,
+    onCleanupNow: (retentionDays: Int) -> Unit,
+    onResetBackoff: () -> Unit,
+) {
+    var enabled by remember { mutableStateOf(config.enabled) }
+    var selectedDays by remember { mutableIntStateOf(config.retentionDays) }
+
+    // Predictive-back preview: scale + fade the card as the gesture progresses, matching the feel of
+    // FullScreenDialog. The handler is registered inside the dialog window (in the text slot below) so
+    // it binds to the dialog's own back dispatcher; dismissOnBackPress is off so it doesn't also fire.
+    var backInProgress by remember { mutableStateOf(false) }
+    var backProgressRaw by remember { mutableFloatStateOf(0f) }
+    val backProgress by animateFloatAsState(
+        targetValue = if (backInProgress) backProgressRaw else 0f,
+        label = "predictiveBack",
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnBackPress = false),
+        modifier = Modifier.graphicsLayer {
+            val scale = 1f - 0.10f * backProgress
+            scaleX = scale
+            scaleY = scale
+            alpha = 1f - 0.15f * backProgress
+        },
+        title = { Text(stringResource(R.string.api_access_maintenance_title)) },
+        text = {
+            PredictiveBackHandler(enabled = true) { events ->
+                try {
+                    events.collect { event ->
+                        backInProgress = true
+                        backProgressRaw = event.progress
+                    }
+                    onDismiss()
+                } catch (_: CancellationException) {
+                    backInProgress = false
+                    backProgressRaw = 0f
+                }
+            }
+            Column {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .toggleable(value = enabled, onValueChange = { enabled = it }, role = Role.Switch)
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.api_access_cleanup_enable),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(checked = enabled, onCheckedChange = null)
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.api_access_cleanup_retention_header),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    RETENTION_DAY_OPTIONS.forEachIndexed { index, days ->
+                        SegmentedButton(
+                            selected = days == selectedDays,
+                            onClick = { selectedDays = days },
+                            enabled = enabled,
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = RETENTION_DAY_OPTIONS.size,
+                            ),
+                        ) {
+                            Text(stringResource(R.string.api_access_cleanup_days, days))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { onCleanupNow(selectedDays) }, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.api_access_cleanup_now))
+                }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                TextButton(onClick = onResetBackoff, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.api_access_reset_backoff))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(enabled, selectedDays); onDismiss() }) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
 }
 
 @Composable

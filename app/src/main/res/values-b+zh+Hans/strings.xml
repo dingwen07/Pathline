@@ -137,14 +137,14 @@
     <!-- ============================ Settings ============================ -->
     <string name="settings_title">设置</string>
     <string name="settings_bg_recording_title">后台记录</string>
-    <string name="settings_bg_recording_desc">使用运动传感器和地理围栏，仅在您移动时启用 GPS，更省电。</string>
+    <string name="settings_bg_recording_desc">使用运动传感器和地理围栏来降低电池消耗。</string>
     <string name="settings_grant_permissions">授予位置和活动权限</string>
     <string name="settings_power_profile">电量模式</string>
     <string name="power_saver">省电</string>
     <string name="power_balanced">均衡</string>
     <string name="power_accurate">精确</string>
     <string name="settings_stop_on_close_title">关闭应用时暂停</string>
-    <string name="settings_stop_on_close_desc">当您将 Pathline 从最近任务中划走时，记录会暂停；重新打开应用时会自动恢复。关闭此项可在关闭应用后继续记录。</string>
+    <string name="settings_stop_on_close_desc">关闭此项可在退出应用（比如从最近任务划走）后继续记录。</string>
     <string name="settings_data_model_title">数据与模型</string>
     <string name="settings_state_model">状态模型：%1$s</string>
     <string name="settings_transport_model">交通模型：%1$s</string>
@@ -328,16 +328,16 @@
 
     <!-- ===================== API 访问管理 ===================== -->
     <string name="settings_api_access_title">访问 Pathline 数据</string>
-    <string name="settings_api_access_desc">查看哪些应用读取过您的时间线和位置历史。</string>
+    <string name="settings_api_access_desc">查看哪些应用读访问您的时间线和位置历史。</string>
     <string name="api_access_title">访问 Pathline 数据</string>
-    <string name="api_access_intro">过去 7 天内应用读取您 Pathline 数据的时间线。访问由 Android 权限控制 — 点按某个应用可在系统设置中管理。</string>
+    <string name="api_access_intro">最近访问过您 Pathline 数据的应用。由 Android 权限管理。</string>
     <string name="api_access_apps_header">拥有访问权限的应用</string>
     <string name="api_access_no_apps">还没有应用读取过您的 Pathline 数据。</string>
     <string name="api_access_activity_header">最近活动</string>
     <string name="api_access_no_activity">过去 7 天内没有应用读取过您的数据。</string>
     <string name="api_access_last_read">上次读取 %1$s</string>
     <string name="api_access_never_read">尚未读取您的数据</string>
-    <string name="api_access_not_installed">已卸载</string>
+    <string name="api_access_not_installed">不可用 / 已卸载</string>
     <string name="api_access_revoked">访问已关闭</string>
     <string name="api_access_event_subtitle">%1$d 个%2$s · %3$s</string>
     <string name="api_access_route_withheld_suffix"> · 已隐藏轨迹</string>
@@ -349,6 +349,14 @@
     <string name="api_access_group_requests">%1$d 次请求</string>
     <string name="api_access_reset_backoff">重置通知计时</string>
     <string name="api_access_backoff_reset">已重置通知计时 — 下次访问将再次提醒。</string>
+    <string name="api_access_maintenance">日志维护</string>
+    <string name="api_access_maintenance_title">日志维护</string>
+    <string name="api_access_cleanup_enable">自动删除旧日志</string>
+    <string name="api_access_cleanup_retention_header">日志保留时长</string>
+    <string name="api_access_cleanup_days">%1$d 天</string>
+    <string name="api_access_cleanup_now">立即删除旧日志</string>
+    <string name="api_access_cleanup_done">已删除 %1$d 条旧日志。</string>
+    <string name="api_access_cleanup_none">没有足够旧的日志可删除。</string>
     <string name="api_access_notif_off_title">通知已关闭</string>
     <string name="api_access_notif_off_desc">当其他应用读取您的时间线或位置历史时，Pathline 无法提醒您。请开启通知，以便随时了解谁访问了您的数据。</string>
     <string name="api_access_notif_off_enable">开启</string>

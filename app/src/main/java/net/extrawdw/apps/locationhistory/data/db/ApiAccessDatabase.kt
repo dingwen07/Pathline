@@ -94,8 +94,9 @@ interface ApiAccessDao {
     )
     fun observeAppLastAccess(): Flow<List<AppLastAccess>>
 
+    /** Deletes rows older than [cutoffMs]; returns the number removed. */
     @Query("DELETE FROM api_access_events WHERE timestampMs < :cutoffMs")
-    suspend fun pruneBefore(cutoffMs: Long)
+    suspend fun pruneBefore(cutoffMs: Long): Int
 }
 
 /**

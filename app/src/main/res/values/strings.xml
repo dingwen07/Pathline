@@ -148,14 +148,14 @@
     <!-- ============================ Settings ============================ -->
     <string name="settings_title">Settings</string>
     <string name="settings_bg_recording_title">Background recording</string>
-    <string name="settings_bg_recording_desc">Uses motion sensors and geofencing so GPS only runs while you\'re moving — easy on the battery.</string>
+    <string name="settings_bg_recording_desc">Use motion sensors and geofencing to reduce battery consumption.</string>
     <string name="settings_grant_permissions">Grant location &amp; activity permissions</string>
     <string name="settings_power_profile">Power profile</string>
     <string name="power_saver">Saver</string>
     <string name="power_balanced">Balanced</string>
     <string name="power_accurate">Accurate</string>
     <string name="settings_stop_on_close_title">Pause recording when app is closed</string>
-    <string name="settings_stop_on_close_desc">When you swipe Pathline away from Recents, recording will be paused; it resumes automatically when you reopen the app. Turn this off to keep recording even after closing the app.</string>
+    <string name="settings_stop_on_close_desc">Turn off to keep recording after closing Pathline (i.e, remove from Recents).</string>
     <string name="settings_data_model_title">Data &amp; model</string>
     <string name="settings_state_model">State model: %1$s</string>
     <string name="settings_transport_model">Transport model: %1$s</string>
@@ -348,9 +348,9 @@
 
     <!-- ===================== API access manager ===================== -->
     <string name="settings_api_access_title">Access to Pathline data</string>
-    <string name="settings_api_access_desc">See which apps have read your timeline and location history.</string>
+    <string name="settings_api_access_desc">See which apps have accessed your timeline and location history.</string>
     <string name="api_access_title">Access to Pathline data</string>
-    <string name="api_access_intro">Timeline of when apps read your Pathline data in the past 7 days. Access is controlled by Android permissions — tap an app to manage it in system settings.</string>
+    <string name="api_access_intro">Apps that recently accessed your Pathline data. Managed by Android permissions.</string>
     <string name="api_access_apps_header">Apps with access</string>
     <string name="api_access_no_apps">No app has read your Pathline data.</string>
     <string name="api_access_activity_header">Recent activity</string>
@@ -358,7 +358,7 @@
     <!-- "Last read 2 hours ago" -->
     <string name="api_access_last_read">Last read %1$s</string>
     <string name="api_access_never_read">Hasn\'t read your data yet</string>
-    <string name="api_access_not_installed">No longer installed</string>
+    <string name="api_access_not_installed">Unavailable / Uninstalled</string>
     <string name="api_access_revoked">Access turned off</string>
     <!-- "<count> <data type> · <requested date range>", e.g. "12 location samples · Jun 1 – Jun 7" -->
     <string name="api_access_event_subtitle">%1$d %2$s · %3$s</string>
@@ -373,6 +373,14 @@
     <string name="api_access_group_requests">%1$d requests</string>
     <string name="api_access_reset_backoff">Reset notification timers</string>
     <string name="api_access_backoff_reset">Notification timers reset — the next access will alert again.</string>
+    <string name="api_access_maintenance">Log maintenance</string>
+    <string name="api_access_maintenance_title">Log maintenance</string>
+    <string name="api_access_cleanup_enable">Auto-delete old logs</string>
+    <string name="api_access_cleanup_retention_header">Keep logs for</string>
+    <string name="api_access_cleanup_days">%1$d days</string>
+    <string name="api_access_cleanup_now">Delete old logs now</string>
+    <string name="api_access_cleanup_done">Deleted %1$d old log entries.</string>
+    <string name="api_access_cleanup_none">No logs old enough to delete.</string>
     <string name="api_access_notif_off_title">Notifications are off</string>
     <string name="api_access_notif_off_desc">Pathline can\'t alert you when another app reads your timeline or location history. Turn on notifications to stay aware of who accesses your data.</string>
     <string name="api_access_notif_off_enable">Turn on</string>

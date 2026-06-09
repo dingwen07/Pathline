@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
 import net.extrawdw.apps.locationhistory.data.repo.ApiAccessRepository
 import net.extrawdw.apps.locationhistory.data.repo.ApiScope
+import net.extrawdw.apps.locationhistory.data.repo.CleanupConfig
 import java.io.File
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -90,6 +91,23 @@ class ApiAccessViewModel @Inject constructor(
     /** Clear the per-app notification back-off so the next read from each app alerts immediately. */
     fun resetNotificationBackoff() {
         viewModelScope.launch { withContext(Dispatchers.IO) { repo.resetReadNotificationBackoff() } }
+    }
+
+    // ---- Audit-log auto-cleanup, configured from the maintenance dialog.
+    private val _cleanupConfig = MutableStateFlow(repo.cleanupConfig())
+    val cleanupConfig: StateFlow<CleanupConfig> = _cleanupConfig.asStateFlow()
+
+    fun saveCleanupConfig(enabled: Boolean, retentionDays: Int) {
+        val config = CleanupConfig(enabled, retentionDays)
+        repo.setCleanupConfig(config)
+        _cleanupConfig.value = config
+    }
+
+    /** Immediately delete log rows older than [retentionDays]; refreshes the list and returns the count. */
+    suspend fun cleanupNow(retentionDays: Int): Int {
+        val removed = withContext(Dispatchers.IO) { repo.cleanupOlderThan(retentionDays) }
+        refresh()
+        return removed
     }
 
     private fun decodeIcon(bytes: ByteArray): ImageBitmap? =
