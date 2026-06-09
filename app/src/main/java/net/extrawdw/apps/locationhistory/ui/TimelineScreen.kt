@@ -90,6 +90,7 @@ import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberUpdatedMarkerState
 import kotlinx.coroutines.launch
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
@@ -100,6 +101,17 @@ import net.extrawdw.apps.locationhistory.domain.TimelineItem
 
 private val SHEET_PEEK = 340.dp
 private const val TODAY_PAGE = 100_000 // anchor; pages below are past days, none in the future
+
+/**
+ * A timeline target whose notes/tags the annotation editor is currently open on, plus a timeline-style
+ * brief ([title] + [subtitle]) so the editor can show which visit/trip is being annotated.
+ */
+private data class AnnotationRef(
+    val target: AnnotationTarget,
+    val id: Long,
+    val title: String,
+    val subtitle: String,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,6 +145,7 @@ fun TimelineScreen(
     var splitIndex by remember { mutableStateOf<Int?>(null) }
     var reclassifyType by remember { mutableStateOf<SegmentType?>(null) }
     var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
+    var editAnnotation by remember { mutableStateOf<AnnotationRef?>(null) }
     var detailPlaceId by remember { mutableStateOf<Long?>(null) }
 
     val editing = editItem != null
@@ -310,6 +323,23 @@ fun TimelineScreen(
                                                 editSamples = viewModel.samplesFor(item)
                                             }
                                             },
+                                            onEditAnnotations = {
+                                                editAnnotation = AnnotationRef(
+                                                    AnnotationTarget.VISIT,
+                                                    item.visit.id,
+                                                    title = item.displayName,
+                                                    subtitle = context.getString(
+                                                        R.string.time_range_duration,
+                                                        Format.time(item.startMs),
+                                                        Format.time(item.endMs),
+                                                        Format.duration(
+                                                            context,
+                                                            item.startMs,
+                                                            item.endMs,
+                                                        ),
+                                                    ),
+                                                )
+                                            },
                                         )
 
                                         is TimelineItem.TripItem -> TripRow(
@@ -331,6 +361,29 @@ fun TimelineScreen(
                                                 editSamples = viewModel.samplesFor(item)
                                             }
                                             },
+                                            // Annotations attach to confirmed rows only; unconfirmed
+                                            // trips get re-id'd by maintenance, so no tap-to-edit yet.
+                                            onEditAnnotations = if (item.trip.confirmed) {
+                                                {
+                                                    editAnnotation = AnnotationRef(
+                                                        AnnotationTarget.TRIP,
+                                                        item.trip.id,
+                                                        title = context.getString(item.trip.mode.labelRes),
+                                                        subtitle = context.getString(
+                                                            R.string.trip_brief,
+                                                            Format.distance(
+                                                                context,
+                                                                item.trip.distanceMeters,
+                                                            ),
+                                                            Format.duration(
+                                                                context,
+                                                                item.trip.startMs,
+                                                                item.trip.endMs,
+                                                            ),
+                                                        ),
+                                                    )
+                                                }
+                                            } else null,
                                         )
                                     }
                                 }
@@ -517,6 +570,7 @@ fun TimelineScreen(
     editPlace?.let { place ->
         PlaceEditDialog(
             place = place,
+            loadAnnotations = { target, id -> viewModel.loadAnnotations(target, id) },
             onSave = { name, address, lat, lon, radius, fixed ->
                 viewModel.updatePlace(
                     place.copy(
@@ -530,7 +584,26 @@ fun TimelineScreen(
                 )
                 editPlace = null
             },
+            onSaveAnnotations = { note, tags ->
+                viewModel.saveAnnotations(AnnotationTarget.PLACE, place.id, note, tags)
+            },
             onDismiss = { editPlace = null },
+        )
+    }
+
+    editAnnotation?.let { ref ->
+        AnnotationEditDialog(
+            target = ref.target,
+            id = ref.id,
+            title = stringResource(R.string.annotations_title),
+            briefTitle = ref.title,
+            briefSubtitle = ref.subtitle,
+            load = { target, id -> viewModel.loadAnnotations(target, id) },
+            onSave = { target, id, note, tags ->
+                viewModel.saveAnnotations(target, id, note, tags)
+                editAnnotation = null
+            },
+            onDismiss = { editAnnotation = null },
         )
     }
 
@@ -705,6 +778,7 @@ private fun VisitRow(
     onOpenPlace: () -> Unit,
     onEditPlace: () -> Unit,
     onEditSamples: () -> Unit,
+    onEditAnnotations: () -> Unit,
 ) {
     val dotColor =
         if (item.confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
@@ -773,6 +847,13 @@ private fun VisitRow(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_split)) },
                                 onClick = { menuOpen = false; onEditSamples() })
+                            // Annotations attach to confirmed visits only (unconfirmed rows are
+                            // re-id'd by maintenance), so "Edit visit" appears once confirmed.
+                            if (item.confirmed) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_edit_visit)) },
+                                    onClick = { menuOpen = false; onEditAnnotations() })
+                            }
                             if (item.place != null) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.menu_edit_place)) },
@@ -816,6 +897,7 @@ private fun TripRow(
     onConfirmTripMode: (Long, TransportMode) -> Unit,
     onMarkStationary: () -> Unit,
     onEdit: () -> Unit,
+    onEditAnnotations: (() -> Unit)?,
 ) {
     val trip = item.trip
     val context = LocalContext.current
@@ -856,6 +938,7 @@ private fun TripRow(
                     onConfirm = { menuOpen = true },
                     showEdit = true,
                     onEdit = onEdit,
+                    onTextClick = onEditAnnotations,
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
@@ -882,6 +965,7 @@ private fun CompactTripLine(
     showEdit: Boolean,
     onEdit: () -> Unit,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    onTextClick: (() -> Unit)? = null,
 ) {
     Row(
         Modifier
@@ -895,7 +979,9 @@ private fun CompactTripLine(
             text,
             style = MaterialTheme.typography.bodyMedium,
             color = if (confirmed) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .then(if (onTextClick != null) Modifier.clickable(onClick = onTextClick) else Modifier),
         )
         AssistChip(
             onClick = onConfirm,

@@ -12,11 +12,23 @@ class AnnotationDomainTest {
     // --- TagCanonicalizer ----------------------------------------------------------------------
 
     @Test
-    fun canonical_collapsesCaseAndSeparators() {
-        val canonical = "coffeeshop"
-        for (spelling in listOf("Coffee Shop", "coffee-shop", "COFFEE_SHOP", " coffee  shop ", "CoffeeShop")) {
+    fun canonical_collapsesCaseAndSeparatorsToHyphen() {
+        val canonical = "my-home"
+        for (spelling in listOf("My Home", "my  home", "my-home", "my_home", "My HoME", " my - home ", "my _- home")) {
             assertEquals(spelling, canonical, TagCanonicalizer.canonicalize(spelling))
         }
+    }
+
+    @Test
+    fun canonical_normalizesSeparatorsRatherThanStripping() {
+        // Separators become a single hyphen (word boundaries survive); they are NOT removed.
+        assertEquals("coffee-shop", TagCanonicalizer.canonicalize("Coffee Shop"))
+        assertEquals("coffee-shop", TagCanonicalizer.canonicalize("COFFEE_SHOP"))
+        // No-separator spelling is therefore a DISTINCT tag from the separated one.
+        assertEquals("coffeeshop", TagCanonicalizer.canonicalize("CoffeeShop"))
+        // Stripping would have collided these; normalizing keeps them apart.
+        assertEquals("ab-cd", TagCanonicalizer.canonicalize("ab cd"))
+        assertEquals("abc-d", TagCanonicalizer.canonicalize("abc d"))
     }
 
     @Test

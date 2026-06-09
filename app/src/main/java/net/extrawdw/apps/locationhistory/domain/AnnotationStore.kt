@@ -15,13 +15,28 @@ import javax.inject.Singleton
 
 /**
  * Folds a tag's human spelling down to the stable key two spellings of the same tag share. Per the
- * data-API design: lowercase, then strip every space/`-`/`_`, so `Coffee Shop`, `coffee-shop` and
- * `COFFEE_SHOP` all canonicalize to `coffeeshop` -> one tag row. [String.lowercase] is locale
- * invariant, so the key is stable regardless of the device locale.
+ * data-API design: lowercase, then collapse every run of whitespace/`-`/`_` to a single `-`, with no
+ * leading or trailing separator. So `My Home`, `my  home`, `my-home`, `my_home` and `My HoME` all
+ * canonicalize to `my-home` -> one tag row, while `myhome` (no separator) stays a distinct tag.
+ * Separators are normalized, not stripped, so word boundaries survive (`ab cd` != `abc d`).
+ * [String.lowercase] is locale invariant, so the key is stable regardless of the device locale.
  */
 object TagCanonicalizer {
-    fun canonicalize(displayName: String): String =
-        displayName.lowercase().filterNot { it.isWhitespace() || it == '-' || it == '_' }
+    fun canonicalize(displayName: String): String {
+        val out = StringBuilder()
+        var pendingSeparator = false
+        for (ch in displayName.lowercase()) {
+            if (ch.isWhitespace() || ch == '-' || ch == '_') {
+                // Defer emitting a '-' so leading/trailing runs vanish and inner runs collapse to one.
+                pendingSeparator = true
+            } else {
+                if (pendingSeparator && out.isNotEmpty()) out.append('-')
+                pendingSeparator = false
+                out.append(ch)
+            }
+        }
+        return out.toString()
+    }
 }
 
 /**
@@ -95,6 +110,17 @@ internal fun foldText(a: String?, b: String?): String? {
 }
 
 /**
+ * A target's user-editable annotations, bundled for the in-app editor: the single [note], the tag
+ * [tags] (display spellings), and the read-only [memories] map. Memories are the agent's structured
+ * KV scratchpad — surfaced for transparency, never hand-edited.
+ */
+data class AnnotationData(
+    val note: String,
+    val tags: List<String>,
+    val memories: Map<String, String>,
+)
+
+/**
  * The domain entry point for tags, notes and memories. Owns the rules that the raw DAOs don't:
  * tag canonicalization, the flat string->string memory contract, the **merge fold** that moves a
  * dying row's content onto the surviving row, and the **cascade delete** that drops a deleted row's
@@ -134,6 +160,39 @@ class AnnotationStore @Inject constructor(
     }
 
     suspend fun tagsFor(target: AnnotationTarget, id: Long): List<TagEntity> = tagDao.tagsFor(target, id)
+
+    // --- In-app editor (load / save the whole editable bundle) ---------------------------------
+
+    /** Read [target]/[id]'s note, tags and (view-only) memories for the in-app annotation editor. */
+    suspend fun loadEdits(target: AnnotationTarget, id: Long): AnnotationData = AnnotationData(
+        note = getNote(target, id).orEmpty(),
+        tags = tagsFor(target, id).map { it.displayName },
+        memories = getMemories(target, id),
+    )
+
+    /**
+     * Persist a user's edits to [target]/[id]'s note and tag set. **Stateless** — it reconciles the
+     * given [tags] against what's currently stored, so the caller needn't track the originals: tags not
+     * yet present are applied, stored tags no longer present are unlinked, and duplicates (by canonical
+     * name) collapse. The note is written only when it actually changed, so an untouched editor doesn't
+     * bump the row. Memories are intentionally not written here (view-only in the app).
+     */
+    suspend fun saveEdits(target: AnnotationTarget, id: Long, note: String?, tags: List<String>) {
+        val normalizedNew = note?.takeIf { it.isNotBlank() }
+        if (getNote(target, id) != normalizedNew) setNote(target, id, normalizedNew)
+
+        // Desired tags keyed by canonical name (first human spelling wins; empties dropped).
+        val desired = LinkedHashMap<String, String>()
+        for (display in tags) {
+            val trimmed = display.trim()
+            val canonical = TagCanonicalizer.canonicalize(trimmed)
+            if (canonical.isNotEmpty()) desired.putIfAbsent(canonical, trimmed)
+        }
+        val existingByKey = tagDao.tagsFor(target, id)
+            .associateBy { TagCanonicalizer.canonicalize(it.displayName) }
+        for ((key, display) in desired) if (key !in existingByKey) applyTag(target, id, display)
+        for ((key, tag) in existingByKey) if (key !in desired) tagDao.unlink(tag.id, target, id)
+    }
 
     // --- Notes ---------------------------------------------------------------------------------
 

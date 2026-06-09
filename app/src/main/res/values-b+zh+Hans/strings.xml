@@ -71,6 +71,7 @@
     <string name="cd_edit">编辑</string>
     <string name="cd_edit_trip">编辑行程</string>
     <string name="menu_split">拆分</string>
+    <string name="menu_edit_visit">编辑访问</string>
     <string name="menu_edit_place">编辑地点</string>
     <string name="menu_change_place">更改地点</string>
     <string name="menu_confirm_place">确认地点</string>
@@ -78,6 +79,17 @@
     <string name="chip_unconfirmed">未确认</string>
     <string name="chip_confirm">确认</string>
     <string name="chip_edit_mode">编辑方式</string>
+    <!-- Annotation editor (notes / tags / read-only memories) -->
+    <string name="annotations_title">备注与标签</string>
+    <string name="annotations_notes_label">备注</string>
+    <string name="annotations_notes_placeholder">添加备注…</string>
+    <string name="annotations_tags_label">标签</string>
+    <string name="annotations_add_tag">添加标签</string>
+    <string name="cd_remove_tag">移除标签</string>
+    <string name="annotations_memories_label">记忆</string>
+    <string name="annotations_memories_hint">由你已连接的应用保存。仅供查看。</string>
+    <!-- Trip brief in the annotation header: distance · duration -->
+    <string name="trip_brief">%1$s · %2$s</string>
     <string name="trip_summary">%1$s · %2$s · %3$s</string>
 
     <!-- ============================ Places ============================ -->

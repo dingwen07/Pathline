@@ -37,6 +37,9 @@ import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
+import net.extrawdw.apps.locationhistory.domain.AnnotationData
+import net.extrawdw.apps.locationhistory.domain.AnnotationStore
 import net.extrawdw.apps.locationhistory.domain.SegmentType
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
 import net.extrawdw.apps.locationhistory.domain.TimelineEditor
@@ -68,6 +71,7 @@ class TimelineViewModel @Inject constructor(
     private val timelineRepository: TimelineRepository,
     private val placeRepository: PlaceRepository,
     private val timelineEditor: TimelineEditor,
+    private val annotationStore: AnnotationStore,
     private val workScheduler: WorkScheduler,
     private val workManager: WorkManager,
     settingsRepository: SettingsRepository,
@@ -190,6 +194,15 @@ class TimelineViewModel @Inject constructor(
         timelineEditor.convertItemType(item, type)
         workScheduler.maybeScheduleTraining()
     }
+
+    // --- annotations (notes / tags / view-only memories) ---------------------------------------
+
+    suspend fun loadAnnotations(target: AnnotationTarget, id: Long): AnnotationData =
+        annotationStore.loadEdits(target, id)
+
+    /** Persist edited note + tags. Runs on [viewModelScope] so it survives the editor closing. */
+    fun saveAnnotations(target: AnnotationTarget, id: Long, note: String, tags: List<String>) =
+        viewModelScope.launch { annotationStore.saveEdits(target, id, note, tags) }
 
     // --- map ----------------------------------------------------------------------------------
 

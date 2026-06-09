@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.extrawdw.apps.locationhistory.R
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 
@@ -161,9 +162,13 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     editPlace?.let { place ->
         PlaceEditDialog(
             place = place,
+            loadAnnotations = { target, id -> viewModel.loadAnnotations(target, id) },
             onSave = { name, address, lat, lon, radius, fixed ->
                 viewModel.updatePlace(place, name, address, lat, lon, radius, fixed)
                 editPlace = null
+            },
+            onSaveAnnotations = { note, tags ->
+                viewModel.saveAnnotations(AnnotationTarget.PLACE, place.id, note, tags)
             },
             onDismiss = { editPlace = null },
         )

@@ -14,12 +14,16 @@ import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
+import net.extrawdw.apps.locationhistory.domain.AnnotationData
+import net.extrawdw.apps.locationhistory.domain.AnnotationStore
 import javax.inject.Inject
 
 @HiltViewModel
 class PlacesViewModel @Inject constructor(
     private val placeRepository: PlaceRepository,
     private val timelineRepository: TimelineRepository,
+    private val annotationStore: AnnotationStore,
 ) : ViewModel() {
 
     val places: StateFlow<List<PlaceEntity>> = placeRepository.observeAll()
@@ -69,4 +73,13 @@ class PlacesViewModel @Inject constructor(
     fun deleteIfUnvisited(placeId: Long) = viewModelScope.launch {
         placeRepository.deleteIfUnvisited(placeId)
     }
+
+    // --- annotations (notes / tags / view-only memories) ---------------------------------------
+
+    suspend fun loadAnnotations(target: AnnotationTarget, id: Long): AnnotationData =
+        annotationStore.loadEdits(target, id)
+
+    /** Persist edited note + tags. Runs on [viewModelScope] so it survives the editor closing. */
+    fun saveAnnotations(target: AnnotationTarget, id: Long, note: String, tags: List<String>) =
+        viewModelScope.launch { annotationStore.saveEdits(target, id, note, tags) }
 }

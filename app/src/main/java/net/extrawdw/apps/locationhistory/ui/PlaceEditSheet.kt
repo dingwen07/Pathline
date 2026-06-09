@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,7 +41,9 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.rememberCameraPositionState
 import net.extrawdw.apps.locationhistory.R
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
+import net.extrawdw.apps.locationhistory.domain.AnnotationData
 
 /**
  * Full-screen place editor. It is a [Dialog] (not a bottom sheet) so the map can use pan and
@@ -50,7 +55,9 @@ import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 @Composable
 fun PlaceEditDialog(
     place: PlaceEntity,
+    loadAnnotations: suspend (AnnotationTarget, Long) -> AnnotationData,
     onSave: (name: String, address: String?, lat: Double, lon: Double, radius: Double, fixed: Boolean) -> Unit,
+    onSaveAnnotations: (note: String, tags: List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf(place.name) }
@@ -58,6 +65,7 @@ fun PlaceEditDialog(
     var center by remember { mutableStateOf(LatLng(place.latitude, place.longitude)) }
     var radius by remember { mutableFloatStateOf(place.radiusMeters.toFloat()) }
     var fixed by remember { mutableStateOf(place.fixed) }
+    val annotations = rememberAnnotationEditState(AnnotationTarget.PLACE, place.id, loadAnnotations)
 
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(center, 16f)
@@ -87,16 +95,21 @@ fun PlaceEditDialog(
                                     radius.toDouble(),
                                     fixed
                                 )
+                                onSaveAnnotations(annotations.note, annotations.tags.toList())
                             }
                         }) { Text(stringResource(R.string.action_save)) }
                     },
                 )
             },
         ) { padding ->
+            // Scrollable so the folded-in note/tags fields have room; the map sits at a fixed height.
+            // The map's own view disallows parent touch interception during pan/zoom, so its gestures
+            // still work inside the scroll container.
             Column(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
             ) {
                 OutlinedTextField(
@@ -138,11 +151,10 @@ fun PlaceEditDialog(
                     }
                     Switch(checked = fixed, onCheckedChange = { fixed = it })
                 }
-                // Map fills the rest with no scrolling parent, so gestures aren't intercepted.
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(280.dp)
                 ) {
                     GoogleMap(
                         modifier = Modifier.fillMaxSize(),
@@ -160,6 +172,12 @@ fun PlaceEditDialog(
                         )
                     }
                 }
+                AnnotationEditorBody(
+                    annotations,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 16.dp),
+                )
             }
         }
     }

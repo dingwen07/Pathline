@@ -73,6 +73,7 @@
     <string name="cd_edit">Edit</string>
     <string name="cd_edit_trip">Edit trip</string>
     <string name="menu_split">Split</string>
+    <string name="menu_edit_visit">Edit visit</string>
     <string name="menu_edit_place">Edit place</string>
     <string name="menu_change_place">Change place</string>
     <string name="menu_confirm_place">Confirm place</string>
@@ -80,6 +81,17 @@
     <string name="chip_unconfirmed">Unconfirmed</string>
     <string name="chip_confirm">Confirm</string>
     <string name="chip_edit_mode">Edit mode</string>
+    <!-- Annotation editor (notes / tags / read-only memories) -->
+    <string name="annotations_title">Notes &amp; tags</string>
+    <string name="annotations_notes_label">Notes</string>
+    <string name="annotations_notes_placeholder">Add a note…</string>
+    <string name="annotations_tags_label">Tags</string>
+    <string name="annotations_add_tag">Add tag</string>
+    <string name="cd_remove_tag">Remove tag</string>
+    <string name="annotations_memories_label">Memories</string>
+    <string name="annotations_memories_hint">Saved by apps you\'ve connected. View only.</string>
+    <!-- Trip brief in the annotation header: distance · duration -->
+    <string name="trip_brief">%1$s · %2$s</string>
     <!-- "<mode> · <distance> · <duration>" -->
     <string name="trip_summary">%1$s · %2$s · %3$s</string>
 
