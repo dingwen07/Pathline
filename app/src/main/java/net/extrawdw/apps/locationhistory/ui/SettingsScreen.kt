@@ -2,9 +2,12 @@ package net.extrawdw.apps.locationhistory.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +25,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +49,7 @@ fun SettingsScreen(
     permissionsGranted: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenApiAccess: () -> Unit,
+    onEnableApiAccess: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -164,22 +169,41 @@ fun SettingsScreen(
             // GPX export (open format, independent of backup)
             GpxCard()
 
-            // Access to Pathline data — third-party API audit + management
-            Card(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpenApiAccess)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_api_access_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        stringResource(R.string.settings_api_access_desc),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
+            // Access to Pathline data — third-party API audit + management. Wi-Fi-style row: tapping
+            // the text opens the manager (or first-run consent); the trailing switch is the single
+            // on/off control for the whole API.
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.height(IntrinsicSize.Min),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable(onClick = onOpenApiAccess)
+                            .padding(16.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_api_access_title),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            stringResource(R.string.settings_api_access_desc),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    VerticalDivider(Modifier.padding(vertical = 12.dp))
+                    // Turning ON opens the onboarding explainer (it enables on "Turn on access");
+                    // turning OFF is immediate.
+                    Switch(
+                        checked = settings.apiAccessEnabled,
+                        onCheckedChange = { want ->
+                            if (want) onEnableApiAccess() else viewModel.setApiAccessEnabled(false)
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
             }

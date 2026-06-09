@@ -133,6 +133,21 @@
             android:parentActivityName=".MainActivity"
             android:theme="@style/Theme.Pathline" />
 
+        <!-- First-run onboarding for the data API. Exported so another app can fire
+             PathlineContract.Actions.REQUEST_API_ACCESS to ask the user to turn access on; it only
+             shows UI (the user decides) and returns no result. -->
+        <activity
+            android:name=".ui.ApiAccessOnboardingActivity"
+            android:exported="true"
+            android:label="@string/api_access_title"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.Pathline">
+            <intent-filter>
+                <action android:name="net.extrawdw.apps.locationhistory.action.REQUEST_API_ACCESS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Show rationale for data access -->
         <activity
             android:name=".PermissionUsageActivity"

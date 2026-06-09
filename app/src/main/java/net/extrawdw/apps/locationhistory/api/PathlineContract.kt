@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.api
 
+import android.content.Intent
 import android.net.Uri
 
 /**
@@ -53,6 +54,9 @@ import android.net.Uri
  *   [SecurityException]; the requested window is never silently narrowed.
  */
 object PathlineContract {
+
+    /** Pathline's application id — the target package for [Actions] intents. */
+    const val PACKAGE: String = "net.extrawdw.apps.locationhistory"
 
     /** Authority of the Pathline data provider. Matches `applicationId` + `.provider`. */
     const val AUTHORITY: String = "net.extrawdw.apps.locationhistory.provider"
@@ -432,5 +436,55 @@ object PathlineContract {
                 RADIUS_METERS, CONFIDENCE, CONFIRMED, IS_ONGOING,
             )
         }
+    }
+
+    /**
+     * Read-only status of the data API, for a consumer to check before reading. Returns a single row
+     * reporting whether the user's access switch is on ([ACCESS_ENABLED]).
+     *
+     * Unlike the data collections it is **always answerable** — it needs no runtime permission, is not
+     * gated by the access switch ([ACCESS_ENABLED] is exactly what it reports), and is not recorded in
+     * the access log (it returns no personal data). Reaching it still requires the install-time
+     * [Permissions.API] gate like the rest of the provider. A consumer uses it to decide whether to read
+     * or to prompt the user to turn the API on (see [Actions.REQUEST_API_ACCESS]). MIME type:
+     * `vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.status`.
+     */
+    object Status {
+        const val PATH: String = "status"
+
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        const val CONTENT_TYPE: String =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.status"
+
+        /** 1 when the user has turned third-party data access on, else 0 (all data reads are denied). */
+        const val ACCESS_ENABLED: String = "access_enabled"
+
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(ACCESS_ENABLED)
+    }
+
+    /** Intents a consumer can fire toward Pathline. */
+    object Actions {
+        /**
+         * Ask the user to turn third-party data access on. Launch this **for a result**
+         * (`startActivityForResult` / an `ActivityResultLauncher` with [requestApiAccessIntent]) to open
+         * Pathline's full-screen onboarding — it shows your app's name and icon and explains the switch.
+         * The user makes the choice; you are returned to **right where you were**.
+         *
+         * Result: `RESULT_OK` when access ends up **on**, `RESULT_CANCELED` otherwise; the result intent
+         * also carries [EXTRA_ACCESS_ENABLED]. If access is already on, it returns `RESULT_OK`
+         * immediately without prompting. (You can also just re-read [Status.ACCESS_ENABLED] on resume.)
+         */
+        const val REQUEST_API_ACCESS: String =
+            "net.extrawdw.apps.locationhistory.action.REQUEST_API_ACCESS"
+
+        /** Boolean result extra on a [REQUEST_API_ACCESS] result: the access-switch state afterward. */
+        const val EXTRA_ACCESS_ENABLED: String = "access_enabled"
+
+        /** [REQUEST_API_ACCESS] as an explicit intent targeted at Pathline. */
+        @JvmStatic
+        fun requestApiAccessIntent(): Intent =
+            Intent(REQUEST_API_ACCESS).setPackage(PACKAGE)
     }
 }

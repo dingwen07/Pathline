@@ -349,6 +349,15 @@
     <!-- ===================== API access manager ===================== -->
     <string name="settings_api_access_title">Access to Pathline data</string>
     <string name="settings_api_access_desc">See which apps have accessed your timeline and location history.</string>
+    <!-- First-run consent / onboarding for the data API -->
+    <string name="api_consent_intro">Allow apps you authorized to access Pathline data.</string>
+    <string name="api_consent_footer">Individual app access to the permissions above is still governed by Android\'s permission manager.</string>
+    <!-- Shown with the requesting app\'s icon when another app asks to turn access on. %1$s = app name. -->
+    <string name="api_consent_request_header">%1$s</string>
+    <string name="api_consent_request_note">You might still need to approve these permissions for %1$s</string>
+    <string name="api_consent_turn_on">Turn on access</string>
+    <string name="api_consent_not_now">Not now</string>
+    <string name="api_consent_never_ask">Don\'t ask again</string>
     <string name="api_access_title">Access to Pathline data</string>
     <string name="api_access_intro">Apps that recently accessed your Pathline data. Managed by Android permissions.</string>
     <string name="api_access_apps_header">Apps with access</string>

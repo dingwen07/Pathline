@@ -329,6 +329,15 @@
     <!-- ===================== API 访问管理 ===================== -->
     <string name="settings_api_access_title">访问 Pathline 数据</string>
     <string name="settings_api_access_desc">查看哪些应用读访问您的时间线和位置历史。</string>
+    <!-- 数据 API 的首次同意 / 引导 -->
+    <string name="api_consent_intro">允许您授权的应用访问 Pathline 数据。</string>
+    <string name="api_consent_footer">各应用对上述权限的访问仍受 Android 的权限管理器管理。</string>
+    <!-- 当其他应用请求开启访问时，与该应用图标一同显示。%1$s = 应用名称。 -->
+    <string name="api_consent_request_header">%1$s</string>
+    <string name="api_consent_request_note">您可能仍需为 %1$s 批准这些权限</string>
+    <string name="api_consent_turn_on">开启访问</string>
+    <string name="api_consent_not_now">暂不</string>
+    <string name="api_consent_never_ask">不再询问</string>
     <string name="api_access_title">访问 Pathline 数据</string>
     <string name="api_access_intro">最近访问过您 Pathline 数据的应用。由 Android 权限管理。</string>
     <string name="api_access_apps_header">拥有访问权限的应用</string>

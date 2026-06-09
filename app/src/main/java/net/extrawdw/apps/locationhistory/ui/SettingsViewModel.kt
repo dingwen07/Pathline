@@ -63,5 +63,14 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.setStopOnTaskRemoved(enabled)
     }
 
+    /**
+     * The on/off switch for the third-party data API
+     * Turning it off also clears the "don't ask again" flag
+     */
+    fun setApiAccessEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setApiAccessEnabled(enabled)
+        if (!enabled) settingsRepository.setApiAccessConsentNeverAsk(false)
+    }
+
     fun trainNow() = workScheduler.scheduleTrainingNow()
 }

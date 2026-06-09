@@ -22,6 +22,7 @@ import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 
 /**
@@ -48,6 +49,7 @@ class PathlineProvider : ContentProvider() {
         fun placeDao(): PlaceDao
         fun apiAccessDao(): ApiAccessDao
         fun apiPlaceGrantDao(): ApiPlaceGrantDao
+        fun settingsRepository(): SettingsRepository
         fun workScheduler(): WorkScheduler
     }
 
@@ -61,6 +63,7 @@ class PathlineProvider : ContentProvider() {
             "${PathlineContract.Places.PATH}/#/${PathlineContract.Places.VISITS_PATH}",
             CODE_PLACE_VISITS,
         )
+        addURI(PathlineContract.AUTHORITY, PathlineContract.Status.PATH, CODE_STATUS)
     }
 
     private val entryPoint: DaoEntryPoint by lazy {
@@ -77,6 +80,7 @@ class PathlineProvider : ContentProvider() {
         CODE_SAMPLES -> PathlineContract.Samples.CONTENT_TYPE
         CODE_PLACES -> PathlineContract.Places.CONTENT_TYPE
         CODE_PLACE_VISITS -> PathlineContract.Places.VisitHistory.CONTENT_TYPE
+        CODE_STATUS -> PathlineContract.Status.CONTENT_TYPE
         else -> null
     }
 
@@ -93,6 +97,25 @@ class PathlineProvider : ContentProvider() {
         }
 
         val now = System.currentTimeMillis()
+
+        // The status route is always answerable: it reports the access switch + the caller's grants,
+        // returns no personal data, and is exempt from the switch and the audit log.
+        if (code == CODE_STATUS) return statusCursor()
+
+        // The single access switch gates EVERYTHING below. When off, no per-app permission matters:
+        // every data read is denied. The denial is logged (so the audit trail is honest) but does NOT
+        // notify the user — an app reading while the user has turned the whole API off is not a
+        // per-app breach worth alerting on. We attribute it to the install-time API gate.
+        if (!apiAccessEnabled()) {
+            logAccess(
+                dataTypeFor(code), now, now, rowCount = 0, now, parseGroup(uri, now),
+                routeWithheld = null,
+                deniedPermission = PathlineContract.Permissions.API,
+                notify = false,
+            )
+            throw SecurityException("Third-party access to Pathline data is turned off")
+        }
+
         // The place collections aren't time-windowed the same way; they branch off before the
         // required-`start` parsing below.
         when (code) {
@@ -182,6 +205,7 @@ class PathlineProvider : ContentProvider() {
         groupId: Long?,
         routeWithheld: Boolean?,
         deniedPermission: String?,
+        notify: Boolean = true,
     ) {
         val pkg = callingPackage ?: "unknown"
         runCatching {
@@ -203,6 +227,8 @@ class PathlineProvider : ContentProvider() {
         }
         // Alert the user about this access — a successful read OR a denied (unauthorized) attempt, on
         // separate per-app back-off lanes. Coalesced + rate-limited by WorkManager / the worker.
+        // Skipped (logged-only) for denials while the whole API is switched off — see [query].
+        if (!notify) return
         runCatching {
             entryPoint.workScheduler()
                 .enqueueApiAccessNotification(pkg, denied = deniedPermission != null)
@@ -430,6 +456,31 @@ class PathlineProvider : ContentProvider() {
         dao.touch(pkg, placeIds, now)
     }
 
+    /**
+     * One-row [PathlineContract.Status] cursor: whether the access switch is on. Not gated by the switch
+     * and not logged (it returns no personal data), so a consumer can always check whether to read or to
+     * prompt the user to turn access on.
+     */
+    private fun statusCursor(): Cursor {
+        val cursor = MatrixCursor(PathlineContract.Status.COLUMNS, 1)
+        cursor.addRow(arrayOf<Any?>(if (apiAccessEnabled()) 1 else 0))
+        return cursor
+    }
+
+    /** The current access-switch state, read off the settings store (cached in memory after first read). */
+    private fun apiAccessEnabled(): Boolean =
+        runBlocking { entryPoint.settingsRepository().apiAccessEnabled() }
+
+    /** The audit-log `dataType` token for a collection [code] (place-history is distinct from its path). */
+    private fun dataTypeFor(code: Int): String = when (code) {
+        CODE_VISITS -> PathlineContract.Visits.PATH
+        CODE_TRIPS -> PathlineContract.Trips.PATH
+        CODE_SAMPLES -> PathlineContract.Samples.PATH
+        CODE_PLACES -> PathlineContract.Places.PATH
+        CODE_PLACE_VISITS -> PathlineContract.Places.VISITS_DATA_TYPE
+        else -> "?"
+    }
+
     /** The optional batch-correlation key, honoured only when within the grouping window of [now]. */
     private fun parseGroup(uri: Uri, now: Long): Long? {
         val raw = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
@@ -463,6 +514,7 @@ class PathlineProvider : ContentProvider() {
         const val CODE_SAMPLES = 3
         const val CODE_PLACES = 4
         const val CODE_PLACE_VISITS = 5
+        const val CODE_STATUS = 6
 
         /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
         const val GROUP_FUTURE_TOLERANCE_MS = 5_000L

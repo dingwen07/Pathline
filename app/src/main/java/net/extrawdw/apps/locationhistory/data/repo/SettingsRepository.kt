@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import net.extrawdw.apps.locationhistory.security.BackupEncryption
 import javax.inject.Inject
@@ -25,6 +26,18 @@ data class AppSettings(
     val powerProfile: PowerProfile,
     /** When true, removing the app from Recents stops recording and turns tracking off. */
     val stopOnTaskRemoved: Boolean = true,
+    /**
+     * The single on/off switch for the third-party data API. When false the
+     * [net.extrawdw.apps.locationhistory.api.PathlineProvider] denies every data read regardless of
+     * per-app permissions. Defaults off — the user opts in via the first-run consent screen or the
+     * Settings toggle.
+     */
+    val apiAccessEnabled: Boolean = false,
+    /**
+     * When true the first-run API-access consent screen is suppressed: entering "Access to Pathline
+     * data" goes straight to the access manager. Set by the consent screen's "don't ask again" choice.
+     */
+    val apiAccessConsentNeverAsk: Boolean = false,
 )
 
 /**
@@ -60,6 +73,8 @@ class SettingsRepository @Inject constructor(
     private val keyOnboarded = booleanPreferencesKey("onboarding_complete")
     private val keyStopOnTaskRemoved = booleanPreferencesKey("stop_on_task_removed")
     private val keyAutostartSuppressed = booleanPreferencesKey("autostart_suppressed")
+    private val keyApiEnabled = booleanPreferencesKey("api_access_enabled")
+    private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -77,7 +92,22 @@ class SettingsRepository @Inject constructor(
                 runCatching { PowerProfile.valueOf(it) }.getOrNull()
             } ?: PowerProfile.BALANCED,
             stopOnTaskRemoved = prefs[keyStopOnTaskRemoved] ?: true,
+            apiAccessEnabled = prefs[keyApiEnabled] ?: false,
+            apiAccessConsentNeverAsk = prefs[keyApiNeverAsk] ?: false,
         )
+    }
+
+    /** Current API-access switch state, read once. Used by the provider on the (synchronous) IPC path. */
+    suspend fun apiAccessEnabled(): Boolean =
+        context.dataStore.data.map { it[keyApiEnabled] ?: false }.first()
+
+    suspend fun setApiAccessEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[keyApiEnabled] = enabled }
+    }
+
+    /** Suppress the first-run API-access consent screen (the "don't ask again" choice). */
+    suspend fun setApiAccessConsentNeverAsk(neverAsk: Boolean) {
+        context.dataStore.edit { it[keyApiNeverAsk] = neverAsk }
     }
 
     suspend fun setTrackingEnabled(enabled: Boolean) {
