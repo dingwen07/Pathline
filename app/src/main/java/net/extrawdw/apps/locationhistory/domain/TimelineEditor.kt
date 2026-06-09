@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.domain
 
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
@@ -37,6 +38,7 @@ class TimelineEditor @Inject constructor(
     private val placeMatcher: PlaceMatcher,
     private val placeRepository: PlaceRepository,
     private val trainingRepository: TrainingRepository,
+    private val annotationStore: AnnotationStore,
     private val workScheduler: WorkScheduler,
 ) {
 
@@ -84,9 +86,20 @@ class TimelineEditor @Inject constructor(
                 visitDao.delete(item.visit.id)
                 // Detach trips that bounded this visit so they don't keep a dangling fromVisitId/toVisitId.
                 tripDao.detachVisit(item.visit.id)
+                // No FK across the polymorphic annotation edge, so cascade the row's tags/notes/memories
+                // here. Split/convert delete then re-materialize with fresh ids, so the old annotations
+                // are intentionally dropped. Only confirmed rows can carry any.
+                if (item.visit.confirmed) {
+                    annotationStore.cascadeDelete(AnnotationTarget.VISIT, item.visit.id)
+                }
             }
 
-            is TimelineItem.TripItem -> tripDao.deleteTrip(item.trip.id)
+            is TimelineItem.TripItem -> {
+                tripDao.deleteTrip(item.trip.id)
+                if (item.trip.confirmed) {
+                    annotationStore.cascadeDelete(AnnotationTarget.TRIP, item.trip.id)
+                }
+            }
         }
     }
 

@@ -399,6 +399,7 @@ class PathlineProvider : ContentProvider() {
                     p.name,
                     p.address,
                     p.category,
+                    p.types,
                     p.source.name,
                     p.googlePlaceId,
                     p.latitude,

@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.domain
 
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
@@ -32,6 +33,7 @@ class TimelineMerger @Inject constructor(
     private val visitDao: VisitDao,
     private val tripDao: TripDao,
     private val sampleDao: LocationSampleDao,
+    private val annotationStore: AnnotationStore,
 ) {
 
     /** Normalize every visit/trip overlapping [spanStartMs, spanEndMs). */
@@ -76,6 +78,10 @@ class TimelineMerger @Inject constructor(
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
                     visitDao.update(mergedVisit(before, after))
+                    // before is the older survivor; fold the dying visit's annotations onto it.
+                    if (after.confirmed) {
+                        annotationStore.foldOnMerge(AnnotationTarget.VISIT, before.id, after.id)
+                    }
                     visitDao.delete(after.id)
                 }
             }
@@ -111,6 +117,9 @@ class TimelineMerger @Inject constructor(
                 )
             ) {
                 visitDao.update(mergedVisit(a, b))
+                // a is older and its id survives; fold b's annotations onto it before b is deleted.
+                // Only confirmed rows can carry annotations, so unconfirmed merges skip the lookup.
+                if (b.confirmed) annotationStore.foldOnMerge(AnnotationTarget.VISIT, a.id, b.id)
                 visitDao.delete(b.id)
                 return true
             }
@@ -155,6 +164,9 @@ class TimelineMerger @Inject constructor(
                     confirmed = a.confirmed || b.confirmed,
                 ),
             )
+            // a's id survives; fold b's annotations onto it. Confirmed trips can be fused (and only
+            // confirmed rows carry annotations), so this lookup only runs when b could have content.
+            if (b.confirmed) annotationStore.foldOnMerge(AnnotationTarget.TRIP, a.id, b.id)
             tripDao.deleteTrip(b.id)
             return true
         }

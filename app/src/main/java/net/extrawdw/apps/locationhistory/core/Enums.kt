@@ -77,3 +77,21 @@ enum class NetworkTransport {
     OTHER,
     NONE,
 }
+
+/**
+ * The kind of timeline entity a tag or annotation is attached to. Stored by name as the polymorphic
+ * discriminator on `entity_tags` / `annotations` (no FK — visits/trips are rebuilt, see the data-API
+ * design doc). Annotations only attach to PLACE rows and to *confirmed* VISIT / TRIP rows, whose ids
+ * survive a rebuild.
+ */
+enum class AnnotationTarget {
+    PLACE,
+    VISIT,
+    TRIP,
+}
+
+/** Discriminates the two `annotations` payloads: free-text NOTE vs flat string->string MEMORY map. */
+enum class AnnotationKind {
+    NOTE,
+    MEMORY,
+}

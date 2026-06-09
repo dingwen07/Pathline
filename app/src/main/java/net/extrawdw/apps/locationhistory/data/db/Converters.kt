@@ -1,6 +1,8 @@
 package net.extrawdw.apps.locationhistory.data.db
 
 import androidx.room.TypeConverter
+import net.extrawdw.apps.locationhistory.core.AnnotationKind
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -35,4 +37,16 @@ class Converters {
     @TypeConverter
     fun stringToTransport(v: String?): NetworkTransport? =
         v?.let { runCatching { NetworkTransport.valueOf(it) }.getOrNull() }
+
+    @TypeConverter
+    fun annotationTargetToString(v: AnnotationTarget): String = v.name
+
+    @TypeConverter
+    fun stringToAnnotationTarget(v: String): AnnotationTarget = AnnotationTarget.valueOf(v)
+
+    @TypeConverter
+    fun annotationKindToString(v: AnnotationKind): String = v.name
+
+    @TypeConverter
+    fun stringToAnnotationKind(v: String): AnnotationKind = AnnotationKind.valueOf(v)
 }

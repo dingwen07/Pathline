@@ -345,8 +345,11 @@ object PathlineContract {
         /** Postal / street address, or null when the place has none. */
         const val ADDRESS: String = "address"
 
-        /** Free-form category, or null. */
+        /** Primary free-form category (the place's main Google type), or null. */
         const val CATEGORY: String = "category"
+
+        /** Comma-separated full list of the place's Google types, or null. [CATEGORY] is the first. */
+        const val TYPES: String = "types"
 
         /** How the place was created: `USER`, `MAPS`, or `INFERRED`. */
         const val SOURCE: String = "source"
@@ -365,7 +368,7 @@ object PathlineContract {
 
         @JvmField
         val COLUMNS: Array<String> = arrayOf(
-            ID, NAME, ADDRESS, CATEGORY, SOURCE, GOOGLE_PLACE_ID,
+            ID, NAME, ADDRESS, CATEGORY, TYPES, SOURCE, GOOGLE_PLACE_ID,
             LATITUDE, LONGITUDE, RADIUS_METERS,
         )
 

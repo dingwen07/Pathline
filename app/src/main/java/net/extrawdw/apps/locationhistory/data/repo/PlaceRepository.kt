@@ -1,8 +1,10 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
 import kotlinx.coroutines.flow.Flow
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.domain.AnnotationStore
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceVisitCount
@@ -15,6 +17,7 @@ import kotlin.math.pow
 class PlaceRepository @Inject constructor(
     private val dao: PlaceDao,
     private val visitDao: VisitDao,
+    private val annotationStore: AnnotationStore,
 ) {
     fun observeAll(): Flow<List<PlaceEntity>> = dao.observeAll()
 
@@ -36,6 +39,7 @@ class PlaceRepository @Inject constructor(
         googlePlaceId: String?,
         address: String?,
         category: String?,
+        types: String? = null,
         source: PlaceSource = PlaceSource.USER,
     ): Long {
         // A Google (MAPS) place is a point Google picked, so start it as a tight ring; a local place
@@ -50,6 +54,7 @@ class PlaceRepository @Inject constructor(
                 longitude = longitude,
                 radiusMeters = initialRadius,
                 category = category,
+                types = types,
                 source = source,
                 googlePlaceId = googlePlaceId,
                 address = address,
@@ -66,8 +71,13 @@ class PlaceRepository @Inject constructor(
 
     suspend fun update(place: PlaceEntity) = dao.update(place)
 
-    suspend fun deleteIfUnvisited(placeId: Long): Boolean =
-        dao.deleteIfUnvisited(placeId) > 0
+    suspend fun deleteIfUnvisited(placeId: Long): Boolean {
+        val deleted = dao.deleteIfUnvisited(placeId) > 0
+        // No FK across the polymorphic annotation edge — cascade the place's tags/notes/memories in
+        // code, mirroring the visit/trip delete path.
+        if (deleted) annotationStore.cascadeDelete(AnnotationTarget.PLACE, placeId)
+        return deleted
+    }
 
     /**
      * Recompute a place's center and radius as a **weighted mean of its origin anchor + all its

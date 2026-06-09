@@ -23,7 +23,10 @@ data class PlaceCandidate(
     val latitude: Double,
     val longitude: Double,
     val address: String?,
+    /** The single primary Google type (SDK `primaryType`, falling back to the first of [types]). */
     val primaryType: String?,
+    /** The full Google place-type list, in the order Google returned it. */
+    val types: List<String> = emptyList(),
 )
 
 /**
@@ -63,7 +66,7 @@ class PlacesGateway @Inject constructor(
         return runCatching {
             val fields = listOf(
                 Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.FORMATTED_ADDRESS,
-                Place.Field.LOCATION, Place.Field.TYPES,
+                Place.Field.LOCATION, Place.Field.TYPES, Place.Field.PRIMARY_TYPE,
             )
             val request = SearchByTextRequest.builder(query, fields)
                 .setLocationBias(CircularBounds.newInstance(LatLng(lat, lon), biasRadiusMeters))
@@ -78,7 +81,8 @@ class PlacesGateway @Inject constructor(
                         latitude = loc.latitude,
                         longitude = loc.longitude,
                         address = place.formattedAddress,
-                        primaryType = place.placeTypes?.firstOrNull(),
+                        primaryType = place.primaryType ?: place.placeTypes?.firstOrNull(),
+                        types = place.placeTypes ?: emptyList(),
                     ) to Geo.distanceMeters(lat, lon, loc.latitude, loc.longitude)
                 }
                 .sortedBy { it.second }
@@ -98,6 +102,7 @@ class PlacesGateway @Inject constructor(
                 Place.Field.FORMATTED_ADDRESS,
                 Place.Field.LOCATION,
                 Place.Field.TYPES,
+                Place.Field.PRIMARY_TYPE,
             )
             val bounds = CircularBounds.newInstance(LatLng(lat, lon), radiusMeters)
             val request = SearchNearbyRequest.builder(bounds, fields)
@@ -112,7 +117,8 @@ class PlacesGateway @Inject constructor(
                         latitude = loc.latitude,
                         longitude = loc.longitude,
                         address = place.formattedAddress,
-                        primaryType = place.placeTypes?.firstOrNull(),
+                        primaryType = place.primaryType ?: place.placeTypes?.firstOrNull(),
+                        types = place.placeTypes ?: emptyList(),
                     )
                     candidate to Geo.distanceMeters(lat, lon, loc.latitude, loc.longitude)
                 }

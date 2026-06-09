@@ -103,6 +103,7 @@ class TimelineRepository @Inject constructor(
                 googlePlaceId = choice.candidate.googlePlaceId,
                 address = choice.candidate.address,
                 category = choice.candidate.primaryType,
+                types = choice.candidate.types.joinToString(",").ifEmpty { null },
                 source = PlaceSource.MAPS,
             )
 

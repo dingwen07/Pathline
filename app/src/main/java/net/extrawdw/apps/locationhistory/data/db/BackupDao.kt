@@ -85,6 +85,15 @@ interface BackupDao {
     @Query("SELECT * FROM transport_training_examples ORDER BY id ASC")
     suspend fun allTransportExamples(): List<TransportTrainingExampleEntity>
 
+    @Query("SELECT * FROM tags ORDER BY id ASC")
+    suspend fun allTags(): List<TagEntity>
+
+    @Query("SELECT * FROM entity_tags ORDER BY tagId ASC")
+    suspend fun allEntityTags(): List<EntityTagEntity>
+
+    @Query("SELECT * FROM annotations ORDER BY id ASC")
+    suspend fun allAnnotations(): List<AnnotationEntity>
+
     // --- Restore (insert with explicit primary keys; REPLACE makes restore idempotent) ---------
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -108,11 +117,21 @@ interface BackupDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restoreTransportExamples(rows: List<TransportTrainingExampleEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreTags(rows: List<TagEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreEntityTags(rows: List<EntityTagEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreAnnotations(rows: List<AnnotationEntity>)
+
     /** Wipe all derived/recorded data before an as-is restore (snapshot tables + append tables). */
     @Transaction
     suspend fun wipeForRestore() {
         clearTrips(); clearVisits(); clearSamples()
         clearGeofences(); clearPlaces(); clearStateExamples(); clearTransportExamples()
+        clearAnnotations(); clearEntityTags(); clearTags()
         clearAllDirty()
     }
 
@@ -132,6 +151,34 @@ interface BackupDao {
 
     @Query("UPDATE trips SET toVisitId = NULL WHERE toVisitId IS NOT NULL AND toVisitId NOT IN (SELECT id FROM visits)")
     suspend fun detachDanglingTripToVisits()
+
+    /**
+     * After an as-is restore, drop polymorphic tag links / annotations whose target row is absent.
+     * No FK spans the polymorphic edge (targets are places/visits/trips), so a backup written by an
+     * older app, or one whose targets were pruned, could leave entity_tags/annotations pointing at a
+     * row that wasn't imported. Deleting the orphan is the correct repair (there is no ref to null).
+     * Tags themselves are kept even when unlinked — an unused tag is legitimate.
+     */
+    @Transaction
+    suspend fun purgeDanglingAnnotationsAndTags() {
+        purgeDanglingEntityTags(); purgeDanglingAnnotations()
+    }
+
+    @Query(
+        "DELETE FROM entity_tags WHERE NOT (" +
+            "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
+            "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
+            "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+    )
+    suspend fun purgeDanglingEntityTags()
+
+    @Query(
+        "DELETE FROM annotations WHERE NOT (" +
+            "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
+            "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
+            "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+    )
+    suspend fun purgeDanglingAnnotations()
 
     @Query("DELETE FROM trips")
     suspend fun clearTrips()
@@ -153,4 +200,13 @@ interface BackupDao {
 
     @Query("DELETE FROM transport_training_examples")
     suspend fun clearTransportExamples()
+
+    @Query("DELETE FROM tags")
+    suspend fun clearTags()
+
+    @Query("DELETE FROM entity_tags")
+    suspend fun clearEntityTags()
+
+    @Query("DELETE FROM annotations")
+    suspend fun clearAnnotations()
 }

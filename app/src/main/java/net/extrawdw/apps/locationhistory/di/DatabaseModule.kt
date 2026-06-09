@@ -12,12 +12,14 @@ import dagger.hilt.components.SingletonComponent
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDatabase
 import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantDao
+import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.AppMigrations
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
 import net.extrawdw.apps.locationhistory.data.db.GeofenceDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
+import net.extrawdw.apps.locationhistory.data.db.TagDao
 import net.extrawdw.apps.locationhistory.data.db.TrainingDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
@@ -82,6 +84,12 @@ object DatabaseModule {
     @Provides
     fun provideBackupDao(db: AppDatabase): BackupDao = db.backupDao()
 
+    @Provides
+    fun provideTagDao(db: AppDatabase): TagDao = db.tagDao()
+
+    @Provides
+    fun provideAnnotationDao(db: AppDatabase): AnnotationDao = db.annotationDao()
+
     /**
      * Standalone, unencrypted log DB for the third-party API audit trail (which app read what, when).
      * Kept apart from [AppDatabase] so logging never touches the frozen v1 schema or the backup
@@ -115,10 +123,15 @@ object DatabaseModule {
     @Provides
     fun provideApiPlaceGrantDao(db: ApiAccessDatabase): ApiPlaceGrantDao = db.apiPlaceGrantDao()
 
-    /** Room creates entity tables on a fresh install but never triggers — add them here. */
+    /**
+     * Room creates entity tables on a fresh install but never triggers or virtual tables — add the
+     * backup dirty-partition triggers and the FTS5 search tables/triggers here. (On upgrade these come
+     * from the migration instead; a fresh DB has no rows to backfill.)
+     */
     private val TriggerCallback = object : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
             AppDatabase.DIRTY_TRIGGERS.forEach(db::execSQL)
+            AppDatabase.FTS_CREATE.forEach(db::execSQL)
         }
     }
 }

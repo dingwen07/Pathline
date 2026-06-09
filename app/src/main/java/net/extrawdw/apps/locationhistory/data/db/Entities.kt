@@ -4,6 +4,8 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
+import net.extrawdw.apps.locationhistory.core.AnnotationKind
+import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -78,7 +80,10 @@ data class PlaceEntity(
     val latitude: Double,
     val longitude: Double,
     val radiusMeters: Double,
+    /** The single primary Google place type (or first of the type list); user-facing category. */
     val category: String?,
+    /** Comma-joined full Google place-type list (Google's `types`), or null. [category] is the primary one. */
+    val types: String? = null,
     val source: PlaceSource,
     val googlePlaceId: String?,
     val address: String?,
@@ -96,6 +101,61 @@ data class PlaceEntity(
     val anchorLatitude: Double? = null,
     val anchorLongitude: Double? = null,
     val anchorRadiusMeters: Double? = null,
+)
+
+/**
+ * A user/agent **tag**. [canonicalName] is the dedup key — [displayName] lowercased with spaces, `-`
+ * and `_` removed — so "Coffee Shop", "coffee-shop", "COFFEE_SHOP" collapse to one row.
+ * [displayName] keeps the most recent human spelling. Tags attach to targets via [EntityTagEntity].
+ */
+@Serializable
+@Entity(
+    tableName = "tags",
+    indices = [Index(value = ["canonicalName"], unique = true)],
+)
+data class TagEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val canonicalName: String,
+    val displayName: String,
+    val createdAtMs: Long,
+)
+
+/**
+ * Polymorphic tag<->target join. No foreign key: targets span three tables and visits/trips are
+ * rebuilt with fresh ids, so integrity is maintained in code on delete/merge — the same "detach,
+ * don't dangle" approach used for trip->visit references.
+ */
+@Serializable
+@Entity(
+    tableName = "entity_tags",
+    primaryKeys = ["tagId", "targetType", "targetId"],
+    indices = [Index("tagId"), Index(value = ["targetType", "targetId"])],
+)
+data class EntityTagEntity(
+    val tagId: Long,
+    val targetType: AnnotationTarget,
+    val targetId: Long,
+    val createdAtMs: Long,
+)
+
+/**
+ * A **note** or **memory** attached to one target. [kind] discriminates: a NOTE's [content] is free
+ * text; a MEMORY's [content] is a JSON object of flat string->string pairs (see the data-API design
+ * doc). At most one note and one memory per target (the unique index). Polymorphic, no FK — see
+ * [EntityTagEntity].
+ */
+@Serializable
+@Entity(
+    tableName = "annotations",
+    indices = [Index(value = ["targetType", "targetId", "kind"], unique = true)],
+)
+data class AnnotationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val targetType: AnnotationTarget,
+    val targetId: Long,
+    val kind: AnnotationKind,
+    val content: String,
+    val updatedAtMs: Long,
 )
 
 /**

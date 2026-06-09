@@ -303,12 +303,13 @@ class BackupEngine @Inject constructor(
         require(manifest.schemaVersion <= AppDatabase.SCHEMA_VERSION) {
             "backup was made by a newer app version (schema ${manifest.schemaVersion}); update first"
         }
-        // FORWARD-COMPAT SEAM: today restore deserializes JSONL straight into the *current* entity
-        // classes (ignoreUnknownKeys + per-field defaults absorb minor older-backup drift; undecodable
-        // rows are skipped, see decodeLines). Once the schema bumps past v1, an OLDER backup
-        // (manifest.schemaVersion < SCHEMA_VERSION) should instead be rebuilt at its own version from
-        // app/schemas/<N>.json and run through AppMigrations (restore-then-migrate) — implement that
-        // branch here alongside the first migration; the same-version path below stays as-is.
+        // FORWARD-COMPAT: restore deserializes JSONL straight into the *current* entity classes.
+        // The v1 -> v2 bump is purely additive (new nullable `places.types`; new tags / entity_tags /
+        // annotations tables), so a v1 backup restores correctly with no transformation: the missing
+        // `types` key defaults to null (ignoreUnknownKeys + per-field defaults), and the new snapshots
+        // are simply absent so those tables stay empty (see restoreSnapshots). Undecodable rows are
+        // skipped (decodeLines). Should a FUTURE bump be non-additive (a column rename/transform), this
+        // is where a per-version rebuild (restore-then-migrate from app/schemas/<N>.json) would go.
         val dek = BackupCrypto.openDek(manifest.crypto, password, prfSecret)
         val cipher = BackupCrypto.PartitionCipher(dek)
         // The inventory's on-disk hash and (when encrypted) its GCM tag are both verified here,
@@ -336,6 +337,8 @@ class BackupEngine @Inject constructor(
             // imported from a previous app version): detach any trip endpoint whose visit is absent so
             // the restored DB is self-consistent rather than reproducing the dangling references.
             backupDao.detachDanglingTripVisits()
+            // Likewise drop polymorphic tag links / annotations whose target row wasn't imported.
+            backupDao.purgeDanglingAnnotationsAndTags()
             // The REPLACE inserts re-fire the dirty triggers; clear so we don't immediately
             // re-upload the whole history we just pulled down.
             backupDao.clearAllDirty()
@@ -451,6 +454,24 @@ class BackupEngine @Inject constructor(
             previous[SNAP_TRANSPORT_EXAMPLES]
         )
 
+        // Tags, the polymorphic tag<->target join, and annotations (notes + memories). Whole-table
+        // snapshots like places — small and not time-bucketed.
+        out += snapshotLines(dir, material, SNAP_TAGS, backupDao.allTags(), previous[SNAP_TAGS])
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_ENTITY_TAGS,
+            backupDao.allEntityTags(),
+            previous[SNAP_ENTITY_TAGS]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_ANNOTATIONS,
+            backupDao.allAnnotations(),
+            previous[SNAP_ANNOTATIONS]
+        )
+
         // App settings
         val settings =
             BackupSettings(powerProfile = settingsRepository.settings.first().powerProfile.name)
@@ -530,6 +551,29 @@ class BackupEngine @Inject constructor(
                 decodeLines(
                     it,
                     net.extrawdw.apps.locationhistory.data.db.TransportTrainingExampleEntity.serializer()
+                )
+            )
+        }
+        // Tags / entity_tags / annotations are absent from pre-v2 backups -> bytesOf returns null and
+        // these tables simply stay empty (forward-compat). Restore tags before their links.
+        bytesOf(SNAP_TAGS)?.let {
+            backupDao.restoreTags(
+                decodeLines(it, net.extrawdw.apps.locationhistory.data.db.TagEntity.serializer())
+            )
+        }
+        bytesOf(SNAP_ENTITY_TAGS)?.let {
+            backupDao.restoreEntityTags(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.EntityTagEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_ANNOTATIONS)?.let {
+            backupDao.restoreAnnotations(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.AnnotationEntity.serializer()
                 )
             )
         }
@@ -749,6 +793,9 @@ class BackupEngine @Inject constructor(
         private const val SNAP_GEOFENCES = "geofences"
         private const val SNAP_STATE_EXAMPLES = "state_examples"
         private const val SNAP_TRANSPORT_EXAMPLES = "transport_examples"
+        private const val SNAP_TAGS = "tags"
+        private const val SNAP_ENTITY_TAGS = "entity_tags"
+        private const val SNAP_ANNOTATIONS = "annotations"
         private const val SNAP_SETTINGS = "settings"
         private const val SNAP_STATE_CKPT = "state_model_ckpt"
         private const val SNAP_TRANSPORT_CKPT = "transport_model_ckpt"
