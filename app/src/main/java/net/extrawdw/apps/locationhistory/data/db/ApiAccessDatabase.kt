@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
@@ -27,7 +28,7 @@ data class ApiAccessEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     /** Calling app's package name (from `ContentProvider.getCallingPackage()`), or "unknown". */
     val packageName: String,
-    /** Which collection was read: "visits", "trips", or "samples". */
+    /** Which collection was read: "visits", "trips", "samples", "places", or "place_visits". */
     val dataType: String,
     /** The time window the caller requested (epoch ms). */
     val startMs: Long,
@@ -59,6 +60,56 @@ data class ApiAccessEventEntity(
 
 /** Last-access summary for one app, projected over the log. */
 data class AppLastAccess(val packageName: String, val lastMs: Long, val reads: Int)
+
+/**
+ * Records that a calling app has been *exposed to* a saved place — i.e. it read a `visits` row whose
+ * [placeId] points at that place through [net.extrawdw.apps.locationhistory.api.PathlineProvider].
+ *
+ * This is the access-scoping ledger for the `places` collection: an app may resolve a place's details
+ * (name, address) and its visit history ONLY for places it has already legitimately encountered in an
+ * authorized timeline read. Reading `visits` is the sole way a grant is created; the place/history
+ * endpoints only ever consult it. Like [ApiAccessEventEntity] it lives in this disposable, unencrypted
+ * DB and holds no coordinates — just which package may see which saved-place id.
+ */
+@Entity(
+    tableName = "api_place_grants",
+    primaryKeys = ["packageName", "placeId"],
+    indices = [Index("packageName")],
+)
+data class ApiPlaceGrantEntity(
+    /** Calling app the grant belongs to (from `ContentProvider.getCallingPackage()`). */
+    val packageName: String,
+    /** Saved-place id the app has seen, referencing `places.id` in the main (encrypted) DB. */
+    val placeId: Long,
+    /** When the app first saw this place (epoch ms). Preserved across later reads. */
+    val firstGrantedMs: Long,
+    /** When the app most recently saw this place (epoch ms). */
+    val lastGrantedMs: Long,
+)
+
+@Dao
+interface ApiPlaceGrantDao {
+
+    /** Create grants for newly-seen (package, place) pairs; existing pairs keep their first-seen time. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(grants: List<ApiPlaceGrantEntity>)
+
+    /** Refresh the last-seen time for places this app just read again. */
+    @Query("UPDATE api_place_grants SET lastGrantedMs = :nowMs WHERE packageName = :packageName AND placeId IN (:placeIds)")
+    suspend fun touch(packageName: String, placeIds: List<Long>, nowMs: Long)
+
+    /** Every place [packageName] has been exposed to (for an unfiltered `places` read). */
+    @Query("SELECT placeId FROM api_place_grants WHERE packageName = :packageName")
+    suspend fun grantedPlaceIds(packageName: String): List<Long>
+
+    /** The subset of [placeIds] that [packageName] is allowed to see (for a filtered `places` read). */
+    @Query("SELECT placeId FROM api_place_grants WHERE packageName = :packageName AND placeId IN (:placeIds)")
+    suspend fun grantedAmong(packageName: String, placeIds: List<Long>): List<Long>
+
+    /** Whether [packageName] may read details/history for a single [placeId]. */
+    @Query("SELECT EXISTS(SELECT 1 FROM api_place_grants WHERE packageName = :packageName AND placeId = :placeId)")
+    suspend fun isGranted(packageName: String, placeId: Long): Boolean
+}
 
 @Dao
 interface ApiAccessDao {
@@ -104,9 +155,14 @@ interface ApiAccessDao {
  * purpose — see [ApiAccessEventEntity]. Schema export is off because there is nothing sensitive to
  * migrate; if the shape ever changes, a destructive rebuild of just this log is acceptable.
  */
-@Database(entities = [ApiAccessEventEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [ApiAccessEventEntity::class, ApiPlaceGrantEntity::class],
+    version = 1,
+    exportSchema = false,
+)
 abstract class ApiAccessDatabase : RoomDatabase() {
     abstract fun apiAccessDao(): ApiAccessDao
+    abstract fun apiPlaceGrantDao(): ApiPlaceGrantDao
 
     companion object {
         const val NAME = "pathline_api_access.db"

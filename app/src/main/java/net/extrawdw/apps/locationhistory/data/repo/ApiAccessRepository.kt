@@ -39,7 +39,9 @@ enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) 
 
     companion object {
         fun forDataType(dataType: String): ApiScope? = when (dataType) {
-            PathlineContract.Visits.PATH, PathlineContract.Trips.PATH -> TIMELINE
+            PathlineContract.Visits.PATH, PathlineContract.Trips.PATH,
+            PathlineContract.Places.PATH, PathlineContract.Places.VISITS_DATA_TYPE -> TIMELINE
+
             PathlineContract.Samples.PATH -> LOCATION_HISTORY
             else -> null
         }

@@ -393,6 +393,8 @@
     <string name="api_data_visits">Visits</string>
     <string name="api_data_trips">Trips</string>
     <string name="api_data_samples">Samples</string>
+    <string name="api_data_places">Places</string>
+    <string name="api_data_place_visits">Place history</string>
     <string name="api_data_unknown">Data</string>
 
     <!-- Privacy notifications -->
@@ -410,6 +412,8 @@
     <string name="api_notify_data_visits">%1$s visits</string>
     <string name="api_notify_data_trips">%1$s trips</string>
     <string name="api_notify_data_samples">%1$s location samples</string>
+    <string name="api_notify_data_places">%1$s places</string>
+    <string name="api_notify_data_place_visits">%1$s place visits</string>
     <!-- Quoted so the trailing space survives resource trimming: "<a>, <b>". -->
     <string name="api_notify_data_separator">", "</string>
     <string name="api_notify_hold_title">App still has access to your Pathline data</string>

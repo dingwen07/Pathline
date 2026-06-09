@@ -43,6 +43,10 @@ interface VisitDao {
     @Query("SELECT * FROM visits WHERE placeId = :placeId")
     suspend fun listForPlace(placeId: Long): List<VisitEntity>
 
+    /** A place's visit history overlapping [startMs, endMs), newest first — for the data API. */
+    @Query("SELECT * FROM visits WHERE placeId = :placeId AND startMs < :endMs AND endMs > :startMs ORDER BY startMs DESC")
+    suspend fun forPlaceOverlapping(placeId: Long, startMs: Long, endMs: Long): List<VisitEntity>
+
     /** placeId -> number of visits, for the Places list. */
     @Query("SELECT placeId AS placeId, COUNT(*) AS visits FROM visits WHERE placeId IS NOT NULL GROUP BY placeId")
     fun observePlaceVisitCounts(): Flow<List<PlaceVisitCount>>

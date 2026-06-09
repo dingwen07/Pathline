@@ -369,6 +369,8 @@
     <string name="api_data_visits">访问地点</string>
     <string name="api_data_trips">行程</string>
     <string name="api_data_samples">位置采样</string>
+    <string name="api_data_places">地点</string>
+    <string name="api_data_place_visits">地点历史</string>
     <string name="api_data_unknown">数据</string>
 
     <!-- 隐私通知 -->
@@ -382,6 +384,8 @@
     <string name="api_notify_data_visits">%1$s 个访问地点</string>
     <string name="api_notify_data_trips">%1$s 个行程</string>
     <string name="api_notify_data_samples">%1$s 个位置采样</string>
+    <string name="api_notify_data_places">%1$s 个地点</string>
+    <string name="api_notify_data_place_visits">%1$s 条地点历史</string>
     <string name="api_notify_data_separator">、</string>
     <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
     <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>

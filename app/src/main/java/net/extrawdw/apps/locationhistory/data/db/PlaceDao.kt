@@ -25,6 +25,10 @@ interface PlaceDao {
     @Query("SELECT * FROM places WHERE id = :id")
     suspend fun byId(id: Long): PlaceEntity?
 
+    /** Batch lookup for the data API: resolves many saved places in one query (no per-row JOIN). */
+    @Query("SELECT * FROM places WHERE id IN (:ids)")
+    suspend fun byIds(ids: List<Long>): List<PlaceEntity>
+
     @Query("SELECT * FROM places WHERE id = :id")
     fun observeById(id: Long): Flow<PlaceEntity?>
 

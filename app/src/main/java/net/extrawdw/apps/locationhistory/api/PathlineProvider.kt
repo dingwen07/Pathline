@@ -15,10 +15,13 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
+import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantDao
+import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantEntity
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
+import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 
 /**
@@ -44,6 +47,7 @@ class PathlineProvider : ContentProvider() {
         fun locationSampleDao(): LocationSampleDao
         fun placeDao(): PlaceDao
         fun apiAccessDao(): ApiAccessDao
+        fun apiPlaceGrantDao(): ApiPlaceGrantDao
         fun workScheduler(): WorkScheduler
     }
 
@@ -51,6 +55,12 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, PathlineContract.Visits.PATH, CODE_VISITS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Trips.PATH, CODE_TRIPS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Samples.PATH, CODE_SAMPLES)
+        addURI(PathlineContract.AUTHORITY, PathlineContract.Places.PATH, CODE_PLACES)
+        addURI(
+            PathlineContract.AUTHORITY,
+            "${PathlineContract.Places.PATH}/#/${PathlineContract.Places.VISITS_PATH}",
+            CODE_PLACE_VISITS,
+        )
     }
 
     private val entryPoint: DaoEntryPoint by lazy {
@@ -65,6 +75,8 @@ class PathlineProvider : ContentProvider() {
         CODE_VISITS -> PathlineContract.Visits.CONTENT_TYPE
         CODE_TRIPS -> PathlineContract.Trips.CONTENT_TYPE
         CODE_SAMPLES -> PathlineContract.Samples.CONTENT_TYPE
+        CODE_PLACES -> PathlineContract.Places.CONTENT_TYPE
+        CODE_PLACE_VISITS -> PathlineContract.Places.VisitHistory.CONTENT_TYPE
         else -> null
     }
 
@@ -81,6 +93,13 @@ class PathlineProvider : ContentProvider() {
         }
 
         val now = System.currentTimeMillis()
+        // The place collections aren't time-windowed the same way; they branch off before the
+        // required-`start` parsing below.
+        when (code) {
+            CODE_PLACES -> return placesQuery(uri, now)
+            CODE_PLACE_VISITS -> return placeVisitsQuery(uri, now)
+        }
+
         val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
             ?: throw IllegalArgumentException(
                 "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
@@ -98,10 +117,7 @@ class PathlineProvider : ContentProvider() {
         // Optional batch-correlation key — honoured only when ~now (fail-open: stale/invalid -> null,
         // never an error). Parsed before enforcement so a denied read is grouped too. Reads sharing it
         // from one app are aggregated in the access manager.
-        val rawGroup = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
-        val groupId = rawGroup?.takeIf {
-            it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
-        }
+        val groupId = parseGroup(uri, now)
 
         // Enforce each required permission. A well-formed request the caller isn't authorized for is
         // recorded as a denied event (read nothing -> rowCount 0, no user notification) and then
@@ -219,6 +235,9 @@ class PathlineProvider : ContentProvider() {
                 ),
             )
         }
+        // Record that this caller has now seen these saved places, so it may later resolve their
+        // details and history via the `places` collection. Best-effort: never break the read.
+        runCatching { recordPlaceGrants(visits) }
         cursor
     }
 
@@ -270,6 +289,155 @@ class PathlineProvider : ContentProvider() {
         cursor
     }
 
+    /**
+     * `places` collection: saved-place details (name, address) for places the caller has already seen.
+     * Not time-windowed; gated by [PathlineContract.Permissions.READ_TIMELINE] and scoped to the
+     * caller's place grants (built up by its [visitsCursor] reads). `start`/`end` are ignored, so the
+     * audit row records a zero-width window at "now" — this read is not a time range.
+     */
+    private fun placesQuery(uri: Uri, now: Long): Cursor {
+        val groupId = parseGroup(uri, now)
+        if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
+            logAccess(
+                PathlineContract.Places.PATH, now, now, rowCount = 0, now, groupId,
+                routeWithheld = null,
+                deniedPermission = PathlineContract.Permissions.READ_TIMELINE,
+            )
+            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_TIMELINE}")
+        }
+        val cursor = placesCursor(uri)
+        logAccess(
+            PathlineContract.Places.PATH, now, now, cursor.count, now, groupId,
+            routeWithheld = null, deniedPermission = null,
+        )
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /**
+     * `places/<id>/visits` collection: one place's visit history, as lean rows (no place name/address
+     * — the caller resolves those once from the parent place). Gated by READ_TIMELINE, with
+     * READ_EXTENDED_HISTORY required for any portion older than 30 days (an all-time history, the
+     * default when no `start` is given, needs it). Scoped to the caller's place grants.
+     */
+    private fun placeVisitsQuery(uri: Uri, now: Long): Cursor {
+        val placeId = uri.pathSegments.getOrNull(1)?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid place id in URI: $uri")
+        // Windowed like the other collections: `start` is required (callers must be explicit about how
+        // far back they read), `end` defaults to now. Reaching past 30 days still needs extended history.
+        val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
+            ?: throw IllegalArgumentException(
+                "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
+            )
+        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
+        require(end > start) {
+            "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'"
+        }
+        val groupId = parseGroup(uri, now)
+        val dataType = PathlineContract.Places.VISITS_DATA_TYPE
+
+        fun requirePermission(permission: String) {
+            if (holds(permission)) return
+            logAccess(dataType, start, end, rowCount = 0, now, groupId, null, permission)
+            throw SecurityException("Caller must hold $permission")
+        }
+        requirePermission(PathlineContract.Permissions.READ_TIMELINE)
+        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
+            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
+        }
+
+        val cursor = placeVisitsCursor(placeId, start, end)
+        logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    private fun placesCursor(uri: Uri): Cursor = runBlocking {
+        val pkg = callingPackage ?: "unknown"
+        val grantDao = entryPoint.apiPlaceGrantDao()
+        val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
+            ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.distinct()
+        // Scope: only places this app has already encountered through an authorized `visits` read.
+        // An unfiltered query returns all of them; a filter is intersected with the allowed set.
+        val allowed = when {
+            requested == null -> grantDao.grantedPlaceIds(pkg)
+            requested.isEmpty() -> emptyList()
+            else -> grantDao.grantedAmong(pkg, requested)
+        }
+        val places = if (allowed.isEmpty()) emptyList() else entryPoint.placeDao().byIds(allowed)
+        val cursor = MatrixCursor(PathlineContract.Places.COLUMNS, places.size)
+        for (p in places) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    p.id,
+                    p.name,
+                    p.address,
+                    p.category,
+                    p.source.name,
+                    p.googlePlaceId,
+                    p.latitude,
+                    p.longitude,
+                    p.radiusMeters,
+                ),
+            )
+        }
+        cursor
+    }
+
+    private fun placeVisitsCursor(placeId: Long, start: Long, end: Long): Cursor = runBlocking {
+        val pkg = callingPackage ?: "unknown"
+        // Scope: a place's history is readable only if this app already saw the place in a `visits`
+        // read. An unseen (or non-existent) place returns nothing — indistinguishable, so the caller
+        // cannot probe for ids it was never shown.
+        val visits = if (entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)) {
+            entryPoint.visitDao().forPlaceOverlapping(placeId, start, end)
+        } else {
+            emptyList()
+        }
+        val cursor = MatrixCursor(PathlineContract.Places.VisitHistory.COLUMNS, visits.size)
+        for (v in visits) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    v.id,
+                    v.startMs,
+                    v.endMs,
+                    v.placeId,
+                    v.centroidLatitude,
+                    v.centroidLongitude,
+                    v.radiusMeters,
+                    v.confidence,
+                    if (v.confirmed) 1 else 0,
+                    if (v.isOngoing) 1 else 0,
+                ),
+            )
+        }
+        cursor
+    }
+
+    /**
+     * Grant the calling app access to every saved place referenced by a **confirmed** visit it just
+     * read. An unconfirmed visit — even one matched to a saved place — does not by itself grant access;
+     * but once any confirmed visit grants the place, the place's full history (including its unconfirmed
+     * visits) becomes readable, which is fine since the place is legitimately in scope.
+     */
+    private suspend fun recordPlaceGrants(visits: List<VisitEntity>) {
+        val pkg = callingPackage ?: return
+        val placeIds = visits.filter { it.confirmed }.mapNotNull { it.placeId }.distinct()
+        if (placeIds.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val dao = entryPoint.apiPlaceGrantDao()
+        dao.insertIgnore(placeIds.map { ApiPlaceGrantEntity(pkg, it, now, now) })
+        dao.touch(pkg, placeIds, now)
+    }
+
+    /** The optional batch-correlation key, honoured only when within the grouping window of [now]. */
+    private fun parseGroup(uri: Uri, now: Long): Long? {
+        val raw = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
+        return raw?.takeIf {
+            it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
+        }
+    }
+
     /** True when the IPC caller (or our own process) holds [permission]. */
     private fun holds(permission: String): Boolean {
         val ctx: Context = context ?: throw SecurityException("Provider not attached")
@@ -293,6 +461,8 @@ class PathlineProvider : ContentProvider() {
         const val CODE_VISITS = 1
         const val CODE_TRIPS = 2
         const val CODE_SAMPLES = 3
+        const val CODE_PLACES = 4
+        const val CODE_PLACE_VISITS = 5
 
         /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
         const val GROUP_FUTURE_TOLERANCE_MS = 5_000L

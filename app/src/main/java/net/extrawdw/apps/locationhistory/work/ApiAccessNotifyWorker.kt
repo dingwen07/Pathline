@@ -140,6 +140,22 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
                     )
                 )
             }
+            maxByType["places"]?.let {
+                add(
+                    ctx.getString(
+                        R.string.api_notify_data_places,
+                        nf.format(it)
+                    )
+                )
+            }
+            maxByType["place_visits"]?.let {
+                add(
+                    ctx.getString(
+                        R.string.api_notify_data_place_visits,
+                        nf.format(it)
+                    )
+                )
+            }
         }
         if (parts.isEmpty()) return null
         return parts.joinToString(ctx.getString(R.string.api_notify_data_separator))

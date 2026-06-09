@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDatabase
+import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantDao
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.AppMigrations
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
@@ -110,6 +111,9 @@ object DatabaseModule {
 
     @Provides
     fun provideApiAccessDao(db: ApiAccessDatabase): ApiAccessDao = db.apiAccessDao()
+
+    @Provides
+    fun provideApiPlaceGrantDao(db: ApiAccessDatabase): ApiPlaceGrantDao = db.apiPlaceGrantDao()
 
     /** Room creates entity tables on a fresh install but never triggers — add them here. */
     private val TriggerCallback = object : RoomDatabase.Callback() {

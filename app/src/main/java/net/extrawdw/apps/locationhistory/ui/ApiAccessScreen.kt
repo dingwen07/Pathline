@@ -363,9 +363,11 @@ private fun DayHeader(date: LocalDate, zone: ZoneId) {
 @Composable
 private fun AppIconCircle(icon: ImageBitmap?, size: Dp) {
     if (icon != null) {
-        Image(icon, contentDescription = null, modifier = Modifier
-            .size(size)
-            .clip(CircleShape))
+        Image(
+            icon, contentDescription = null, modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
+        )
     } else {
         Box(
             Modifier
@@ -542,9 +544,11 @@ private fun GroupRow(
                 .padding(top = 14.dp),
         )
         TimelineIconColumn(icon = icon)
-        Column(Modifier
-            .weight(1f)
-            .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)
+        ) {
             Text(
                 appLabel,
                 style = MaterialTheme.typography.titleMedium,
@@ -604,6 +608,8 @@ private fun groupSummary(events: List<ApiAccessEventEntity>): String {
         maxByType["visits"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_visits)}" },
         maxByType["trips"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_trips)}" },
         maxByType["samples"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_samples)}" },
+        maxByType["places"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_places)}" },
+        maxByType["place_visits"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_place_visits)}" },
     )
     val requests = stringResource(R.string.api_access_group_requests, events.size)
     return if (parts.isEmpty()) requests
@@ -662,9 +668,11 @@ private fun EventRow(
                 .padding(top = 14.dp),
         )
         TimelineIconColumn(icon = icon)
-        Column(Modifier
-            .weight(1f)
-            .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(start = 8.dp, top = 10.dp, bottom = 12.dp)
+        ) {
             Text(
                 appLabel,
                 style = MaterialTheme.typography.titleMedium,
@@ -895,6 +903,8 @@ private fun dataTypeLabel(dataType: String): String = stringResource(
         "visits" -> R.string.api_data_visits
         "trips" -> R.string.api_data_trips
         "samples" -> R.string.api_data_samples
+        "places" -> R.string.api_data_places
+        "place_visits" -> R.string.api_data_place_visits
         else -> R.string.api_data_unknown
     },
 )
