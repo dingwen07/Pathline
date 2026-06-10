@@ -3,11 +3,6 @@ package net.extrawdw.apps.locationhistory.domain
 import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
-import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
-import net.extrawdw.apps.locationhistory.data.db.AnnotationEntity
-import net.extrawdw.apps.locationhistory.data.db.EntityTagEntity
-import net.extrawdw.apps.locationhistory.data.db.TagDao
-import net.extrawdw.apps.locationhistory.data.db.TagEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -17,12 +12,16 @@ import org.junit.Test
 /**
  * Round-trip tests for the in-app editor's load/save path ([AnnotationStore.loadEdits] /
  * [AnnotationStore.saveEdits]) against in-memory fake DAOs — proving notes AND tags persist together,
- * tags carry the new hyphen canonical, and clearing/removal works. (DAO wiring itself is exercised by
- * on-device runs; this pins the domain contract the UI relies on.)
+ * tags carry the new hyphen canonical, clearing/removal works, and writer attribution follows the
+ * null-means-Pathline convention. (DAO wiring itself is exercised by on-device runs; this pins the
+ * domain contract the UI and provider rely on.)
  */
 class AnnotationStoreTest {
 
-    private val store = AnnotationStore(FakeTagDao(), FakeAnnotationDao())
+    private val tagDao = FakeTagDao()
+    private val annotationDao = FakeAnnotationDao()
+    private val conceptDao = FakeConceptDao()
+    private val store = AnnotationStore(tagDao, annotationDao, conceptDao)
 
     @Test
     fun saveEdits_persistsNoteAndTagsTogether() = runBlocking {
@@ -39,7 +38,7 @@ class AnnotationStoreTest {
         // A different separator spelling of the same tag must reuse the one row, not create a second.
         store.saveEdits(AnnotationTarget.VISIT, 8, note = "", tags = listOf("my_home"))
 
-        assertEquals("my-home", TagCanonicalizer.canonicalize("My Home"))
+        assertEquals("my-home", NameCanonicalizer.canonicalize("My Home"))
         assertEquals(1, store.tagsFor(AnnotationTarget.TRIP, 7).size)
         assertEquals(
             store.tagsFor(AnnotationTarget.TRIP, 7).single().id,
@@ -112,119 +111,107 @@ class AnnotationStoreTest {
         assertTrue(loaded.tags.isEmpty())
         assertTrue(loaded.memories.isEmpty())
     }
-}
 
-// --- in-memory fakes -------------------------------------------------------------------------------
+    // --- writer attribution ----------------------------------------------------------------------
 
-private class FakeTagDao : TagDao {
-    private val tags = mutableListOf<TagEntity>()
-    private val links = mutableListOf<EntityTagEntity>()
-    private var nextId = 1L
+    @Test
+    fun apiWrites_attributeWriter_uiWritesStayNull() = runBlocking {
+        store.setNote(AnnotationTarget.PLACE, 40, "agent text", writer = "com.example.agent")
+        assertEquals(
+            "com.example.agent",
+            annotationDao.byTarget(AnnotationTarget.PLACE, 40, AnnotationKind.NOTE)!!.updatedBy,
+        )
 
-    override suspend fun insertIgnore(tag: TagEntity): Long {
-        if (tags.any { it.canonicalName == tag.canonicalName }) return -1
-        val row = tag.copy(id = nextId++)
-        tags.add(row)
-        return row.id
+        // The in-app editor writes with no writer -> attribution becomes null (the user did it).
+        store.saveEdits(AnnotationTarget.PLACE, 40, note = "user text", tags = emptyList())
+        assertNull(annotationDao.byTarget(AnnotationTarget.PLACE, 40, AnnotationKind.NOTE)!!.updatedBy)
+
+        store.putMemory(AnnotationTarget.PLACE, 40, "k", "v", writer = "com.example.agent")
+        assertEquals(
+            "com.example.agent",
+            store.getMemories(AnnotationTarget.PLACE, 40).getValue("k").updatedBy,
+        )
     }
 
-    override suspend fun byCanonicalName(canonicalName: String): TagEntity? =
-        tags.firstOrNull { it.canonicalName == canonicalName }
+    @Test
+    fun saveEdits_untouchedEditorPreservesAttribution() = runBlocking {
+        store.setNote(AnnotationTarget.PLACE, 41, "agent note", writer = "com.example.agent")
+        store.applyTag(AnnotationTarget.PLACE, 41, "Agent Tag", writer = "com.example.agent")
 
-    override suspend fun updateDisplayName(tagId: Long, displayName: String) {
-        tags.replaceAll { if (it.id == tagId) it.copy(displayName = displayName) else it }
+        // Open-and-save with nothing changed: the note text and tag set are identical, so no row
+        // is rewritten and the agent's attribution survives "just viewing".
+        store.saveEdits(AnnotationTarget.PLACE, 41, note = "agent note", tags = listOf("Agent Tag"))
+
+        assertEquals(
+            "com.example.agent",
+            annotationDao.byTarget(AnnotationTarget.PLACE, 41, AnnotationKind.NOTE)!!.updatedBy,
+        )
+        assertEquals(
+            "com.example.agent",
+            tagDao.linksFor(AnnotationTarget.PLACE, 41).single().createdBy,
+        )
     }
 
-    override suspend fun all(): List<TagEntity> = tags.sortedBy { it.displayName }
+    @Test
+    fun applyTag_reApplyRefreshesSpellingButNeverReAttributes() = runBlocking {
+        store.applyTag(AnnotationTarget.PLACE, 42, "Coffee Shop", writer = null) // user-created
+        store.applyTag(AnnotationTarget.PLACE, 42, "COFFEE_SHOP", writer = "com.example.agent")
 
-    override suspend fun byIds(ids: List<Long>): List<TagEntity> =
-        tags.filter { it.id in ids.toSet() }.sortedBy { it.displayName }
-
-    override suspend fun allLinks(): List<EntityTagEntity> = links.toList()
-
-    override suspend fun targetIdsForTags(type: AnnotationTarget, tagIds: List<Long>): List<Long> =
-        links.filter { it.targetType == type && it.tagId in tagIds.toSet() }
-            .map { it.targetId }.distinct()
-
-    override suspend fun link(link: EntityTagEntity) {
-        val exists = links.any {
-            it.tagId == link.tagId && it.targetType == link.targetType && it.targetId == link.targetId
-        }
-        if (!exists) links.add(link)
+        val tag = tagDao.byCanonicalName("coffee-shop")!!
+        assertEquals("COFFEE_SHOP", tag.displayName) // spelling refreshed
+        assertNull(tag.createdBy)                    // creator unchanged (the user)
+        assertNull(tagDao.linksFor(AnnotationTarget.PLACE, 42).single().createdBy) // link too
     }
 
-    override suspend fun tagsFor(type: AnnotationTarget, id: Long): List<TagEntity> {
-        val ids = links.filter { it.targetType == type && it.targetId == id }.map { it.tagId }.toSet()
-        return tags.filter { it.id in ids }.sortedBy { it.displayName }
+    @Test
+    fun memories_equalValuesFoldKeepsWinningClaimsWriterVerbatim() = runBlocking {
+        store.putMemory(AnnotationTarget.VISIT, 50, "k", "same", 0.5f, writer = "com.weak.app")
+        store.putMemory(AnnotationTarget.VISIT, 51, "k", "same", 0.8f, writer = "com.strong.app")
+
+        store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 50, dyingId = 51)
+
+        // The stronger claim's writer travels with its value/confidence/source.
+        assertEquals(
+            "com.strong.app",
+            store.getMemories(AnnotationTarget.VISIT, 50).getValue("k").updatedBy,
+        )
     }
 
-    override suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long): Int {
-        val before = links.size
-        links.removeAll { it.tagId == tagId && it.targetType == type && it.targetId == id }
-        return before - links.size
+    @Test
+    fun memories_differingValuesFoldIsPathlinesComposite() = runBlocking {
+        store.putMemory(AnnotationTarget.VISIT, 60, "k", "old", 0.9f, writer = "com.app.a")
+        store.putMemory(AnnotationTarget.VISIT, 61, "k", "new", 0.4f, writer = "com.app.b")
+
+        store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 60, dyingId = 61)
+
+        // No single app wrote the concatenation; the row-level writer is Pathline (null) too.
+        assertNull(store.getMemories(AnnotationTarget.VISIT, 60).getValue("k").updatedBy)
+        assertNull(annotationDao.byTarget(AnnotationTarget.VISIT, 60, AnnotationKind.MEMORY)!!.updatedBy)
     }
 
-    override suspend fun unlinkAll(type: AnnotationTarget, id: Long) {
-        links.removeAll { it.targetType == type && it.targetId == id }
+    @Test
+    fun foldOnMerge_unionsConceptMemberships() = runBlocking {
+        val conceptStore = ConceptStore(conceptDao, store)
+        val c = conceptStore.create("Japan Trip", "trip", null, writer = "com.example.agent")
+        conceptStore.addMember(c.id, AnnotationTarget.VISIT, 70, writer = "com.example.agent")
+        conceptStore.addMember(c.id, AnnotationTarget.VISIT, 71, writer = "com.example.agent")
+
+        store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 70, dyingId = 71)
+
+        val members = conceptDao.membersOf(c.id)
+        assertEquals(1, members.size) // union collapsed the duplicate membership
+        assertEquals(70L, members.single().targetId)
     }
 
-    override suspend fun rekeyLinks(type: AnnotationTarget, fromId: Long, toId: Long) {
-        val moved = links.filter { it.targetType == type && it.targetId == fromId }
-        links.removeAll { it.targetType == type && it.targetId == fromId }
-        for (l in moved) {
-            val collide = links.any {
-                it.tagId == l.tagId && it.targetType == type && it.targetId == toId
-            }
-            if (!collide) links.add(l.copy(targetId = toId))
-        }
-    }
-}
+    @Test
+    fun cascadeDelete_dropsConceptMembershipsOfTheTarget() = runBlocking {
+        val conceptStore = ConceptStore(conceptDao, store)
+        val c = conceptStore.create("Errands", null, null)
+        conceptStore.addMember(c.id, AnnotationTarget.PLACE, 80)
 
-private class FakeAnnotationDao : AnnotationDao {
-    private val rows = mutableListOf<AnnotationEntity>()
-    private var nextId = 1L
+        store.cascadeDelete(AnnotationTarget.PLACE, 80)
 
-    override suspend fun upsert(annotation: AnnotationEntity): Long {
-        rows.removeAll {
-            it.targetType == annotation.targetType && it.targetId == annotation.targetId &&
-                it.kind == annotation.kind
-        }
-        val row = annotation.copy(id = nextId++)
-        rows.add(row)
-        return row.id
-    }
-
-    override suspend fun update(annotation: AnnotationEntity) {
-        rows.replaceAll { if (it.id == annotation.id) annotation else it }
-    }
-
-    override suspend fun byTarget(type: AnnotationTarget, id: Long, kind: AnnotationKind): AnnotationEntity? =
-        rows.firstOrNull { it.targetType == type && it.targetId == id && it.kind == kind }
-
-    override suspend fun allForTarget(type: AnnotationTarget, id: Long): List<AnnotationEntity> =
-        rows.filter { it.targetType == type && it.targetId == id }
-
-    override suspend fun allOfKind(type: AnnotationTarget, kind: AnnotationKind): List<AnnotationEntity> =
-        rows.filter { it.targetType == type && it.kind == kind }
-
-    override suspend fun targetIdsWithContentLike(
-        type: AnnotationTarget,
-        kind: AnnotationKind,
-        pattern: String,
-    ): List<Long> {
-        // Mirror of `LIKE ? ESCAPE '\'` for a %text% pattern: unescape, then substring match.
-        val needle = pattern.removePrefix("%").removeSuffix("%")
-            .replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\")
-        return rows.filter {
-            it.targetType == type && it.kind == kind && it.content.contains(needle, ignoreCase = true)
-        }.map { it.targetId }.distinct()
-    }
-
-    override suspend fun deleteForTargetKind(type: AnnotationTarget, id: Long, kind: AnnotationKind) {
-        rows.removeAll { it.targetType == type && it.targetId == id && it.kind == kind }
-    }
-
-    override suspend fun deleteForTarget(type: AnnotationTarget, id: Long) {
-        rows.removeAll { it.targetType == type && it.targetId == id }
+        assertTrue(conceptDao.membersOf(c.id).isEmpty())
+        assertNotNull(conceptDao.byId(c.id)) // the concept itself survives, just emptier
     }
 }

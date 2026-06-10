@@ -17,6 +17,8 @@ import androidx.room.TypeConverters
         TagEntity::class,
         EntityTagEntity::class,
         AnnotationEntity::class,
+        ConceptEntity::class,
+        ConceptMemberEntity::class,
     ],
     version = 2,
     exportSchema = true,
@@ -32,6 +34,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun backupDao(): BackupDao
     abstract fun tagDao(): TagDao
     abstract fun annotationDao(): AnnotationDao
+    abstract fun conceptDao(): ConceptDao
     abstract fun searchDao(): SearchDao
 
     companion object {
@@ -179,6 +182,19 @@ abstract class AppDatabase : RoomDatabase() {
                     "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
                     "VALUES('delete', old.id, old.displayName); " +
                     "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
+            "CREATE VIRTUAL TABLE IF NOT EXISTS concepts_fts USING fts5(" +
+                    "displayName, kind, description, content='concepts', content_rowid='id')",
+            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_ai AFTER INSERT ON concepts BEGIN " +
+                    "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
+                    "VALUES (new.id, new.displayName, new.kind, new.description); END;",
+            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_ad AFTER DELETE ON concepts BEGIN " +
+                    "INSERT INTO concepts_fts(concepts_fts, rowid, displayName, kind, description) " +
+                    "VALUES('delete', old.id, old.displayName, old.kind, old.description); END;",
+            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_au AFTER UPDATE ON concepts BEGIN " +
+                    "INSERT INTO concepts_fts(concepts_fts, rowid, displayName, kind, description) " +
+                    "VALUES('delete', old.id, old.displayName, old.kind, old.description); " +
+                    "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
+                    "VALUES (new.id, new.displayName, new.kind, new.description); END;",
         )
 
         /** Populate the FTS indexes from rows that already exist (upgrade path only). */
@@ -186,6 +202,8 @@ abstract class AppDatabase : RoomDatabase() {
             "INSERT INTO places_fts(rowid, name, address, category, types) " +
                     "SELECT id, name, address, category, types FROM places",
             "INSERT INTO tags_fts(rowid, displayName) SELECT id, displayName FROM tags",
+            "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
+                    "SELECT id, displayName, kind, description FROM concepts",
         )
     }
 }

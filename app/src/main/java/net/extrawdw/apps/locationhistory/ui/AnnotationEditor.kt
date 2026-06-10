@@ -42,7 +42,7 @@ import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
 import net.extrawdw.apps.locationhistory.domain.MemoryEntry
-import net.extrawdw.apps.locationhistory.domain.TagCanonicalizer
+import net.extrawdw.apps.locationhistory.domain.NameCanonicalizer
 import kotlin.math.roundToInt
 
 /**
@@ -70,9 +70,9 @@ class AnnotationEditState {
     /** Add [display] unless it's empty or a different spelling of a tag already present. */
     fun addTag(display: String) {
         val trimmed = display.trim()
-        val canonical = TagCanonicalizer.canonicalize(trimmed)
+        val canonical = NameCanonicalizer.canonicalize(trimmed)
         if (canonical.isEmpty()) return
-        if (tags.any { TagCanonicalizer.canonicalize(it) == canonical }) return
+        if (tags.any { NameCanonicalizer.canonicalize(it) == canonical }) return
         tags.add(trimmed)
     }
 

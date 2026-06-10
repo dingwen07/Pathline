@@ -79,15 +79,17 @@ enum class NetworkTransport {
 }
 
 /**
- * The kind of timeline entity a tag or annotation is attached to. Stored by name as the polymorphic
- * discriminator on `entity_tags` / `annotations` (no FK — visits/trips are rebuilt, see the data-API
- * design doc). Annotations only attach to PLACE rows and to *confirmed* VISIT / TRIP rows, whose ids
- * survive a rebuild.
+ * The kind of entity a tag or annotation is attached to. Stored by name as the polymorphic
+ * discriminator on `entity_tags` / `annotations` / `concept_members` (no FK — visits/trips are
+ * rebuilt, see the data-API design doc). Annotations only attach to PLACE rows, *confirmed*
+ * VISIT / TRIP rows (whose ids survive a rebuild), and CONCEPT rows. CONCEPT is an annotation
+ * target (concepts carry their own note/memories/tags) but never a concept **member** — no nesting.
  */
 enum class AnnotationTarget {
     PLACE,
     VISIT,
     TRIP,
+    CONCEPT,
 }
 
 /** Discriminates the two `annotations` payloads: free-text NOTE vs flat string->string MEMORY map. */

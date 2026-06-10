@@ -624,6 +624,8 @@ private fun groupSummary(events: List<ApiAccessEventEntity>): String {
         maxByType["tags"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_tags)}" },
         maxByType["notes"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_notes)}" },
         maxByType["memories"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_memories)}" },
+        maxByType["concepts"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_concepts)}" },
+        maxByType["concept_members"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_concept_members)}" },
     )
     val requests = stringResource(R.string.api_access_group_requests, events.size)
     return if (parts.isEmpty()) requests
@@ -940,6 +942,8 @@ private fun dataTypeLabel(dataType: String): String = stringResource(
         "tags" -> R.string.api_data_tags
         "notes" -> R.string.api_data_notes
         "memories" -> R.string.api_data_memories
+        "concepts" -> R.string.api_data_concepts
+        "concept_members" -> R.string.api_data_concept_members
         else -> R.string.api_data_unknown
     },
 )

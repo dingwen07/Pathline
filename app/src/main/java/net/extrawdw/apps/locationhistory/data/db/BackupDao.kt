@@ -94,6 +94,12 @@ interface BackupDao {
     @Query("SELECT * FROM annotations ORDER BY id ASC")
     suspend fun allAnnotations(): List<AnnotationEntity>
 
+    @Query("SELECT * FROM concepts ORDER BY id ASC")
+    suspend fun allConcepts(): List<ConceptEntity>
+
+    @Query("SELECT * FROM concept_members ORDER BY conceptId ASC")
+    suspend fun allConceptMembers(): List<ConceptMemberEntity>
+
     // --- Restore (insert with explicit primary keys; REPLACE makes restore idempotent) ---------
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -126,12 +132,19 @@ interface BackupDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restoreAnnotations(rows: List<AnnotationEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreConcepts(rows: List<ConceptEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreConceptMembers(rows: List<ConceptMemberEntity>)
+
     /** Wipe all derived/recorded data before an as-is restore (snapshot tables + append tables). */
     @Transaction
     suspend fun wipeForRestore() {
         clearTrips(); clearVisits(); clearSamples()
         clearGeofences(); clearPlaces(); clearStateExamples(); clearTransportExamples()
         clearAnnotations(); clearEntityTags(); clearTags()
+        clearConceptMembers(); clearConcepts()
         clearAllDirty()
     }
 
@@ -153,22 +166,24 @@ interface BackupDao {
     suspend fun detachDanglingTripToVisits()
 
     /**
-     * After an as-is restore, drop polymorphic tag links / annotations whose target row is absent.
-     * No FK spans the polymorphic edge (targets are places/visits/trips), so a backup written by an
-     * older app, or one whose targets were pruned, could leave entity_tags/annotations pointing at a
-     * row that wasn't imported. Deleting the orphan is the correct repair (there is no ref to null).
-     * Tags themselves are kept even when unlinked — an unused tag is legitimate.
+     * After an as-is restore, drop polymorphic tag links / annotations / concept memberships whose
+     * target row is absent. No FK spans the polymorphic edge (targets are
+     * places/visits/trips/concepts), so a backup written by an older app, or one whose targets were
+     * pruned, could leave rows pointing at a target that wasn't imported. Deleting the orphan is the
+     * correct repair (there is no ref to null). Tags and concepts themselves are kept even when
+     * unlinked/empty — both are legitimate without members.
      */
     @Transaction
     suspend fun purgeDanglingAnnotationsAndTags() {
-        purgeDanglingEntityTags(); purgeDanglingAnnotations()
+        purgeDanglingEntityTags(); purgeDanglingAnnotations(); purgeDanglingConceptMembers()
     }
 
     @Query(
         "DELETE FROM entity_tags WHERE NOT (" +
                 "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
                 "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
-                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)) OR " +
+                "(targetType = 'CONCEPT' AND targetId IN (SELECT id FROM concepts)))",
     )
     suspend fun purgeDanglingEntityTags()
 
@@ -176,9 +191,20 @@ interface BackupDao {
         "DELETE FROM annotations WHERE NOT (" +
                 "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
                 "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
-                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)) OR " +
+                "(targetType = 'CONCEPT' AND targetId IN (SELECT id FROM concepts)))",
     )
     suspend fun purgeDanglingAnnotations()
+
+    /** Members must point at an imported target AND an imported concept (no nesting: CONCEPT is
+     *  never a member type, so it has no leg here). */
+    @Query(
+        "DELETE FROM concept_members WHERE conceptId NOT IN (SELECT id FROM concepts) OR NOT (" +
+                "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
+                "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+    )
+    suspend fun purgeDanglingConceptMembers()
 
     @Query("DELETE FROM trips")
     suspend fun clearTrips()
@@ -209,4 +235,10 @@ interface BackupDao {
 
     @Query("DELETE FROM annotations")
     suspend fun clearAnnotations()
+
+    @Query("DELETE FROM concepts")
+    suspend fun clearConcepts()
+
+    @Query("DELETE FROM concept_members")
+    suspend fun clearConceptMembers()
 }

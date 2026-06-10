@@ -137,6 +137,14 @@ object PathlineContract {
          * throws a [SecurityException] (when [FIELDS] is omitted those fields are simply skipped).
          */
         const val FIELDS: String = "fields"
+
+        /**
+         * Exact-match filter on the [Concepts] collection by [Concepts.KIND] (e.g. `kind=trip`).
+         * The value is canonicalized like the stored kinds, so `Trip`/`TRIP`/`trip` are the same
+         * filter. Composable with [Q] (the search result is then narrowed to the kind). Ignored by
+         * every other collection.
+         */
+        const val KIND: String = "kind"
     }
 
     /**
@@ -148,6 +156,7 @@ object PathlineContract {
      * - `visits` / `trips`: [PLACE_NAME] (the **saved place** attributed to the visit, or to the
      *   trip's endpoint visits), plus [TAGS] and [NOTES] of the visit/trip itself.
      * - `tags`: matches tag names only; [QueryParams.FIELDS] is ignored.
+     * - `concepts`: matches concept names, kinds and descriptions; [QueryParams.FIELDS] is ignored.
      */
     object SearchFields {
         const val NAME: String = "name"
@@ -614,18 +623,37 @@ object PathlineContract {
         /** When the tag was first created, epoch milliseconds. */
         const val CREATED_AT_MS: String = "created_at_ms"
 
+        /**
+         * Whether the **calling app** created this tag, as a nullable boolean (`1` = the caller,
+         * `0` = a different app, null = Pathline itself — the user created it in-app, or it predates
+         * attribution). Pathline records the writing package internally; only this three-state flag
+         * is exposed. Creation attribution never changes — a re-apply by another app refreshes the
+         * spelling but not the creator.
+         */
+        const val CREATED_BY_ME: String = "created_by_me"
+
+        /**
+         * Whether the calling app **attached** this tag to the parent target, same nullable-boolean
+         * encoding as [CREATED_BY_ME]. Only meaningful on the per-target `…/tags` sub-collections;
+         * always null on the global `tags` listing (a tag can be attached to many targets by many
+         * writers).
+         */
+        const val ATTACHED_BY_ME: String = "attached_by_me"
+
         @JvmField
-        val COLUMNS: Array<String> = arrayOf(ID, NAME, CANONICAL_NAME, CREATED_AT_MS)
+        val COLUMNS: Array<String> =
+            arrayOf(ID, NAME, CANONICAL_NAME, CREATED_AT_MS, CREATED_BY_ME, ATTACHED_BY_ME)
     }
 
     /**
      * Per-target **annotations**: the tags, the single free-text note, and the single key→value
-     * **memory map** of one place, visit or trip, addressed as sub-collections of the parent row —
+     * **memory map** of one place, visit, trip or concept, addressed as sub-collections of the
+     * parent row —
      *
      * ```
-     * content://…/{places|visits|trips}/<id>/tags
-     * content://…/{places|visits|trips}/<id>/notes
-     * content://…/{places|visits|trips}/<id>/memories
+     * content://…/{places|visits|trips|concepts}/<id>/tags
+     * content://…/{places|visits|trips|concepts}/<id>/notes
+     * content://…/{places|visits|trips|concepts}/<id>/memories
      * ```
      *
      * (build the URIs with [tagsUri] / [notesUri] / [memoriesUri]). Memories are an agent's
@@ -637,9 +665,10 @@ object PathlineContract {
      * Requires [Permissions.READ_ANNOTATIONS], plus the target itself being visible to the caller:
      * a place it has been granted (or [Permissions.READ_ALL_PLACES]), or — under
      * [Permissions.READ_TIMELINE] — a **confirmed** visit/trip no older than 30 days (any age with
-     * [Permissions.READ_EXTENDED_HISTORY]). A target outside that scope returns no rows,
-     * indistinguishable from one that doesn't exist. `…/tags` returns [Tags] rows; `…/notes`
-     * returns 0 or 1 [Notes] row; `…/memories` returns one [Memories] row per key.
+     * [Permissions.READ_EXTENDED_HISTORY]), or any existing concept ([Permissions.READ_ANNOTATIONS]
+     * alone — see [Concepts]). A target outside that scope returns no rows, indistinguishable from
+     * one that doesn't exist. `…/tags` returns [Tags] rows; `…/notes` returns 0 or 1 [Notes] row;
+     * `…/memories` returns one [Memories] row per key.
      *
      * ## Writing
      * The annotation sub-collections are the **only** writable URIs in the API; everything else
@@ -675,7 +704,7 @@ object PathlineContract {
         const val MEMORIES_PATH: String = "memories"
 
         /** `content://…/<collection>/<id>/tags` — [collection] is one of [Places.CONTENT_URI],
-         *  [Visits.CONTENT_URI], [Trips.CONTENT_URI]. */
+         *  [Visits.CONTENT_URI], [Trips.CONTENT_URI], [Concepts.CONTENT_URI]. */
         @JvmStatic
         fun tagsUri(collection: Uri, id: Long): Uri =
             collection.buildUpon().appendPath(id.toString()).appendPath(TAGS_PATH).build()
@@ -717,8 +746,16 @@ object PathlineContract {
             /** Last modification time, epoch milliseconds. */
             const val UPDATED_AT_MS: String = "updated_at_ms"
 
+            /**
+             * Whether the **calling app** last wrote this note, as a nullable boolean (`1` = the
+             * caller, `0` = a different app, null = Pathline itself — the user edited it in-app, a
+             * timeline merge folded it, or it predates attribution). The writing package is
+             * recorded internally; only this three-state flag is exposed.
+             */
+            const val UPDATED_BY_ME: String = "updated_by_me"
+
             @JvmField
-            val COLUMNS: Array<String> = arrayOf(ID, CONTENT, UPDATED_AT_MS)
+            val COLUMNS: Array<String> = arrayOf(ID, CONTENT, UPDATED_AT_MS, UPDATED_BY_ME)
         }
 
         /**
@@ -764,8 +801,170 @@ object PathlineContract {
              */
             const val UPDATED_AT_MS: String = "updated_at_ms"
 
+            /**
+             * Whether the **calling app** last wrote this entry, as a nullable boolean (`1` = the
+             * caller, `0` = a different app, null = Pathline itself — a timeline merge folded
+             * differing values into a composite, or the entry predates attribution). The writing
+             * package is recorded internally; only this three-state flag is exposed. When a merge
+             * folds two **equal** values, the stronger claim's writer survives with it.
+             */
+            const val UPDATED_BY_ME: String = "updated_by_me"
+
             @JvmField
-            val COLUMNS: Array<String> = arrayOf(KEY, VALUE, CONFIDENCE, SOURCE, UPDATED_AT_MS)
+            val COLUMNS: Array<String> =
+                arrayOf(KEY, VALUE, CONFIDENCE, SOURCE, UPDATED_AT_MS, UPDATED_BY_ME)
+        }
+    }
+
+    /**
+     * The user's **concepts** — first-class semantic groups ("Japan trip 2026", "my gyms") that
+     * places, visits and trips join as **members**. Where a tag is a label (identity = its
+     * canonicalized name, auto-created on first apply, carries no data), a concept is an object:
+     * identity is its stable [ID], it is explicitly created and deleted, it can be renamed, and it
+     * carries data of its own — the intrinsic [KIND] / [DESCRIPTION] columns here, plus its own
+     * tags, note and memory map through the regular [Annotations] sub-collections
+     * (`concepts/<id>/tags|notes|memories`). Concept **names** still dedup under the same
+     * canonical folding as tags (two names differing only in case/separators are the same name —
+     * creating a duplicate is an error, not a reuse); [KIND] is a free-form but canonicalized
+     * discriminator ("trip", "project", "people") for exact filtering via [QueryParams.KIND].
+     * Concepts never nest — a concept cannot be a member of another concept.
+     *
+     * ## Reading
+     * Everything here requires only [Permissions.READ_ANNOTATIONS] — concepts are user/agent
+     * curation, not recorded location data, and member references are id pointers the caller
+     * resolves through the normally-gated collections (an id it cannot read stays an opaque
+     * number).
+     * - `concepts` — every concept; with [QueryParams.Q] a name/kind/description search
+     *   (requires [Permissions.SEARCH_DATA]); with [QueryParams.KIND] an exact kind filter;
+     *   with [QueryParams.IDS] an id filter. Windowless.
+     * - `concepts/<id>` — one concept row.
+     * - `concepts/<id>/members` — the members, as [Members] rows (see [membersUri]).
+     * - `…/{places|visits|trips}/<id>/concepts` — the concepts a visible target belongs to, as
+     *   rows of this shape (see [forTargetUri]; target visibility follows [Annotations] reads).
+     *
+     * ## Writing (requires [Permissions.WRITE_ANNOTATIONS])
+     * - **Create:** `insert` on `concepts` with [NAME] (plus optional [KIND], [DESCRIPTION]).
+     *   Returns `concepts/<id>`. A name colliding with an existing concept's canonical name is an
+     *   **error** (the message names the existing id) — never a silent reuse.
+     * - **Edit:** `update` on `concepts/<id>` with any subset of [NAME] / [KIND] / [DESCRIPTION]
+     *   (a key present with a null value clears that field; absent keys are untouched). Rename
+     *   collisions error like create.
+     * - **Delete:** `delete` on `concepts/<id>` — removes the concept, its memberships and its own
+     *   annotations; the members themselves are untouched.
+     * - **Add a member:** `insert` on `concepts/<id>/members` with [Members.TARGET_TYPE] +
+     *   [Members.TARGET_ID]. The member must be visible/writable to the caller under the
+     *   [Annotations] write rules (in particular an unconfirmed visit/trip is rejected — its id is
+     *   ephemeral). Re-adding is a no-op keeping the original attached-at/by.
+     * - **Remove a member:** `delete` on `concepts/<id>/members/<type>/<targetId>` ([memberUri]).
+     *
+     * Intrinsic edits (name/kind/description) refresh [UPDATED_AT_MS]/[UPDATED_BY_ME]; membership
+     * and annotation changes do **not** — they carry their own attribution. Every write is recorded
+     * in the user's access log and may notify, like all annotation writes.
+     *
+     * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept`.
+     */
+    object Concepts {
+        const val PATH: String = "concepts"
+        const val MEMBERS_PATH: String = "members"
+
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        const val CONTENT_TYPE: String =
+            "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept"
+        const val ITEM_CONTENT_TYPE: String =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.concept"
+
+        /** Stable concept id (the cursor's `_id`) — the identity; survives renames. */
+        const val ID: String = "_id"
+
+        /** Display name (most recent spelling). Also the [android.content.ContentValues] key for
+         *  create/rename. Canonical-name uniqueness applies (see class doc). */
+        const val NAME: String = "name"
+
+        /** The normalized identity key of the name (same folding as [Tags.CANONICAL_NAME]). */
+        const val CANONICAL_NAME: String = "canonical_name"
+
+        /** Optional canonicalized discriminator ("trip", "project"); null = untyped. Also a
+         *  [android.content.ContentValues] key (null clears). Filter with [QueryParams.KIND]. */
+        const val KIND: String = "kind"
+
+        /** Optional definitional prose — what this concept IS (the commentary belongs in the
+         *  concept's note). Also a [android.content.ContentValues] key (null clears). */
+        const val DESCRIPTION: String = "description"
+
+        /** When the concept was created, epoch milliseconds. */
+        const val CREATED_AT_MS: String = "created_at_ms"
+
+        /** When name/kind/description last changed, epoch milliseconds (membership/annotation
+         *  changes don't bump this). */
+        const val UPDATED_AT_MS: String = "updated_at_ms"
+
+        /** Whether the calling app created this concept — nullable boolean (`1` = the caller,
+         *  `0` = a different app, null = Pathline itself). */
+        const val CREATED_BY_ME: String = "created_by_me"
+
+        /** Whether the calling app last edited name/kind/description — same encoding as
+         *  [CREATED_BY_ME]. */
+        const val UPDATED_BY_ME: String = "updated_by_me"
+
+        /** Whether the calling app attached the parent target to this concept. Only meaningful on
+         *  the per-target `…/<id>/concepts` listings; null elsewhere. */
+        const val ATTACHED_BY_ME: String = "attached_by_me"
+
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(
+            ID, NAME, CANONICAL_NAME, KIND, DESCRIPTION,
+            CREATED_AT_MS, UPDATED_AT_MS, CREATED_BY_ME, UPDATED_BY_ME, ATTACHED_BY_ME,
+        )
+
+        /** `concepts/<id>` — one concept (query / update / delete). */
+        @JvmStatic
+        fun itemUri(id: Long): Uri = CONTENT_URI.buildUpon().appendPath(id.toString()).build()
+
+        /** `concepts/<id>/members` — the concept's members (query / insert). */
+        @JvmStatic
+        fun membersUri(id: Long): Uri =
+            itemUri(id).buildUpon().appendPath(MEMBERS_PATH).build()
+
+        /** `concepts/<id>/members/<type>/<targetId>` — one membership, for `delete`. [targetType]
+         *  is a [Members.TARGET_TYPE] value (`place` / `visit` / `trip`). */
+        @JvmStatic
+        fun memberUri(id: Long, targetType: String, targetId: Long): Uri =
+            membersUri(id).buildUpon().appendPath(targetType).appendPath(targetId.toString())
+                .build()
+
+        /** `…/{places|visits|trips}/<id>/concepts` — the concepts [collection]'s row <id> belongs
+         *  to. [collection] is one of [Places.CONTENT_URI], [Visits.CONTENT_URI],
+         *  [Trips.CONTENT_URI]. */
+        @JvmStatic
+        fun forTargetUri(collection: Uri, id: Long): Uri =
+            collection.buildUpon().appendPath(id.toString()).appendPath(PATH).build()
+
+        /**
+         * One **membership** row of `concepts/<id>/members`. MIME type:
+         * `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept_member`.
+         */
+        object Members {
+            const val CONTENT_TYPE: String =
+                "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept_member"
+
+            /** The member's collection: `place`, `visit` or `trip` (never `concept` — no nesting).
+             *  Also a [android.content.ContentValues] key for adding a member. */
+            const val TARGET_TYPE: String = "target_type"
+
+            /** The member's row id in its collection. Also a [android.content.ContentValues] key. */
+            const val TARGET_ID: String = "target_id"
+
+            /** When the member was attached, epoch milliseconds. */
+            const val ATTACHED_AT_MS: String = "attached_at_ms"
+
+            /** Whether the calling app attached this member — nullable boolean (`1` = the caller,
+             *  `0` = a different app, null = Pathline itself). */
+            const val ATTACHED_BY_ME: String = "attached_by_me"
+
+            @JvmField
+            val COLUMNS: Array<String> =
+                arrayOf(TARGET_TYPE, TARGET_ID, ATTACHED_AT_MS, ATTACHED_BY_ME)
         }
     }
 

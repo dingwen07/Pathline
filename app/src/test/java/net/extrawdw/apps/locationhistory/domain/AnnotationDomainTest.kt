@@ -8,32 +8,32 @@ import org.junit.Test
 /** Pure-logic tests for the Phase 2 annotation domain (canonicalization, memory codec, merge fold). */
 class AnnotationDomainTest {
 
-    // --- TagCanonicalizer ----------------------------------------------------------------------
+    // --- NameCanonicalizer ----------------------------------------------------------------------
 
     @Test
     fun canonical_collapsesCaseAndSeparatorsToHyphen() {
         val canonical = "my-home"
         for (spelling in listOf("My Home", "my  home", "my-home", "my_home", "My HoME", " my - home ", "my _- home")) {
-            assertEquals(spelling, canonical, TagCanonicalizer.canonicalize(spelling))
+            assertEquals(spelling, canonical, NameCanonicalizer.canonicalize(spelling))
         }
     }
 
     @Test
     fun canonical_normalizesSeparatorsRatherThanStripping() {
         // Separators become a single hyphen (word boundaries survive); they are NOT removed.
-        assertEquals("coffee-shop", TagCanonicalizer.canonicalize("Coffee Shop"))
-        assertEquals("coffee-shop", TagCanonicalizer.canonicalize("COFFEE_SHOP"))
+        assertEquals("coffee-shop", NameCanonicalizer.canonicalize("Coffee Shop"))
+        assertEquals("coffee-shop", NameCanonicalizer.canonicalize("COFFEE_SHOP"))
         // No-separator spelling is therefore a DISTINCT tag from the separated one.
-        assertEquals("coffeeshop", TagCanonicalizer.canonicalize("CoffeeShop"))
+        assertEquals("coffeeshop", NameCanonicalizer.canonicalize("CoffeeShop"))
         // Stripping would have collided these; normalizing keeps them apart.
-        assertEquals("ab-cd", TagCanonicalizer.canonicalize("ab cd"))
-        assertEquals("abc-d", TagCanonicalizer.canonicalize("abc d"))
+        assertEquals("ab-cd", NameCanonicalizer.canonicalize("ab cd"))
+        assertEquals("abc-d", NameCanonicalizer.canonicalize("abc d"))
     }
 
     @Test
     fun canonical_separatorOnlyIsEmpty() {
-        assertEquals("", TagCanonicalizer.canonicalize("  - _ "))
-        assertEquals("", TagCanonicalizer.canonicalize(""))
+        assertEquals("", NameCanonicalizer.canonicalize("  - _ "))
+        assertEquals("", NameCanonicalizer.canonicalize(""))
     }
 
     // --- MemoryMap codec -----------------------------------------------------------------------
@@ -63,6 +63,21 @@ class AnnotationDomainTest {
             """{"a":{"value":"x","confidence":1.0,"updatedAtMs":42}}""",
             MemoryMap.encode(mapOf("a" to MemoryEntry("x", updatedAtMs = 42L))),
         )
+    }
+
+    @Test
+    fun memory_updatedByIsOptionalAndRoundTrips() {
+        // Pre-attribution stored entries decode with a null writer (= Pathline/unknown).
+        assertNull(MemoryMap.decode("""{"a":{"value":"x"}}""").getValue("a").updatedBy)
+        // A null writer is omitted from the encoded form; a present one round-trips.
+        assertEquals(
+            """{"a":{"value":"x","confidence":1.0,"updatedBy":"com.example.agent"}}""",
+            MemoryMap.encode(mapOf("a" to MemoryEntry("x", updatedBy = "com.example.agent"))),
+        )
+        val map = linkedMapOf(
+            "k" to MemoryEntry("v", 0.7f, "user statement", 42L, "com.example.agent"),
+        )
+        assertEquals(map.toList(), MemoryMap.decode(MemoryMap.encode(map)).toList())
     }
 
     @Test

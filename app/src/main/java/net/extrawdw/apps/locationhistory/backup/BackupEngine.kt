@@ -305,11 +305,13 @@ class BackupEngine @Inject constructor(
         }
         // FORWARD-COMPAT: restore deserializes JSONL straight into the *current* entity classes.
         // The v1 -> v2 bump is purely additive (new nullable `places.types`; new tags / entity_tags /
-        // annotations tables), so a v1 backup restores correctly with no transformation: the missing
-        // `types` key defaults to null (ignoreUnknownKeys + per-field defaults), and the new snapshots
-        // are simply absent so those tables stay empty (see restoreSnapshots). Undecodable rows are
-        // skipped (decodeLines). Should a FUTURE bump be non-additive (a column rename/transform), this
-        // is where a per-version rebuild (restore-then-migrate from app/schemas/<N>.json) would go.
+        // annotations / concepts / concept_members tables; nullable attribution columns), so an older
+        // backup restores correctly with no transformation: missing keys take their per-field defaults
+        // (ignoreUnknownKeys + defaults — the attribution columns default to null = "Pathline wrote
+        // it", which is the honest reading of pre-attribution data), and absent snapshots leave their
+        // tables empty (see restoreSnapshots). Undecodable rows are skipped (decodeLines). Should a
+        // FUTURE bump be non-additive (a column rename/transform), this is where a per-version rebuild
+        // (restore-then-migrate from app/schemas/<N>.json) would go.
         val dek = BackupCrypto.openDek(manifest.crypto, password, prfSecret)
         val cipher = BackupCrypto.PartitionCipher(dek)
         // The inventory's on-disk hash and (when encrypted) its GCM tag are both verified here,
@@ -454,8 +456,8 @@ class BackupEngine @Inject constructor(
             previous[SNAP_TRANSPORT_EXAMPLES]
         )
 
-        // Tags, the polymorphic tag<->target join, and annotations (notes + memories). Whole-table
-        // snapshots like places — small and not time-bucketed.
+        // Tags, the polymorphic tag<->target join, annotations (notes + memories), and concepts
+        // with their member edge. Whole-table snapshots like places — small and not time-bucketed.
         out += snapshotLines(dir, material, SNAP_TAGS, backupDao.allTags(), previous[SNAP_TAGS])
         out += snapshotLines(
             dir,
@@ -470,6 +472,20 @@ class BackupEngine @Inject constructor(
             SNAP_ANNOTATIONS,
             backupDao.allAnnotations(),
             previous[SNAP_ANNOTATIONS]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_CONCEPTS,
+            backupDao.allConcepts(),
+            previous[SNAP_CONCEPTS]
+        )
+        out += snapshotLines(
+            dir,
+            material,
+            SNAP_CONCEPT_MEMBERS,
+            backupDao.allConceptMembers(),
+            previous[SNAP_CONCEPT_MEMBERS]
         )
 
         // App settings
@@ -574,6 +590,23 @@ class BackupEngine @Inject constructor(
                 decodeLines(
                     it,
                     net.extrawdw.apps.locationhistory.data.db.AnnotationEntity.serializer()
+                )
+            )
+        }
+        // Concepts (absent from older backups -> tables stay empty). Concepts before their members.
+        bytesOf(SNAP_CONCEPTS)?.let {
+            backupDao.restoreConcepts(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.ConceptEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_CONCEPT_MEMBERS)?.let {
+            backupDao.restoreConceptMembers(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.ConceptMemberEntity.serializer()
                 )
             )
         }
@@ -796,6 +829,8 @@ class BackupEngine @Inject constructor(
         private const val SNAP_TAGS = "tags"
         private const val SNAP_ENTITY_TAGS = "entity_tags"
         private const val SNAP_ANNOTATIONS = "annotations"
+        private const val SNAP_CONCEPTS = "concepts"
+        private const val SNAP_CONCEPT_MEMBERS = "concept_members"
         private const val SNAP_SETTINGS = "settings"
         private const val SNAP_STATE_CKPT = "state_model_ckpt"
         private const val SNAP_TRANSPORT_CKPT = "transport_model_ckpt"

@@ -119,6 +119,8 @@ data class TagEntity(
     val canonicalName: String,
     val displayName: String,
     val createdAtMs: Long,
+    /** Package that created the tag via the data API; null = Pathline itself (the user in-app). */
+    val createdBy: String? = null,
 )
 
 /**
@@ -137,6 +139,8 @@ data class EntityTagEntity(
     val targetType: AnnotationTarget,
     val targetId: Long,
     val createdAtMs: Long,
+    /** Package that attached the tag via the data API; null = Pathline itself (the user in-app). */
+    val createdBy: String? = null,
 )
 
 /**
@@ -157,6 +161,58 @@ data class AnnotationEntity(
     val kind: AnnotationKind,
     val content: String,
     val updatedAtMs: Long,
+    /** Package that last wrote this row via the data API; null = Pathline itself (the user in-app
+     *  editor, or a maintenance fold). For MEMORY rows this is the last map writer; each entry's
+     *  own writer lives inside [content]. */
+    val updatedBy: String? = null,
+)
+
+/**
+ * A **concept** — a first-class semantic group ("Japan trip 2026", "my gyms") that places, visits
+ * and trips join via [ConceptMemberEntity]. Unlike a tag it has an explicit lifecycle (created,
+ * renamed, deleted; identity is [id], not the name) and carries data of its own: the intrinsic
+ * [kind]/[description] here, plus — being an [AnnotationTarget] — its own note, memory map and
+ * tags. [canonicalName] dedups names under the same folding as tags; [kind] is a free-form but
+ * canonicalized discriminator ("trip", "project") for exact filtering. [updatedAtMs]/[updatedBy]
+ * track **intrinsic** edits only (name/kind/description) — membership and annotation changes carry
+ * their own attribution.
+ */
+@Serializable
+@Entity(
+    tableName = "concepts",
+    indices = [Index(value = ["canonicalName"], unique = true), Index("kind")],
+)
+data class ConceptEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val canonicalName: String,
+    val displayName: String,
+    val kind: String? = null,
+    val description: String? = null,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    /** Package that created the concept via the data API; null = Pathline itself. */
+    val createdBy: String? = null,
+    /** Package that last edited name/kind/description via the data API; null = Pathline itself. */
+    val updatedBy: String? = null,
+)
+
+/**
+ * Polymorphic concept<->member join — same shape and integrity rules as [EntityTagEntity] (no FK;
+ * maintained in code on delete/merge). [targetType] is PLACE/VISIT/TRIP only — concepts never nest.
+ */
+@Serializable
+@Entity(
+    tableName = "concept_members",
+    primaryKeys = ["conceptId", "targetType", "targetId"],
+    indices = [Index("conceptId"), Index(value = ["targetType", "targetId"])],
+)
+data class ConceptMemberEntity(
+    val conceptId: Long,
+    val targetType: AnnotationTarget,
+    val targetId: Long,
+    val createdAtMs: Long,
+    /** Package that attached the member via the data API; null = Pathline itself. */
+    val createdBy: String? = null,
 )
 
 /**

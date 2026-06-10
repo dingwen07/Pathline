@@ -16,6 +16,7 @@ import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.AppMigrations
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
+import net.extrawdw.apps.locationhistory.data.db.ConceptDao
 import net.extrawdw.apps.locationhistory.data.db.GeofenceDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
@@ -90,6 +91,9 @@ object DatabaseModule {
 
     @Provides
     fun provideAnnotationDao(db: AppDatabase): AnnotationDao = db.annotationDao()
+
+    @Provides
+    fun provideConceptDao(db: AppDatabase): ConceptDao = db.conceptDao()
 
     @Provides
     fun provideSearchDao(db: AppDatabase): SearchDao = db.searchDao()

@@ -21,6 +21,8 @@ import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
 import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantDao
 import net.extrawdw.apps.locationhistory.data.db.ApiPlaceGrantEntity
+import net.extrawdw.apps.locationhistory.data.db.ConceptDao
+import net.extrawdw.apps.locationhistory.data.db.ConceptEntity
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
@@ -33,7 +35,9 @@ import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
+import net.extrawdw.apps.locationhistory.domain.ConceptStore
 import net.extrawdw.apps.locationhistory.domain.MemoryMap
+import net.extrawdw.apps.locationhistory.domain.NameCanonicalizer
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 
 /**
@@ -63,8 +67,10 @@ class PathlineProvider : ContentProvider() {
         fun placeDao(): PlaceDao
         fun tagDao(): TagDao
         fun annotationDao(): AnnotationDao
+        fun conceptDao(): ConceptDao
         fun searchDao(): SearchDao
         fun annotationStore(): AnnotationStore
+        fun conceptStore(): ConceptStore
         fun apiAccessDao(): ApiAccessDao
         fun apiPlaceGrantDao(): ApiPlaceGrantDao
         fun settingsRepository(): SettingsRepository
@@ -75,6 +81,8 @@ class PathlineProvider : ContentProvider() {
         val visits = PathlineContract.Visits.PATH
         val trips = PathlineContract.Trips.PATH
         val places = PathlineContract.Places.PATH
+        val concepts = PathlineContract.Concepts.PATH
+        val members = PathlineContract.Concepts.MEMBERS_PATH
         val tags = PathlineContract.Annotations.TAGS_PATH
         val notes = PathlineContract.Annotations.NOTES_PATH
         val memories = PathlineContract.Annotations.MEMORIES_PATH
@@ -113,6 +121,21 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, "$places/#/$memories/*", CODE_PLACE_MEMORY_KEY)
         addURI(PathlineContract.AUTHORITY, "$visits/#/$memories/*", CODE_VISIT_MEMORY_KEY)
         addURI(PathlineContract.AUTHORITY, "$trips/#/$memories/*", CODE_TRIP_MEMORY_KEY)
+
+        // Concepts: the collection, one row, its member edge, its annotation sub-collections, and
+        // the reverse per-target listings.
+        addURI(PathlineContract.AUTHORITY, concepts, CODE_CONCEPTS)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#", CODE_CONCEPT_ITEM)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$members", CODE_CONCEPT_MEMBERS)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$members/*/#", CODE_CONCEPT_MEMBER_ITEM)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$tags", CODE_CONCEPT_TAGS)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$tags/*", CODE_CONCEPT_TAG_NAME)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$notes", CODE_CONCEPT_NOTES)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$memories", CODE_CONCEPT_MEMORIES)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$memories/*", CODE_CONCEPT_MEMORY_KEY)
+        addURI(PathlineContract.AUTHORITY, "$places/#/$concepts", CODE_PLACE_CONCEPTS)
+        addURI(PathlineContract.AUTHORITY, "$visits/#/$concepts", CODE_VISIT_CONCEPTS)
+        addURI(PathlineContract.AUTHORITY, "$trips/#/$concepts", CODE_TRIP_CONCEPTS)
     }
 
     private val entryPoint: DaoEntryPoint by lazy {
@@ -137,6 +160,10 @@ class PathlineProvider : ContentProvider() {
         in NOTES_CODES -> PathlineContract.Annotations.Notes.CONTENT_TYPE
         in MEMORIES_CODES -> PathlineContract.Annotations.Memories.CONTENT_TYPE
         in MEMORY_KEY_CODES -> ITEM_TYPE_MEMORY
+        CODE_CONCEPTS, in CONCEPTS_FOR_TARGET_CODES -> PathlineContract.Concepts.CONTENT_TYPE
+        CODE_CONCEPT_ITEM -> PathlineContract.Concepts.ITEM_CONTENT_TYPE
+        CODE_CONCEPT_MEMBERS -> PathlineContract.Concepts.Members.CONTENT_TYPE
+        CODE_CONCEPT_MEMBER_ITEM -> ITEM_TYPE_CONCEPT_MEMBER
         else -> null
     }
 
@@ -179,11 +206,15 @@ class PathlineProvider : ContentProvider() {
             CODE_PLACE_VISITS -> return placeVisitsQuery(uri, now)
             CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(uri, code, now)
             CODE_TAGS -> return tagsQuery(uri, now)
+            CODE_CONCEPTS -> return conceptsQuery(uri, now)
+            CODE_CONCEPT_ITEM -> return conceptItemQuery(uri, now)
+            CODE_CONCEPT_MEMBERS -> return conceptMembersQuery(uri, now)
+            in CONCEPTS_FOR_TARGET_CODES -> return targetConceptsQuery(uri, targetFor(code), now)
             in TAGS_CODES -> return targetTagsQuery(uri, targetFor(code), now)
             in NOTES_CODES -> return targetNotesQuery(uri, targetFor(code), now)
             in MEMORIES_CODES -> return targetMemoriesQuery(uri, targetFor(code), now)
-            // The single-item annotation URIs exist for delete only.
-            in TAG_NAME_CODES, in MEMORY_KEY_CODES ->
+            // The single-item annotation/member URIs exist for delete only.
+            in TAG_NAME_CODES, in MEMORY_KEY_CODES, CODE_CONCEPT_MEMBER_ITEM ->
                 throw IllegalArgumentException("Not a queryable URI (delete-only): $uri")
         }
         if ((code == CODE_VISITS || code == CODE_TRIPS) &&
@@ -666,16 +697,22 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    /** `…/<target>/<id>/tags`: the tags of one place/visit/trip, as [PathlineContract.Tags] rows. */
+    /** `…/<target>/<id>/tags`: the tags of one place/visit/trip/concept, as [PathlineContract.Tags]
+     *  rows — here with the per-link [PathlineContract.Tags.ATTACHED_BY_ME] populated. */
     private fun targetTagsQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
         requireAnnotationRead(target, PathlineContract.Tags.PATH, now, groupId)
-        val tags = runBlocking {
-            if (targetVisible(target, id, now)) entryPoint.tagDao()
-                .tagsFor(target, id) else emptyList()
+        val (tags, attachedBy) = runBlocking {
+            if (targetVisible(target, id, now)) {
+                val dao = entryPoint.tagDao()
+                dao.tagsFor(target, id) to
+                        dao.linksFor(target, id).associate { it.tagId to it.createdBy }
+            } else {
+                emptyList<TagEntity>() to emptyMap()
+            }
         }
-        val cursor = tagsCursorOf(tags)
+        val cursor = tagsCursorOf(tags, attachedBy)
         logAccess(PathlineContract.Tags.PATH, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
@@ -694,7 +731,16 @@ class PathlineProvider : ContentProvider() {
             }
         }
         val cursor = MatrixCursor(PathlineContract.Annotations.Notes.COLUMNS, 1)
-        note?.let { cursor.addRow(arrayOf<Any?>(it.id, it.content, it.updatedAtMs)) }
+        note?.let {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    it.id,
+                    it.content,
+                    it.updatedAtMs,
+                    byMe(it.updatedBy)
+                )
+            )
+        }
         logAccess(DATA_TYPE_NOTES, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
@@ -717,7 +763,16 @@ class PathlineProvider : ContentProvider() {
         for ((k, e) in entries) {
             // Entries stored before per-entry stamps existed have no stamp; null rather than a
             // misleading fallback (the row's map-wide time moves with every write to the map).
-            cursor.addRow(arrayOf<Any?>(k, e.value, e.confidence, e.source, e.updatedAtMs))
+            cursor.addRow(
+                arrayOf<Any?>(
+                    k,
+                    e.value,
+                    e.confidence,
+                    e.source,
+                    e.updatedAtMs,
+                    byMe(e.updatedBy)
+                )
+            )
         }
         logAccess(DATA_TYPE_MEMORIES, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
@@ -751,6 +806,9 @@ class PathlineProvider : ContentProvider() {
                 if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
                 }
+
+            // Concepts are curation, not recorded data: READ_ANNOTATIONS alone suffices.
+            AnnotationTarget.CONCEPT -> Unit
         }
     }
 
@@ -774,6 +832,9 @@ class PathlineProvider : ContentProvider() {
 
             AnnotationTarget.TRIP -> entryPoint.tripDao().byId(id)
                 ?.let { it.confirmed && it.endMs > minVisibleEndMs(now) } == true
+
+            // Any existing concept — visible to every annotation reader (see the contract).
+            AnnotationTarget.CONCEPT -> entryPoint.conceptDao().byId(id) != null
         }
 
     /** The end-time floor a visit/trip must reach to be visible on a windowless read (clamp). */
@@ -820,16 +881,188 @@ class PathlineProvider : ContentProvider() {
                 tripLinks.filter { it.targetId in visible }.mapTo(result) { it.tagId }
             }
         }
+        // Concept-attached tags: every existing concept is visible to an annotation reader.
+        val conceptLinks = links.filter { it.targetType == AnnotationTarget.CONCEPT }
+        if (conceptLinks.isNotEmpty()) {
+            val existing = entryPoint.conceptDao()
+                .byIds(conceptLinks.map { it.targetId }.distinct()).map { it.id }.toSet()
+            conceptLinks.filter { it.targetId in existing }.mapTo(result) { it.tagId }
+        }
         return result
     }
 
-    private fun tagsCursorOf(tags: List<TagEntity>): Cursor {
+    /** [PathlineContract.Tags] rows. [attachedBy] is the per-link writer map of a per-target
+     *  listing (tagId -> link createdBy), or null on the global `tags` collection where
+     *  ATTACHED_BY_ME is always null. */
+    private fun tagsCursorOf(
+        tags: List<TagEntity>,
+        attachedBy: Map<Long, String?>? = null
+    ): Cursor {
         val cursor = MatrixCursor(PathlineContract.Tags.COLUMNS, tags.size)
         for (t in tags) {
-            cursor.addRow(arrayOf<Any?>(t.id, t.displayName, t.canonicalName, t.createdAtMs))
+            cursor.addRow(
+                arrayOf<Any?>(
+                    t.id, t.displayName, t.canonicalName, t.createdAtMs,
+                    byMe(t.createdBy),
+                    attachedBy?.let { byMe(it[t.id]) },
+                ),
+            )
         }
         return cursor
     }
+
+    /** The nullable-boolean `*_by_me` encoding: 1 = the calling app wrote it, 0 = a different app,
+     *  null = Pathline itself (in-app user edit, maintenance fold, or pre-attribution data). */
+    private fun byMe(writer: String?): Int? =
+        writer?.let { if (it == callingPackage) 1 else 0 }
+
+    // ---- Concepts (read) -------------------------------------------------------------------------
+
+    /**
+     * `concepts` collection: every concept (they're visible to any annotation reader — see the
+     * contract). With `q` a name/kind/description search (SEARCH_DATA); with `kind` an exact
+     * canonicalized filter; with `ids` an id filter. Windowless.
+     */
+    private fun conceptsQuery(uri: Uri, now: Long): Cursor {
+        val groupId = parseGroup(uri, now)
+        fun deny(permission: String): Nothing {
+            logAccess(DATA_TYPE_CONCEPTS, now, now, 0, now, groupId, null, permission)
+            throw SecurityException("Caller must hold $permission")
+        }
+        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+            deny(PathlineContract.Permissions.READ_ANNOTATIONS)
+        }
+        val q = uri.getQueryParameter(PathlineContract.QueryParams.Q)
+        if (q != null && !holds(PathlineContract.Permissions.SEARCH_DATA)) {
+            deny(PathlineContract.Permissions.SEARCH_DATA)
+        }
+        val kind = uri.getQueryParameter(PathlineContract.QueryParams.KIND)?.let {
+            NameCanonicalizer.canonicalize(it).also { canonical ->
+                require(canonical.isNotEmpty()) {
+                    "'${PathlineContract.QueryParams.KIND}' canonicalizes to nothing: '$it'"
+                }
+            }
+        }
+        val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
+            ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.distinct()
+
+        val concepts = runBlocking {
+            val dao = entryPoint.conceptDao()
+            var list = when {
+                q != null -> {
+                    require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
+                    val ids = ftsConceptIds(q)
+                    if (ids.isEmpty()) emptyList() else dao.byIds(ids.toList())
+                }
+
+                kind != null -> dao.byKind(kind)
+                else -> dao.all()
+            }
+            if (q != null && kind != null) list = list.filter { it.kind == kind }
+            if (requested != null) list = list.filter { it.id in requested.toSet() }
+            list
+        }
+        val cursor = conceptsCursorOf(concepts)
+        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /** `concepts/<id>`: one concept row (empty when the id doesn't exist). */
+    private fun conceptItemQuery(uri: Uri, now: Long): Cursor {
+        val groupId = parseGroup(uri, now)
+        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+            logAccess(
+                DATA_TYPE_CONCEPTS, now, now, 0, now, groupId, null,
+                PathlineContract.Permissions.READ_ANNOTATIONS,
+            )
+            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_ANNOTATIONS}")
+        }
+        val id = uri.lastPathSegment?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid concept id in URI: $uri")
+        val concept = runBlocking { entryPoint.conceptDao().byId(id) }
+        val cursor = conceptsCursorOf(listOfNotNull(concept))
+        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /** `concepts/<id>/members`: the membership edge, one row per member (empty for an unknown id). */
+    private fun conceptMembersQuery(uri: Uri, now: Long): Cursor {
+        val groupId = parseGroup(uri, now)
+        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+            logAccess(
+                DATA_TYPE_CONCEPT_MEMBERS, now, now, 0, now, groupId, null,
+                PathlineContract.Permissions.READ_ANNOTATIONS,
+            )
+            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_ANNOTATIONS}")
+        }
+        val id = targetIdFrom(uri)
+        val members = runBlocking { entryPoint.conceptDao().membersOf(id) }
+        val cursor = MatrixCursor(PathlineContract.Concepts.Members.COLUMNS, members.size)
+        for (m in members) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    m.targetType.name.lowercase(),
+                    m.targetId,
+                    m.createdAtMs,
+                    byMe(m.createdBy),
+                ),
+            )
+        }
+        logAccess(DATA_TYPE_CONCEPT_MEMBERS, now, now, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /** `…/<target>/<id>/concepts`: the concepts a visible target belongs to, with ATTACHED_BY_ME. */
+    private fun targetConceptsQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+        val id = targetIdFrom(uri)
+        val groupId = parseGroup(uri, now)
+        requireAnnotationRead(target, DATA_TYPE_CONCEPTS, now, groupId)
+        val (concepts, attachedBy) = runBlocking {
+            if (targetVisible(target, id, now)) {
+                val dao = entryPoint.conceptDao()
+                dao.conceptsFor(target, id) to
+                        dao.membershipsFor(target, id).associate { it.conceptId to it.createdBy }
+            } else {
+                emptyList<ConceptEntity>() to emptyMap()
+            }
+        }
+        val cursor = conceptsCursorOf(concepts, attachedBy)
+        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /** [PathlineContract.Concepts] rows. [attachedBy] populates ATTACHED_BY_ME on per-target
+     *  listings (conceptId -> membership createdBy); null elsewhere. */
+    private fun conceptsCursorOf(
+        concepts: List<ConceptEntity>,
+        attachedBy: Map<Long, String?>? = null,
+    ): Cursor {
+        val cursor = MatrixCursor(PathlineContract.Concepts.COLUMNS, concepts.size)
+        for (c in concepts) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    c.id, c.displayName, c.canonicalName, c.kind, c.description,
+                    c.createdAtMs, c.updatedAtMs,
+                    byMe(c.createdBy), byMe(c.updatedBy),
+                    attachedBy?.let { byMe(it[c.id]) },
+                ),
+            )
+        }
+        return cursor
+    }
+
+    /** Concept ids whose name/kind/description matches [q] (FTS5 prefix match). */
+    private suspend fun ftsConceptIds(q: String): Set<Long> =
+        entryPoint.searchDao().matchRowIds(
+            SimpleSQLiteQuery(
+                "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ?",
+                arrayOf(ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description"))),
+            ),
+        ).mapTo(HashSet()) { it.id }
 
     /**
      * `visits/<id>` / `trips/<id>`: ONE timeline row by its stable id — the resolver for stored id
@@ -1083,16 +1316,21 @@ class PathlineProvider : ContentProvider() {
         CODE_TAGS, in TAGS_CODES, in TAG_NAME_CODES -> PathlineContract.Tags.PATH
         in NOTES_CODES -> DATA_TYPE_NOTES
         in MEMORIES_CODES, in MEMORY_KEY_CODES -> DATA_TYPE_MEMORIES
+        CODE_CONCEPTS, CODE_CONCEPT_ITEM, in CONCEPTS_FOR_TARGET_CODES -> DATA_TYPE_CONCEPTS
+        CODE_CONCEPT_MEMBERS, CODE_CONCEPT_MEMBER_ITEM -> DATA_TYPE_CONCEPT_MEMBERS
         else -> "?"
     }
 
     /** The [AnnotationTarget] an annotation route [code] addresses. */
     private fun targetFor(code: Int): AnnotationTarget = when (code) {
         CODE_PLACE_TAGS, CODE_PLACE_TAG_NAME, CODE_PLACE_NOTES,
-        CODE_PLACE_MEMORIES, CODE_PLACE_MEMORY_KEY -> AnnotationTarget.PLACE
+        CODE_PLACE_MEMORIES, CODE_PLACE_MEMORY_KEY, CODE_PLACE_CONCEPTS -> AnnotationTarget.PLACE
 
         CODE_VISIT_TAGS, CODE_VISIT_TAG_NAME, CODE_VISIT_NOTES,
-        CODE_VISIT_MEMORIES, CODE_VISIT_MEMORY_KEY -> AnnotationTarget.VISIT
+        CODE_VISIT_MEMORIES, CODE_VISIT_MEMORY_KEY, CODE_VISIT_CONCEPTS -> AnnotationTarget.VISIT
+
+        CODE_CONCEPT_TAGS, CODE_CONCEPT_TAG_NAME, CODE_CONCEPT_NOTES,
+        CODE_CONCEPT_MEMORIES, CODE_CONCEPT_MEMORY_KEY -> AnnotationTarget.CONCEPT
 
         else -> AnnotationTarget.TRIP
     }
@@ -1133,6 +1371,8 @@ class PathlineProvider : ContentProvider() {
             }
 
             in MEMORIES_CODES -> upsertMemory(uri, targetFor(code), values, now)
+            CODE_CONCEPTS -> insertConcept(uri, values, now)
+            CODE_CONCEPT_MEMBERS -> insertConceptMember(uri, values, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
@@ -1157,6 +1397,7 @@ class PathlineProvider : ContentProvider() {
                 1
             }
 
+            CODE_CONCEPT_ITEM -> updateConcept(uri, values, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
@@ -1168,6 +1409,8 @@ class PathlineProvider : ContentProvider() {
             in NOTES_CODES -> clearNote(uri, targetFor(code), now)
             in MEMORY_KEY_CODES -> deleteMemory(uri, targetFor(code), now)
             in MEMORIES_CODES -> clearMemories(uri, targetFor(code), now)
+            CODE_CONCEPT_ITEM -> deleteConcept(uri, now)
+            CODE_CONCEPT_MEMBER_ITEM -> deleteConceptMember(uri, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
@@ -1212,6 +1455,9 @@ class PathlineProvider : ContentProvider() {
                 if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
                 }
+
+            // Concepts carry no read tier beyond the annotation permissions themselves.
+            AnnotationTarget.CONCEPT -> Unit
         }
         if (!runBlocking { targetVisible(target, id, now) }) {
             // A write aimed at nothing: logged (audit honesty) and rejected. The message must not
@@ -1238,7 +1484,7 @@ class PathlineProvider : ContentProvider() {
             uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             PathlineContract.Tags.PATH, now,
         )
-        runBlocking { entryPoint.annotationStore().applyTag(target, id, name) }
+        runBlocking { entryPoint.annotationStore().applyTag(target, id, name, callingPackage) }
             ?: throw IllegalArgumentException("Tag name canonicalizes to nothing: '$name'")
         logAccess(PathlineContract.Tags.PATH, now, now, 1, now, groupId, null, null, isWrite = true)
         notifyChanged(uri)
@@ -1254,7 +1500,7 @@ class PathlineProvider : ContentProvider() {
             uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
             DATA_TYPE_NOTES, now,
         )
-        runBlocking { entryPoint.annotationStore().setNote(target, id, content) }
+        runBlocking { entryPoint.annotationStore().setNote(target, id, content, callingPackage) }
         logAccess(DATA_TYPE_NOTES, now, now, 1, now, groupId, null, null, isWrite = true)
         notifyChanged(uri)
     }
@@ -1299,13 +1545,16 @@ class PathlineProvider : ContentProvider() {
         }
         require(source == null || source.length <= MAX_MEMORY_SOURCE_LENGTH) {
             "'${PathlineContract.Annotations.Memories.SOURCE}' must be at most " +
-                "$MAX_MEMORY_SOURCE_LENGTH characters"
+                    "$MAX_MEMORY_SOURCE_LENGTH characters"
         }
         val groupId = checkWrite(
             uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
-        runBlocking { entryPoint.annotationStore().putMemory(target, id, key, value, confidence, source) }
+        runBlocking {
+            entryPoint.annotationStore()
+                .putMemory(target, id, key, value, confidence, source, callingPackage)
+        }
         logAccess(DATA_TYPE_MEMORIES, now, now, 1, now, groupId, null, null, isWrite = true)
         notifyChanged(uri)
         return uri.buildUpon().appendPath(key).build()
@@ -1365,7 +1614,7 @@ class PathlineProvider : ContentProvider() {
             val store = entryPoint.annotationStore()
             val current = store.getMemories(target, id)
             if (key in current) {
-                store.setMemories(target, id, current - key)
+                store.setMemories(target, id, current - key, callingPackage)
                 1
             } else {
                 0
@@ -1392,6 +1641,163 @@ class PathlineProvider : ContentProvider() {
         logAccess(DATA_TYPE_MEMORIES, now, now, removed, now, groupId, null, null, isWrite = true)
         if (removed > 0) notifyChanged(uri)
         return removed
+    }
+
+    // ---- Concept writes ----------------------------------------------------------------------------
+
+    /** The access-switch + WRITE_ANNOTATIONS gate for concept writes that have no target row yet
+     *  (create). Mirrors [checkWrite]'s logging; returns the request's group id. */
+    private fun checkConceptCollectionWrite(uri: Uri, dataType: String, now: Long): Long? {
+        val groupId = parseGroup(uri, now)
+        if (!apiAccessEnabled()) {
+            logAccess(
+                dataType, now, now, 0, now, groupId, null,
+                deniedPermission = PathlineContract.Permissions.API, notify = false, isWrite = true,
+            )
+            throw SecurityException("Third-party access to Pathline data is turned off")
+        }
+        if (!holds(PathlineContract.Permissions.WRITE_ANNOTATIONS)) {
+            logAccess(
+                dataType, now, now, 0, now, groupId, null,
+                PathlineContract.Permissions.WRITE_ANNOTATIONS, isWrite = true,
+            )
+            throw SecurityException("Caller must hold ${PathlineContract.Permissions.WRITE_ANNOTATIONS}")
+        }
+        return groupId
+    }
+
+    /** `insert` on `concepts`: create one (NAME required; KIND/DESCRIPTION optional). A canonical
+     *  name collision is an error naming the existing id — never a silent reuse. */
+    private fun insertConcept(uri: Uri, values: ContentValues?, now: Long): Uri {
+        val name = values?.getAsString(PathlineContract.Concepts.NAME)?.trim()
+        require(!name.isNullOrEmpty()) { "Missing '${PathlineContract.Concepts.NAME}' value" }
+        val kind = values.getAsString(PathlineContract.Concepts.KIND)
+        val description = values.getAsString(PathlineContract.Concepts.DESCRIPTION)
+        val groupId = checkConceptCollectionWrite(uri, DATA_TYPE_CONCEPTS, now)
+        val concept = runBlocking {
+            entryPoint.conceptStore().create(name, kind, description, callingPackage)
+        }
+        logAccess(DATA_TYPE_CONCEPTS, now, now, 1, now, groupId, null, null, isWrite = true)
+        notifyChanged(uri)
+        return PathlineContract.Concepts.itemUri(concept.id)
+    }
+
+    /** `update` on `concepts/<id>`: partial intrinsic edit — only the keys present change; a key
+     *  present with a null value clears that field (NAME cannot be cleared). */
+    private fun updateConcept(uri: Uri, values: ContentValues?, now: Long): Int {
+        val id = targetIdFrom(uri)
+        val groupId = checkWrite(
+            uri, AnnotationTarget.CONCEPT, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            DATA_TYPE_CONCEPTS, now,
+        )
+        val name = if (values?.containsKey(PathlineContract.Concepts.NAME) == true) {
+            values.getAsString(PathlineContract.Concepts.NAME).also {
+                require(!it.isNullOrBlank()) { "'${PathlineContract.Concepts.NAME}' cannot be cleared" }
+            }
+        } else {
+            null
+        }
+        val setKind = values?.containsKey(PathlineContract.Concepts.KIND) == true
+        val setDescription = values?.containsKey(PathlineContract.Concepts.DESCRIPTION) == true
+        val updated = runBlocking {
+            entryPoint.conceptStore().update(
+                id,
+                displayName = name,
+                kind = values?.getAsString(PathlineContract.Concepts.KIND), setKind = setKind,
+                description = values?.getAsString(PathlineContract.Concepts.DESCRIPTION),
+                setDescription = setDescription,
+                writer = callingPackage,
+            )
+        }
+        val count = if (updated != null) 1 else 0
+        logAccess(DATA_TYPE_CONCEPTS, now, now, count, now, groupId, null, null, isWrite = true)
+        if (count > 0) notifyChanged(uri)
+        return count
+    }
+
+    /** `delete` on `concepts/<id>`: the concept, its memberships and its own annotations. */
+    private fun deleteConcept(uri: Uri, now: Long): Int {
+        val id = targetIdFrom(uri)
+        val groupId = checkWrite(
+            uri, AnnotationTarget.CONCEPT, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            DATA_TYPE_CONCEPTS, now,
+        )
+        val removed = runBlocking { if (entryPoint.conceptStore().delete(id)) 1 else 0 }
+        logAccess(DATA_TYPE_CONCEPTS, now, now, removed, now, groupId, null, null, isWrite = true)
+        if (removed > 0) notifyChanged(uri)
+        return removed
+    }
+
+    /** `insert` on `concepts/<id>/members`: attach one place/visit/trip. The member must be
+     *  visible/writable to the caller (its read tier + [targetVisible]) so ephemeral unconfirmed
+     *  ids never enter a concept. */
+    private fun insertConceptMember(uri: Uri, values: ContentValues?, now: Long): Uri {
+        val conceptId = targetIdFrom(uri)
+        val target = parseMemberType(
+            values?.getAsString(PathlineContract.Concepts.Members.TARGET_TYPE),
+        )
+        val targetId = values?.getAsLong(PathlineContract.Concepts.Members.TARGET_ID)
+            ?: throw IllegalArgumentException(
+                "Missing '${PathlineContract.Concepts.Members.TARGET_ID}' value",
+            )
+        // Gate on the MEMBER target (its read tier + visibility); concept existence is checked in
+        // the store. This is the same writability rule as annotating the target directly.
+        val groupId = checkWrite(
+            uri, target, targetId, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            DATA_TYPE_CONCEPT_MEMBERS, now,
+        )
+        val added = runBlocking {
+            entryPoint.conceptStore().addMember(conceptId, target, targetId, callingPackage)
+        }
+        if (!added) throw IllegalArgumentException("No concept with id $conceptId")
+        logAccess(DATA_TYPE_CONCEPT_MEMBERS, now, now, 1, now, groupId, null, null, isWrite = true)
+        notifyChanged(uri)
+        return PathlineContract.Concepts.memberUri(conceptId, target.name.lowercase(), targetId)
+    }
+
+    /** `delete` on `concepts/<id>/members/<type>/<targetId>`: detach one member. Gated on the
+     *  concept (not the member) so stale references stay removable. */
+    private fun deleteConceptMember(uri: Uri, now: Long): Int {
+        val conceptId = targetIdFrom(uri)
+        val segments = uri.pathSegments
+        val target = parseMemberType(segments.getOrNull(3))
+        val targetId = segments.getOrNull(4)?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid member id in URI: $uri")
+        val groupId = checkWrite(
+            uri,
+            AnnotationTarget.CONCEPT,
+            conceptId,
+            PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            DATA_TYPE_CONCEPT_MEMBERS,
+            now,
+        )
+        val removed = runBlocking {
+            entryPoint.conceptStore().removeMember(conceptId, target, targetId)
+        }
+        logAccess(
+            DATA_TYPE_CONCEPT_MEMBERS,
+            now,
+            now,
+            removed,
+            now,
+            groupId,
+            null,
+            null,
+            isWrite = true
+        )
+        if (removed > 0) notifyChanged(uri)
+        return removed
+    }
+
+    /** Parse a [PathlineContract.Concepts.Members.TARGET_TYPE] value; `concept` is rejected (no
+     *  nesting), anything unknown is an error. */
+    private fun parseMemberType(raw: String?): AnnotationTarget = when (raw?.trim()?.lowercase()) {
+        "place" -> AnnotationTarget.PLACE
+        "visit" -> AnnotationTarget.VISIT
+        "trip" -> AnnotationTarget.TRIP
+        else -> throw IllegalArgumentException(
+            "'${PathlineContract.Concepts.Members.TARGET_TYPE}' must be place, visit or trip (got '$raw')",
+        )
     }
 
     /** Wake any consumer cursor watching this URI (reads register it via setNotificationUri). */
@@ -1426,22 +1832,58 @@ class PathlineProvider : ContentProvider() {
         const val CODE_VISIT_ITEM = 25
         const val CODE_TRIP_ITEM = 26
 
-        val TAGS_CODES = setOf(CODE_PLACE_TAGS, CODE_VISIT_TAGS, CODE_TRIP_TAGS)
-        val TAG_NAME_CODES = setOf(CODE_PLACE_TAG_NAME, CODE_VISIT_TAG_NAME, CODE_TRIP_TAG_NAME)
-        val NOTES_CODES = setOf(CODE_PLACE_NOTES, CODE_VISIT_NOTES, CODE_TRIP_NOTES)
-        val MEMORIES_CODES = setOf(CODE_PLACE_MEMORIES, CODE_VISIT_MEMORIES, CODE_TRIP_MEMORIES)
-        val MEMORY_KEY_CODES =
-            setOf(CODE_PLACE_MEMORY_KEY, CODE_VISIT_MEMORY_KEY, CODE_TRIP_MEMORY_KEY)
+        const val CODE_CONCEPTS = 27
+        const val CODE_CONCEPT_ITEM = 28
+        const val CODE_CONCEPT_MEMBERS = 29
+        const val CODE_CONCEPT_MEMBER_ITEM = 30
+        const val CODE_CONCEPT_TAGS = 31
+        const val CODE_CONCEPT_TAG_NAME = 32
+        const val CODE_CONCEPT_NOTES = 33
+        const val CODE_CONCEPT_MEMORIES = 34
+        const val CODE_CONCEPT_MEMORY_KEY = 35
+        const val CODE_PLACE_CONCEPTS = 36
+        const val CODE_VISIT_CONCEPTS = 37
+        const val CODE_TRIP_CONCEPTS = 38
+
+        // Concepts are full annotation targets: their tags/notes/memories routes ride the same
+        // dispatch sets as places/visits/trips.
+        val TAGS_CODES = setOf(CODE_PLACE_TAGS, CODE_VISIT_TAGS, CODE_TRIP_TAGS, CODE_CONCEPT_TAGS)
+        val TAG_NAME_CODES =
+            setOf(
+                CODE_PLACE_TAG_NAME,
+                CODE_VISIT_TAG_NAME,
+                CODE_TRIP_TAG_NAME,
+                CODE_CONCEPT_TAG_NAME
+            )
+        val NOTES_CODES =
+            setOf(CODE_PLACE_NOTES, CODE_VISIT_NOTES, CODE_TRIP_NOTES, CODE_CONCEPT_NOTES)
+        val MEMORIES_CODES =
+            setOf(
+                CODE_PLACE_MEMORIES,
+                CODE_VISIT_MEMORIES,
+                CODE_TRIP_MEMORIES,
+                CODE_CONCEPT_MEMORIES
+            )
+        val MEMORY_KEY_CODES = setOf(
+            CODE_PLACE_MEMORY_KEY, CODE_VISIT_MEMORY_KEY, CODE_TRIP_MEMORY_KEY,
+            CODE_CONCEPT_MEMORY_KEY,
+        )
+        val CONCEPTS_FOR_TARGET_CODES =
+            setOf(CODE_PLACE_CONCEPTS, CODE_VISIT_CONCEPTS, CODE_TRIP_CONCEPTS)
 
         /** Audit-log `dataType` tokens for the two annotation payload kinds (tags use [PathlineContract.Tags.PATH]). */
         const val DATA_TYPE_NOTES = PathlineContract.Annotations.NOTES_PATH
         const val DATA_TYPE_MEMORIES = PathlineContract.Annotations.MEMORIES_PATH
+        const val DATA_TYPE_CONCEPTS = PathlineContract.Concepts.PATH
+        const val DATA_TYPE_CONCEPT_MEMBERS = "concept_members"
 
         /** MIME types of the single-item annotation URIs (delete-only; not part of the contract). */
         const val ITEM_TYPE_TAG =
             "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.tag"
         const val ITEM_TYPE_MEMORY =
             "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.memory"
+        const val ITEM_TYPE_CONCEPT_MEMBER =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.concept_member"
 
         const val READ_ONLY_MESSAGE =
             "Pathline's data API is read-only except the annotation sub-collections (see PathlineContract.Annotations)"

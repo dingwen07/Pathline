@@ -50,6 +50,10 @@ interface TagDao {
     )
     suspend fun tagsFor(type: AnnotationTarget, id: Long): List<TagEntity>
 
+    /** The link rows of one target — carries each link's attached-at/by beside [tagsFor]'s rows. */
+    @Query("SELECT * FROM entity_tags WHERE targetType = :type AND targetId = :id")
+    suspend fun linksFor(type: AnnotationTarget, id: Long): List<EntityTagEntity>
+
     @Query("DELETE FROM entity_tags WHERE tagId = :tagId AND targetType = :type AND targetId = :id")
     suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long): Int
 
@@ -110,4 +114,74 @@ interface AnnotationDao {
     /** Clear every annotation of a target (used on cascade-delete and after a merge folds B into A). */
     @Query("DELETE FROM annotations WHERE targetType = :type AND targetId = :id")
     suspend fun deleteForTarget(type: AnnotationTarget, id: Long)
+}
+
+/**
+ * Concepts + the polymorphic concept<->member join. Same integrity model as [TagDao]: no FK across
+ * the polymorphic edge; delete/merge integrity is kept in code (see `AnnotationStore` and
+ * `ConceptStore`).
+ */
+@Dao
+interface ConceptDao {
+
+    /** Insert a concept, ignoring if its [ConceptEntity.canonicalName] already exists; rowid or -1. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(concept: ConceptEntity): Long
+
+    @Update
+    suspend fun update(concept: ConceptEntity)
+
+    @Query("SELECT * FROM concepts WHERE id = :id")
+    suspend fun byId(id: Long): ConceptEntity?
+
+    @Query("SELECT * FROM concepts WHERE canonicalName = :canonicalName LIMIT 1")
+    suspend fun byCanonicalName(canonicalName: String): ConceptEntity?
+
+    @Query("SELECT * FROM concepts ORDER BY displayName")
+    suspend fun all(): List<ConceptEntity>
+
+    @Query("SELECT * FROM concepts WHERE kind = :kind ORDER BY displayName")
+    suspend fun byKind(kind: String): List<ConceptEntity>
+
+    @Query("SELECT * FROM concepts WHERE id IN (:ids) ORDER BY displayName")
+    suspend fun byIds(ids: List<Long>): List<ConceptEntity>
+
+    @Query("DELETE FROM concepts WHERE id = :id")
+    suspend fun delete(id: Long): Int
+
+    // --- Members ---------------------------------------------------------------------------------
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addMember(member: ConceptMemberEntity)
+
+    @Query("SELECT * FROM concept_members WHERE conceptId = :conceptId ORDER BY createdAtMs, targetType, targetId")
+    suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity>
+
+    /** Membership rows of one target — the reverse edge, with per-row attached-at/by intact. */
+    @Query("SELECT * FROM concept_members WHERE targetType = :type AND targetId = :id")
+    suspend fun membershipsFor(type: AnnotationTarget, id: Long): List<ConceptMemberEntity>
+
+    @Query(
+        "SELECT c.* FROM concepts c JOIN concept_members m ON m.conceptId = c.id " +
+                "WHERE m.targetType = :type AND m.targetId = :id ORDER BY c.displayName",
+    )
+    suspend fun conceptsFor(type: AnnotationTarget, id: Long): List<ConceptEntity>
+
+    @Query("DELETE FROM concept_members WHERE conceptId = :conceptId AND targetType = :type AND targetId = :id")
+    suspend fun removeMember(conceptId: Long, type: AnnotationTarget, id: Long): Int
+
+    /** Drop every membership of one concept (concept deletion). */
+    @Query("DELETE FROM concept_members WHERE conceptId = :conceptId")
+    suspend fun removeAllMembers(conceptId: Long)
+
+    /** Drop every membership of one target (target deleted; no FK to cascade). */
+    @Query("DELETE FROM concept_members WHERE targetType = :type AND targetId = :id")
+    suspend fun removeMembersForTarget(type: AnnotationTarget, id: Long)
+
+    /** Re-point memberships on a merge, like [TagDao.rekeyLinks] — OR IGNORE unions collisions. */
+    @Query(
+        "UPDATE OR IGNORE concept_members SET targetId = :toId " +
+                "WHERE targetType = :type AND targetId = :fromId",
+    )
+    suspend fun rekeyMembers(type: AnnotationTarget, fromId: Long, toId: Long)
 }

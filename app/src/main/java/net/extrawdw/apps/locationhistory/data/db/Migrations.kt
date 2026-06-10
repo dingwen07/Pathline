@@ -22,9 +22,14 @@ object AppMigrations {
      *  - `places.types` — the full comma-joined Google place-type list ([category] is primary).
      *  - `tags` + polymorphic `entity_tags` join.
      *  - `annotations` (notes + memories), one of each kind per target.
-     *  - FTS5 virtual tables + sync triggers over places and tags, backfilled from existing rows.
+     *  - `concepts` + polymorphic `concept_members` join (first-class semantic groups).
+     *  - Writer attribution columns (`createdBy`/`updatedBy`, null = Pathline itself).
+     *  - FTS5 virtual tables + sync triggers over places, tags and concepts, backfilled from
+     *    existing rows.
      *
-     * Table/index DDL mirrors what Room generates for the v2 entities (see `app/schemas/2.json`) so the
+     * Pre-release, v2 is **edited in place** rather than bumped (production devices are all v1; the
+     * only v2 installs are dev devices, refreshed via clear-data + backup restore). Table/index DDL
+     * mirrors what Room generates for the v2 entities (see `app/schemas/2.json`) so the
      * post-migration identity check passes; the FTS objects are extra and Room ignores them.
      */
     val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -35,7 +40,7 @@ object AppMigrations {
                 "CREATE TABLE IF NOT EXISTS `tags` (" +
                         "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
-                        "`createdAtMs` INTEGER NOT NULL)",
+                        "`createdAtMs` INTEGER NOT NULL, `createdBy` TEXT)",
             )
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS `index_tags_canonicalName` ON `tags` (`canonicalName`)",
@@ -44,7 +49,8 @@ object AppMigrations {
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `entity_tags` (" +
                         "`tagId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, " +
-                        "`createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`tagId`, `targetType`, `targetId`))",
+                        "`createdAtMs` INTEGER NOT NULL, `createdBy` TEXT, " +
+                        "PRIMARY KEY(`tagId`, `targetType`, `targetId`))",
             )
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_entity_tags_tagId` ON `entity_tags` (`tagId`)")
             db.execSQL(
@@ -56,11 +62,38 @@ object AppMigrations {
                 "CREATE TABLE IF NOT EXISTS `annotations` (" +
                         "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `targetType` TEXT NOT NULL, " +
                         "`targetId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `content` TEXT NOT NULL, " +
-                        "`updatedAtMs` INTEGER NOT NULL)",
+                        "`updatedAtMs` INTEGER NOT NULL, `updatedBy` TEXT)",
             )
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS `index_annotations_targetType_targetId_kind` " +
                         "ON `annotations` (`targetType`, `targetId`, `kind`)",
+            )
+
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `concepts` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
+                        "`kind` TEXT, `description` TEXT, " +
+                        "`createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, " +
+                        "`createdBy` TEXT, `updatedBy` TEXT)",
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_concepts_canonicalName` ON `concepts` (`canonicalName`)",
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_concepts_kind` ON `concepts` (`kind`)")
+
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `concept_members` (" +
+                        "`conceptId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, " +
+                        "`createdAtMs` INTEGER NOT NULL, `createdBy` TEXT, " +
+                        "PRIMARY KEY(`conceptId`, `targetType`, `targetId`))",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_concept_members_conceptId` ON `concept_members` (`conceptId`)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_concept_members_targetType_targetId` " +
+                        "ON `concept_members` (`targetType`, `targetId`)",
             )
 
             AppDatabase.FTS_CREATE.forEach(db::execSQL)
