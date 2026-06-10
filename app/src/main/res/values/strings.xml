@@ -357,6 +357,18 @@
     <string name="perm_read_extended_history_description">read Pathline data older than 30 days</string>
     <string name="perm_group_location_history_label">Pathline location history</string>
     <string name="perm_group_location_history_description">read precise routes and raw location samples recorded by Pathline</string>
+    <string name="perm_read_all_places_label">Read all Pathline places</string>
+    <string name="perm_read_all_places_description">read every place saved in Pathline</string>
+    <string name="perm_read_annotations_label">Read Pathline tags &amp; notes</string>
+    <string name="perm_read_annotations_description">read tags, notes and memories attached to Pathline places, visits and trips</string>
+    <string name="perm_search_data_label">Search Pathline data</string>
+    <string name="perm_search_data_description">search Pathline places, visits, trips and tags</string>
+    <string name="perm_write_annotations_label">Edit Pathline tags &amp; memories</string>
+    <string name="perm_write_annotations_description">add and remove tags and memories on Pathline places, visits and trips</string>
+    <string name="perm_write_annotations_notes_label">Edit Pathline notes</string>
+    <string name="perm_write_annotations_notes_description">create and change notes on Pathline places, visits and trips</string>
+    <string name="perm_group_search_label">Pathline search</string>
+    <string name="perm_group_search_description">search and read places, tags and notes saved in Pathline</string>
 
     <!-- ===================== API access manager ===================== -->
     <string name="settings_api_access_title">Access to Pathline data</string>
@@ -411,12 +423,22 @@
     <string name="api_scope_timeline_route">Trip routes</string>
     <string name="api_scope_location_history">Location history</string>
     <string name="api_scope_extended_history">Historical data</string>
+    <string name="api_scope_all_places">All places</string>
+    <string name="api_scope_annotations">Tags &amp; notes</string>
+    <string name="api_scope_search">Search</string>
+    <string name="api_scope_write_annotations">Edit tags &amp; memories</string>
+    <string name="api_scope_write_notes">Edit notes</string>
     <string name="api_data_visits">Visits</string>
     <string name="api_data_trips">Trips</string>
     <string name="api_data_samples">Samples</string>
     <string name="api_data_places">Places</string>
     <string name="api_data_place_visits">Place history</string>
+    <string name="api_data_tags">Tags</string>
+    <string name="api_data_notes">Notes</string>
+    <string name="api_data_memories">Memories</string>
     <string name="api_data_unknown">Data</string>
+    <!-- An annotation write, where the requested-range suffix makes no sense. "Updated 2 Tags" -->
+    <string name="api_access_event_write_subtitle">Updated %1$d %2$s</string>
 
     <!-- Privacy notifications -->
     <string name="api_access_channel_name">Data access alerts</string>
@@ -435,6 +457,13 @@
     <string name="api_notify_data_samples">%1$s location samples</string>
     <string name="api_notify_data_places">%1$s places</string>
     <string name="api_notify_data_place_visits">%1$s place visits</string>
+    <string name="api_notify_data_tags">%1$s tags</string>
+    <string name="api_notify_data_notes">%1$s notes</string>
+    <string name="api_notify_data_memories">%1$s memories</string>
+    <!-- An app changed annotations (tags/notes/memories) rather than reading data. -->
+    <string name="api_notify_write_title">An app updated your Pathline annotations</string>
+    <!-- "<app> updated <data summary>." e.g. "Acme updated 2 tags, 1 notes." -->
+    <string name="api_notify_write_text_one">%1$s updated %2$s.</string>
     <!-- Quoted so the trailing space survives resource trimming: "<a>, <b>". -->
     <string name="api_notify_data_separator">", "</string>
     <string name="api_notify_hold_title">App still has access to your Pathline data</string>

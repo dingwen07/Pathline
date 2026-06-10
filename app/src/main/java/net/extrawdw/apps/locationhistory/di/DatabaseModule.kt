@@ -19,6 +19,7 @@ import net.extrawdw.apps.locationhistory.data.db.BackupDao
 import net.extrawdw.apps.locationhistory.data.db.GeofenceDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
+import net.extrawdw.apps.locationhistory.data.db.SearchDao
 import net.extrawdw.apps.locationhistory.data.db.TagDao
 import net.extrawdw.apps.locationhistory.data.db.TrainingDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
@@ -90,6 +91,9 @@ object DatabaseModule {
     @Provides
     fun provideAnnotationDao(db: AppDatabase): AnnotationDao = db.annotationDao()
 
+    @Provides
+    fun provideSearchDao(db: AppDatabase): SearchDao = db.searchDao()
+
     /**
      * Standalone, unencrypted log DB for the third-party API audit trail (which app read what, when).
      * Kept apart from [AppDatabase] so logging never touches the frozen v1 schema or the backup
@@ -100,6 +104,9 @@ object DatabaseModule {
     fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase {
         fun build(): ApiAccessDatabase =
             Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
+                // A real migration where one is known (it also carries the place-grant ledger,
+                // which is worth keeping); anything unexpected still rebuilds destructively.
+                .addMigrations(ApiAccessDatabase.MIGRATION_1_2)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
 

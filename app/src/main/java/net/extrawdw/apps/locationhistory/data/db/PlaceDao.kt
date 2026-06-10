@@ -29,6 +29,10 @@ interface PlaceDao {
     @Query("SELECT * FROM places WHERE id IN (:ids)")
     suspend fun byIds(ids: List<Long>): List<PlaceEntity>
 
+    /** Whole corpus, one-shot — the data API's `places` listing under READ_ALL_PLACES. */
+    @Query("SELECT * FROM places ORDER BY name")
+    suspend fun all(): List<PlaceEntity>
+
     @Query("SELECT * FROM places WHERE id = :id")
     fun observeById(id: Long): Flow<PlaceEntity?>
 

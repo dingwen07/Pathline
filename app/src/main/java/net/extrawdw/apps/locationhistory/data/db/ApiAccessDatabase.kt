@@ -46,7 +46,7 @@ data class ApiAccessEventEntity(
     val groupId: Long? = null,
     /**
      * For a `trips` read, whether the `encoded_polyline` (route) column was withheld because the
-     * caller held neither READ_TIMELINE_ROUTE nor READ_LOCATION_HISTORY. Null for non-trip reads,
+     * caller held neither READ_TIMELINE_ROUTES nor READ_LOCATION_HISTORY. Null for non-trip reads,
      * where the route is not applicable. Surfaced in the access manager so the audit trail is honest.
      */
     val routeWithheld: Boolean? = null,
@@ -56,6 +56,12 @@ data class ApiAccessEventEntity(
      * successful read. Denied events are kept for the audit trail but never trigger a user alert.
      */
     val deniedPermission: String? = null,
+    /**
+     * True when this event was an annotation **write** (tag/note/memory insert, update or delete
+     * through the data API) rather than a read. [rowCount] then counts the rows/links/keys actually
+     * changed, and [startMs]/[endMs] carry the zero-width "now" the write happened at.
+     */
+    val isWrite: Boolean = false,
 )
 
 /** Last-access summary for one app, projected over the log. */
@@ -157,7 +163,7 @@ interface ApiAccessDao {
  */
 @Database(
     entities = [ApiAccessEventEntity::class, ApiPlaceGrantEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class ApiAccessDatabase : RoomDatabase() {
@@ -166,5 +172,18 @@ abstract class ApiAccessDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "pathline_api_access.db"
+
+        /**
+         * v2: the [ApiAccessEventEntity.isWrite] column (annotation writes land in the same log).
+         * A destructive rebuild would be acceptable for the *log*, but this DB also holds the
+         * place-grant ledger — a real migration keeps consumer apps' place scoping intact.
+         */
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE api_access_events ADD COLUMN isWrite INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
     }
 }

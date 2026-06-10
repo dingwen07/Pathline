@@ -40,50 +40,60 @@ object TagCanonicalizer {
 }
 
 /**
- * Serialization for a **memory** payload: a *flat* string->string map stored as a JSON object. Values
- * must be strings — nesting and non-string JSON values are rejected ([parseStrict]). The map models
- * an agent's structured KV scratchpad; JSON is only the on-disk format.
+ * One **memory** entry: the string [value] an agent stored under a key, with the agent's
+ * [confidence] in it (in [0,1]; 1 when never stated). Values are always plain strings — the flat
+ * string->string rule of the data-API design; confidence is metadata beside the value, never inside it.
+ */
+data class MemoryEntry(val value: String, val confidence: Float = 1f)
+
+/**
+ * Serialization for a **memory** payload: a *flat* key->[MemoryEntry] map stored as a JSON object of
+ * `{"value": <string>, "confidence": <0..1>}` objects. The map models an agent's structured KV
+ * scratchpad; JSON is only the on-disk format. The "values must be plain strings" rule of the public
+ * API is enforced at the provider write path (a memory write carries value and confidence as separate
+ * typed fields), not here.
  */
 object MemoryMap {
     private val json = Json
+    private const val VALUE = "value"
+    private const val CONFIDENCE = "confidence"
 
     /** Serialize a flat map to its stored JSON-object form (insertion order preserved). */
-    fun encode(entries: Map<String, String>): String =
-        JsonObject(entries.mapValues { (_, v) -> JsonPrimitive(v) }).toString()
+    fun encode(entries: Map<String, MemoryEntry>): String =
+        JsonObject(
+            entries.mapValues { (_, e) ->
+                JsonObject(
+                    mapOf(
+                        VALUE to JsonPrimitive(e.value),
+                        CONFIDENCE to JsonPrimitive(e.confidence),
+                    ),
+                )
+            },
+        ).toString()
 
     /**
      * Lenient read of our own storage: tolerate null/blank/garbage as an empty map and silently drop
-     * any non-string value (the writer never produces them; this just keeps a corrupt row from
-     * throwing on read). Use [parseStrict] for untrusted input.
+     * any malformed entry (the writer never produces them; this just keeps a corrupt row from
+     * throwing on read). A bare string value (the pre-confidence dev format) reads as confidence 1;
+     * an out-of-range confidence is clamped.
      */
-    fun decode(content: String?): Map<String, String> {
+    fun decode(content: String?): Map<String, MemoryEntry> {
         if (content.isNullOrBlank()) return emptyMap()
         val obj = runCatching { json.parseToJsonElement(content) }.getOrNull() as? JsonObject
             ?: return emptyMap()
         return buildMap {
             for ((k, v) in obj) {
-                val prim = v as? JsonPrimitive ?: continue
-                if (prim.isString) put(k, prim.content)
-            }
-        }
-    }
-
-    /**
-     * Parse untrusted input (e.g. a write coming over the API) into a flat map, **rejecting** anything
-     * that is not a JSON object of string values — a nested object/array or a numeric/boolean/null
-     * value throws [IllegalArgumentException]. This is the enforcement point for the memory value rule.
-     */
-    fun parseStrict(content: String): Map<String, String> {
-        val element = runCatching { json.parseToJsonElement(content) }.getOrElse {
-            throw IllegalArgumentException("memory must be a JSON object", it)
-        }
-        require(element is JsonObject) { "memory must be a flat JSON object" }
-        return buildMap {
-            for ((k, v) in element) {
-                require(v is JsonPrimitive && v.isString) {
-                    "memory value for \"$k\" must be a string (no nesting, no JSON values)"
+                when (v) {
+                    is JsonPrimitive -> if (v.isString) put(k, MemoryEntry(v.content))
+                    is JsonObject -> {
+                        val value = (v[VALUE] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?: continue
+                        val confidence = (v[CONFIDENCE] as? JsonPrimitive)?.content?.toFloatOrNull()
+                            ?.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
+                        put(k, MemoryEntry(value, confidence))
+                    }
+                    else -> continue
                 }
-                put(k, v.content)
             }
         }
     }
@@ -117,7 +127,7 @@ internal fun foldText(a: String?, b: String?): String? {
 data class AnnotationData(
     val note: String,
     val tags: List<String>,
-    val memories: Map<String, String>,
+    val memories: Map<String, MemoryEntry>,
 )
 
 /**
@@ -153,10 +163,11 @@ class AnnotationStore @Inject constructor(
         return tag.id
     }
 
-    /** Remove the [displayName] tag from [target]/[id] (the tag row itself is left for reuse). */
-    suspend fun removeTag(target: AnnotationTarget, id: Long, displayName: String) {
-        val tag = tagDao.byCanonicalName(TagCanonicalizer.canonicalize(displayName)) ?: return
-        tagDao.unlink(tag.id, target, id)
+    /** Remove the [displayName] tag from [target]/[id] (the tag row itself is left for reuse).
+     *  Returns the number of links removed (0 when the tag didn't exist or wasn't applied). */
+    suspend fun removeTag(target: AnnotationTarget, id: Long, displayName: String): Int {
+        val tag = tagDao.byCanonicalName(TagCanonicalizer.canonicalize(displayName)) ?: return 0
+        return tagDao.unlink(tag.id, target, id)
     }
 
     suspend fun tagsFor(target: AnnotationTarget, id: Long): List<TagEntity> = tagDao.tagsFor(target, id)
@@ -205,16 +216,24 @@ class AnnotationStore @Inject constructor(
 
     // --- Memories ------------------------------------------------------------------------------
 
-    suspend fun getMemories(target: AnnotationTarget, id: Long): Map<String, String> =
+    suspend fun getMemories(target: AnnotationTarget, id: Long): Map<String, MemoryEntry> =
         MemoryMap.decode(annotationDao.byTarget(target, id, AnnotationKind.MEMORY)?.content)
 
     /** Replace the whole memory map on [target]/[id] (an empty map clears it). */
-    suspend fun setMemories(target: AnnotationTarget, id: Long, entries: Map<String, String>) =
+    suspend fun setMemories(target: AnnotationTarget, id: Long, entries: Map<String, MemoryEntry>) =
         put(target, id, AnnotationKind.MEMORY, entries.takeIf { it.isNotEmpty() }?.let(MemoryMap::encode))
 
-    /** Set one memory key, leaving the rest of the map intact. */
-    suspend fun putMemory(target: AnnotationTarget, id: Long, key: String, value: String) =
-        setMemories(target, id, getMemories(target, id) + (key to value))
+    /** Set one memory key, leaving the rest of the map intact. [confidence] is clamped to [0,1]. */
+    suspend fun putMemory(
+        target: AnnotationTarget,
+        id: Long,
+        key: String,
+        value: String,
+        confidence: Float = 1f,
+    ) = setMemories(
+        target, id,
+        getMemories(target, id) + (key to MemoryEntry(value, confidence.coerceIn(0f, 1f))),
+    )
 
     /** Remove one memory key. */
     suspend fun removeMemory(target: AnnotationTarget, id: Long, key: String) {
@@ -266,7 +285,19 @@ class AnnotationStore @Inject constructor(
         val merged = LinkedHashMap(
             MemoryMap.decode(annotationDao.byTarget(target, survivorId, AnnotationKind.MEMORY)?.content),
         )
-        for ((k, v) in dying) merged[k] = foldText(merged[k], v) ?: v
+        for ((k, d) in dying) {
+            val s = merged[k]
+            merged[k] = when {
+                s == null -> d
+                // Equal values collapse to one; the stronger claim's confidence survives.
+                s.value.trim() == d.value.trim() ->
+                    MemoryEntry(foldText(s.value, d.value) ?: d.value, maxOf(s.confidence, d.confidence))
+                // Differing values concatenate oldest-first; the combined text is at most as
+                // trustworthy as its weaker half.
+                else ->
+                    MemoryEntry(foldText(s.value, d.value) ?: d.value, minOf(s.confidence, d.confidence))
+            }
+        }
         put(target, survivorId, AnnotationKind.MEMORY, MemoryMap.encode(merged))
     }
 

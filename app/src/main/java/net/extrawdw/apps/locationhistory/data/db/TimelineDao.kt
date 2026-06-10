@@ -60,6 +60,18 @@ interface VisitDao {
     @Query("SELECT * FROM visits WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<VisitEntity>
 
+    /** Of [ids], the ones naming a confirmed visit ending after [minEndMs] — the data API's
+     *  visibility filter for annotation targets (clamped to 30 days without extended history). */
+    @Query("SELECT id FROM visits WHERE id IN (:ids) AND confirmed = 1 AND endMs > :minEndMs")
+    suspend fun confirmedIdsAmong(ids: List<Long>, minEndMs: Long): List<Long>
+
+    @Query("SELECT * FROM visits WHERE id IN (:ids) AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun byIdsOverlapping(ids: List<Long>, startMs: Long, endMs: Long): List<VisitEntity>
+
+    /** Visits attributed to any of [placeIds] in the window — the place-name leg of visit search. */
+    @Query("SELECT * FROM visits WHERE placeId IN (:placeIds) AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun forPlacesOverlapping(placeIds: List<Long>, startMs: Long, endMs: Long): List<VisitEntity>
+
     @Query("DELETE FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
 
@@ -94,6 +106,23 @@ interface TripDao {
 
     @Query("SELECT * FROM trips WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<TripEntity>
+
+    /** Of [ids], the ones naming a confirmed trip ending after [minEndMs] — see the visit twin. */
+    @Query("SELECT id FROM trips WHERE id IN (:ids) AND confirmed = 1 AND endMs > :minEndMs")
+    suspend fun confirmedIdsAmong(ids: List<Long>, minEndMs: Long): List<Long>
+
+    @Query("SELECT * FROM trips WHERE id IN (:ids) AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
+    suspend fun byIdsOverlapping(ids: List<Long>, startMs: Long, endMs: Long): List<TripEntity>
+
+    /** Trips departing from or arriving at a visit attributed to any of [placeIds] in the window —
+     *  the place-name leg of trip search. */
+    @Query(
+        "SELECT * FROM trips WHERE (" +
+            "fromVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds)) OR " +
+            "toVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds))) " +
+            "AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC",
+    )
+    suspend fun forEndpointPlacesOverlapping(placeIds: List<Long>, startMs: Long, endMs: Long): List<TripEntity>
 
     @Query("DELETE FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)

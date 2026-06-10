@@ -39,7 +39,7 @@
         android:description="@string/perm_api_description" />
 
     <!--
-      On-device data-API permissions (see PathlineProvider / PathlineContract). READ_TIMELINE_ROUTE and
+      On-device data-API permissions (see PathlineProvider / PathlineContract). READ_TIMELINE_ROUTES and
       READ_LOCATION_HISTORY share a group on purpose: both expose the precise path, so they grant and
       revoke as one tier; READ_TIMELINE stays outside it so a timeline-only caller never gains routes.
     -->
@@ -57,7 +57,7 @@
         android:description="@string/perm_read_timeline_description" />
 
     <permission
-        android:name="net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTE"
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTES"
         android:protectionLevel="dangerous"
         android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.LOCATION_HISTORY"
         android:icon="@drawable/ic_perm_route"
@@ -78,6 +78,58 @@
         android:icon="@drawable/ic_perm_extended_history"
         android:label="@string/perm_read_extended_history_label"
         android:description="@string/perm_read_extended_history_description" />
+
+    <!--
+      Annotation + search tier (see the data-API v3 design). SEARCH_DATA, READ_ALL_PLACES and
+      READ_ANNOTATIONS share a group on purpose: search is only useful over a corpus, so the three
+      grant and revoke as one tier. READ_EXTENDED_HISTORY deliberately stays OUTSIDE it - searching
+      must not quietly unlock deep history. The write permissions are ungrouped: WRITE_ANNOTATIONS
+      covers the structured, agent-friendly content (tags + memories) while notes - human prose -
+      are carved out into their own WRITE_ANNOTATIONS_NOTES.
+    -->
+    <permission-group
+        android:name="net.extrawdw.apps.locationhistory.permission-group.SEARCH"
+        android:icon="@drawable/ic_perm_search"
+        android:label="@string/perm_group_search_label"
+        android:description="@string/perm_group_search_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_ALL_PLACES"
+        android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.SEARCH"
+        android:icon="@drawable/ic_perm_places"
+        android:label="@string/perm_read_all_places_label"
+        android:description="@string/perm_read_all_places_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.READ_ANNOTATIONS"
+        android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.SEARCH"
+        android:icon="@drawable/ic_perm_annotations"
+        android:label="@string/perm_read_annotations_label"
+        android:description="@string/perm_read_annotations_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.SEARCH_DATA"
+        android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.SEARCH"
+        android:icon="@drawable/ic_perm_search"
+        android:label="@string/perm_search_data_label"
+        android:description="@string/perm_search_data_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS"
+        android:protectionLevel="dangerous"
+        android:icon="@drawable/ic_perm_write"
+        android:label="@string/perm_write_annotations_label"
+        android:description="@string/perm_write_annotations_description" />
+
+    <permission
+        android:name="net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS_NOTES"
+        android:protectionLevel="dangerous"
+        android:icon="@drawable/ic_perm_write"
+        android:label="@string/perm_write_annotations_notes_label"
+        android:description="@string/perm_write_annotations_notes_description" />
 
     <!--
       Scoped package visibility (Android 11+): see the SAF DocumentsProvider apps so we can resolve a

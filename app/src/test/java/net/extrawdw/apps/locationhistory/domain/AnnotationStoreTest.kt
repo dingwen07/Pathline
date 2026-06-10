@@ -65,6 +65,40 @@ class AnnotationStoreTest {
     }
 
     @Test
+    fun memories_differingValuesFoldToConcatWithWeakerConfidence() = runBlocking {
+        store.putMemory(AnnotationTarget.VISIT, 10, "k", "old", 0.9f)
+        store.putMemory(AnnotationTarget.VISIT, 11, "k", "new", 0.4f)
+
+        store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 10, dyingId = 11)
+
+        val folded = store.getMemories(AnnotationTarget.VISIT, 10).getValue("k")
+        assertEquals("old\n\nnew", folded.value)
+        assertEquals(0.4f, folded.confidence, 0f) // differing values -> min confidence
+    }
+
+    @Test
+    fun memories_equalValuesFoldToOneWithStrongerConfidence() = runBlocking {
+        store.putMemory(AnnotationTarget.VISIT, 20, "k", "same", 0.5f)
+        store.putMemory(AnnotationTarget.VISIT, 21, "k", "same", 0.8f)
+
+        store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 20, dyingId = 21)
+
+        val folded = store.getMemories(AnnotationTarget.VISIT, 20).getValue("k")
+        assertEquals("same", folded.value)
+        assertEquals(0.8f, folded.confidence, 0f) // equal values -> max confidence
+    }
+
+    @Test
+    fun putMemory_defaultsToCertainAndClampsConfidence() = runBlocking {
+        store.putMemory(AnnotationTarget.PLACE, 30, "fact", "x")
+        store.putMemory(AnnotationTarget.PLACE, 30, "hunch", "y", 2f)
+
+        val memories = store.getMemories(AnnotationTarget.PLACE, 30)
+        assertEquals(1f, memories.getValue("fact").confidence, 0f)
+        assertEquals(1f, memories.getValue("hunch").confidence, 0f) // clamped to [0,1]
+    }
+
+    @Test
     fun loadEdits_emptyTargetIsBlank() = runBlocking {
         val loaded = store.loadEdits(AnnotationTarget.VISIT, 999)
         assertEquals("", loaded.note)
@@ -96,6 +130,15 @@ private class FakeTagDao : TagDao {
 
     override suspend fun all(): List<TagEntity> = tags.sortedBy { it.displayName }
 
+    override suspend fun byIds(ids: List<Long>): List<TagEntity> =
+        tags.filter { it.id in ids.toSet() }.sortedBy { it.displayName }
+
+    override suspend fun allLinks(): List<EntityTagEntity> = links.toList()
+
+    override suspend fun targetIdsForTags(type: AnnotationTarget, tagIds: List<Long>): List<Long> =
+        links.filter { it.targetType == type && it.tagId in tagIds.toSet() }
+            .map { it.targetId }.distinct()
+
     override suspend fun link(link: EntityTagEntity) {
         val exists = links.any {
             it.tagId == link.tagId && it.targetType == link.targetType && it.targetId == link.targetId
@@ -108,8 +151,10 @@ private class FakeTagDao : TagDao {
         return tags.filter { it.id in ids }.sortedBy { it.displayName }
     }
 
-    override suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long) {
+    override suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long): Int {
+        val before = links.size
         links.removeAll { it.tagId == tagId && it.targetType == type && it.targetId == id }
+        return before - links.size
     }
 
     override suspend fun unlinkAll(type: AnnotationTarget, id: Long) {
@@ -151,6 +196,22 @@ private class FakeAnnotationDao : AnnotationDao {
 
     override suspend fun allForTarget(type: AnnotationTarget, id: Long): List<AnnotationEntity> =
         rows.filter { it.targetType == type && it.targetId == id }
+
+    override suspend fun allOfKind(type: AnnotationTarget, kind: AnnotationKind): List<AnnotationEntity> =
+        rows.filter { it.targetType == type && it.kind == kind }
+
+    override suspend fun targetIdsWithContentLike(
+        type: AnnotationTarget,
+        kind: AnnotationKind,
+        pattern: String,
+    ): List<Long> {
+        // Mirror of `LIKE ? ESCAPE '\'` for a %text% pattern: unescape, then substring match.
+        val needle = pattern.removePrefix("%").removeSuffix("%")
+            .replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\")
+        return rows.filter {
+            it.targetType == type && it.kind == kind && it.content.contains(needle, ignoreCase = true)
+        }.map { it.targetId }.distinct()
+    }
 
     override suspend fun deleteForTargetKind(type: AnnotationTarget, id: Long, kind: AnnotationKind) {
         rows.removeAll { it.targetType == type && it.targetId == id && it.kind == kind }

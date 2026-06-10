@@ -41,7 +41,9 @@ import androidx.compose.ui.unit.dp
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
+import net.extrawdw.apps.locationhistory.domain.MemoryEntry
 import net.extrawdw.apps.locationhistory.domain.TagCanonicalizer
+import kotlin.math.roundToInt
 
 /**
  * Hoisted state for the annotation editor. Holds the user's in-progress note + tag edits and the
@@ -55,7 +57,7 @@ class AnnotationEditState {
         private set
     var note by mutableStateOf("")
     val tags = mutableStateListOf<String>()
-    var memories by mutableStateOf<Map<String, String>>(emptyMap())
+    var memories by mutableStateOf<Map<String, MemoryEntry>>(emptyMap())
         private set
 
     fun apply(data: AnnotationData) {
@@ -173,7 +175,7 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            state.memories.forEach { (key, value) ->
+            state.memories.forEach { (key, entry) ->
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -185,7 +187,15 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(value, style = MaterialTheme.typography.bodyMedium)
+                    Text(entry.value, style = MaterialTheme.typography.bodyMedium)
+                    // Only a hedged entry shows its confidence; "stated as fact" (1.0) stays clean.
+                    if (entry.confidence < 1f) {
+                        Text(
+                            "${(entry.confidence * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

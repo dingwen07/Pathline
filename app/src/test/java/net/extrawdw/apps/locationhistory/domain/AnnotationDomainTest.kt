@@ -2,7 +2,6 @@ package net.extrawdw.apps.locationhistory.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,8 +40,27 @@ class AnnotationDomainTest {
 
     @Test
     fun memory_roundTripsAndPreservesOrder() {
-        val map = linkedMapOf("home" to "1 Main St", "vibe" to "quiet", "stars" to "4")
+        val map = linkedMapOf(
+            "home" to MemoryEntry("1 Main St"),
+            "vibe" to MemoryEntry("quiet", 0.6f),
+            "stars" to MemoryEntry("4", 0.85f),
+        )
         assertEquals(map.toList(), MemoryMap.decode(MemoryMap.encode(map)).toList())
+    }
+
+    @Test
+    fun memory_confidenceDefaultsToCertain() {
+        assertEquals(1f, MemoryEntry("x").confidence, 0f)
+        // A bare-string value (the pre-confidence dev format) reads as stated-as-fact.
+        assertEquals(
+            mapOf("a" to MemoryEntry("x", 1f)),
+            MemoryMap.decode("""{"a":"x"}"""),
+        )
+        // An entry object without a confidence likewise.
+        assertEquals(
+            mapOf("a" to MemoryEntry("x", 1f)),
+            MemoryMap.decode("""{"a":{"value":"x"}}"""),
+        )
     }
 
     @Test
@@ -50,30 +68,13 @@ class AnnotationDomainTest {
         assertTrue(MemoryMap.decode(null).isEmpty())
         assertTrue(MemoryMap.decode("").isEmpty())
         assertTrue(MemoryMap.decode("not json").isEmpty())
-        // Non-string values are dropped rather than throwing on read.
-        assertEquals(mapOf("a" to "x"), MemoryMap.decode("""{"a":"x","b":3,"c":{"n":1}}"""))
-    }
-
-    @Test
-    fun memory_parseStrictAcceptsFlatStringMap() {
-        assertEquals(mapOf("a" to "x", "b" to "y"), MemoryMap.parseStrict("""{"a":"x","b":"y"}"""))
-        assertTrue(MemoryMap.parseStrict("{}").isEmpty())
-    }
-
-    @Test
-    fun memory_parseStrictRejectsNonStringValues() {
-        for (bad in listOf(
-            """{"a":1}""",        // number
-            """{"a":true}""",      // boolean
-            """{"a":null}""",      // null
-            """{"a":{"b":"c"}}""", // nested object
-            """{"a":["x"]}""",     // array
-            """["x"]""",           // non-object root
-            """"x"""",             // bare string root
-            """garbage""",         // not JSON
-        )) {
-            assertThrows(IllegalArgumentException::class.java) { MemoryMap.parseStrict(bad) }
-        }
+        // Malformed entries are dropped rather than throwing on read; out-of-range confidence clamps.
+        assertEquals(
+            mapOf("a" to MemoryEntry("x"), "d" to MemoryEntry("y", 1f), "e" to MemoryEntry("z", 0f)),
+            MemoryMap.decode(
+                """{"a":"x","b":3,"c":{"n":1},"d":{"value":"y","confidence":7},"e":{"value":"z","confidence":-1}}""",
+            ),
+        )
     }
 
     // --- foldText (note + memory-conflict merge rule) ------------------------------------------

@@ -6,13 +6,15 @@ import android.net.Uri
 /**
  * Public contract for Pathline's on-device data API.
  *
- * Other apps installed on the same device can read the user's timeline (visits + trips) and raw
- * recorded location samples through a [android.content.ContentProvider] exposed at [AUTHORITY].
+ * Other apps installed on the same device can read the user's timeline (visits + trips), raw
+ * recorded location samples, saved places and user annotations (tags, notes, memories), search
+ * them, and — with the write permissions — maintain annotations on the user's behalf, through a
+ * [android.content.ContentProvider] exposed at [AUTHORITY].
  *
  * Reaching the provider at all requires the install-time [Permissions.API] permission: a consumer
  * declares `<uses-permission>` for it and the system auto-grants it (no runtime prompt). An app that
  * does not declare it cannot resolve or query the provider. Past that gate, access to data is gated
- * by four custom runtime permissions (see [Permissions]); a consumer must declare the ones it needs
+ * by custom runtime permissions (see [Permissions]); a consumer must declare the ones it needs
  * with `<uses-permission>` AND request them at runtime — the user approves each in the system
  * permission dialog, exactly like the platform location permissions.
  *
@@ -43,15 +45,27 @@ import android.net.Uri
  * - `places` (saved-place details: name, address) and a place's `…/visits` history also require
  *   [Permissions.READ_TIMELINE]. They are **access-scoped**: a caller only sees a place — its details
  *   or its history — once it has read a **confirmed** [Visits] row referencing that place (see [Places]).
+ *   [Permissions.READ_ALL_PLACES] bypasses that scoping and exposes the whole saved-place corpus.
  *   A place's history older than 30 days additionally requires [Permissions.READ_EXTENDED_HISTORY], as below.
  * - A trip's [Trips.ENCODED_POLYLINE] (the precise route) is only populated when the caller also
- *   holds [Permissions.READ_TIMELINE_ROUTE] **or** [Permissions.READ_LOCATION_HISTORY]; otherwise
+ *   holds [Permissions.READ_TIMELINE_ROUTES] **or** [Permissions.READ_LOCATION_HISTORY]; otherwise
  *   that single column comes back `null` while the rest of the trip row is returned normally. A
  *   timeline-only caller therefore sees trips but not their tracks.
  * - `samples` require [Permissions.READ_LOCATION_HISTORY].
+ * - Annotations — [Tags] and the per-target `…/tags`, `…/notes`, `…/memories` sub-collections (see
+ *   [Annotations]) — require [Permissions.READ_ANNOTATIONS] on top of the target's read tier.
+ * - Search (`q=` on `places` / `visits` / `trips` / `tags`, see [QueryParams.Q]) requires
+ *   [Permissions.SEARCH_DATA]; what it can match and return is still scoped by the read
+ *   permissions held.
+ * - Annotation **writes** (`insert` / `update` / `delete` on the annotation URIs — every other URI
+ *   stays read-only) require [Permissions.WRITE_ANNOTATIONS] for tags and memories, or
+ *   [Permissions.WRITE_ANNOTATIONS_NOTES] for notes. See [Annotations].
  * - Reading anything **older than 30 days** (a window whose `start` predates `now - 30 days`)
- *   additionally requires [Permissions.READ_EXTENDED_HISTORY]. Without it the query throws a
- *   [SecurityException]; the requested window is never silently narrowed.
+ *   additionally requires [Permissions.READ_EXTENDED_HISTORY]. For a call with an **explicit**
+ *   `start` that far back, the query throws a [SecurityException] without it — an explicitly
+ *   requested window is never silently narrowed. The windowless reads (places, tags, annotations,
+ *   and search without `start`) instead **clamp**: they return what the last 30 days permit, and the
+ *   whole history with the permission.
  */
 object PathlineContract {
 
@@ -96,6 +110,49 @@ object PathlineContract {
          * other collections.
          */
         const val IDS: String = "ids"
+
+        /**
+         * Search query text. Its presence switches the `places`, `visits`, `trips` and `tags`
+         * collections into **search mode** (requires [Permissions.SEARCH_DATA]): instead of a plain
+         * listing, only rows matching the text — in the fields selected by [FIELDS] — are returned,
+         * in the collection's normal row shape. Matching is case-insensitive; FTS-backed fields
+         * (place name/address/category/types, tag names) match on word prefixes, annotation text
+         * matches on substrings. In search mode [START]/[END] become optional on `visits`/`trips`:
+         * when omitted the window clamps per [Permissions.READ_EXTENDED_HISTORY]; an explicit window
+         * is enforced exactly like a plain read. See [SearchFields] for the matchable fields.
+         */
+        const val Q: String = "q"
+
+        /**
+         * Optional comma-separated list of fields to match in search mode (e.g.
+         * `places?q=coffee&fields=name,category`); see [SearchFields] for the valid names per
+         * collection. When omitted, every field the caller's permissions allow is matched. Naming an
+         * unknown field is an error; explicitly naming an annotation field ([SearchFields.TAGS],
+         * [SearchFields.NOTES], [SearchFields.MEMORIES]) without [Permissions.READ_ANNOTATIONS]
+         * throws a [SecurityException] (when [FIELDS] is omitted those fields are simply skipped).
+         */
+        const val FIELDS: String = "fields"
+    }
+
+    /**
+     * The field names accepted in [QueryParams.FIELDS], per collection:
+     *
+     * - `places`: [NAME], [ADDRESS], [CATEGORY], [TYPES] (place details), plus [TAGS], [NOTES],
+     *   [MEMORIES] (annotation fields, gated by [Permissions.READ_ANNOTATIONS]). A memories match
+     *   considers both keys and values.
+     * - `visits` / `trips`: [PLACE_NAME] (the **saved place** attributed to the visit, or to the
+     *   trip's endpoint visits), plus [TAGS] and [NOTES] of the visit/trip itself.
+     * - `tags`: matches tag names only; [QueryParams.FIELDS] is ignored.
+     */
+    object SearchFields {
+        const val NAME: String = "name"
+        const val ADDRESS: String = "address"
+        const val CATEGORY: String = "category"
+        const val TYPES: String = "types"
+        const val PLACE_NAME: String = "place_name"
+        const val TAGS: String = "tags"
+        const val NOTES: String = "notes"
+        const val MEMORIES: String = "memories"
     }
 
     /** The custom permissions a consumer declares. [API] is the install-time gate for the whole
@@ -120,16 +177,56 @@ object PathlineContract {
          * and [READ_LOCATION_HISTORY] alone also unlocks the route — a sample reader can reconstruct
          * it regardless.
          */
-        const val READ_TIMELINE_ROUTE: String =
-            "net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTE"
+        const val READ_TIMELINE_ROUTES: String =
+            "net.extrawdw.apps.locationhistory.permission.READ_TIMELINE_ROUTES"
 
         /** Read raw recorded [Samples]. Also unlocks [Trips.ENCODED_POLYLINE]. */
         const val READ_LOCATION_HISTORY: String =
             "net.extrawdw.apps.locationhistory.permission.READ_LOCATION_HISTORY"
 
-        /** Required in addition to the above to read anything older than 30 days. */
+        /**
+         * Required in addition to the above to read anything older than 30 days. A windowless read
+         * (places, tags, annotations, search without `start`) never requires it — it clamps instead;
+         * see the class doc.
+         */
         const val READ_EXTENDED_HISTORY: String =
             "net.extrawdw.apps.locationhistory.permission.READ_EXTENDED_HISTORY"
+
+        /**
+         * Read the **entire** saved-place corpus through [Places] (and search it), bypassing the
+         * per-place grant scoping that [READ_TIMELINE] readers build up visit by visit. Place
+         * **visit history** is still timeline data and still needs [READ_TIMELINE].
+         */
+        const val READ_ALL_PLACES: String =
+            "net.extrawdw.apps.locationhistory.permission.READ_ALL_PLACES"
+
+        /**
+         * Read [Annotations] — tags, notes and memories — of any target the caller can otherwise
+         * see (a granted place, or a confirmed visit/trip under [READ_TIMELINE]).
+         */
+        const val READ_ANNOTATIONS: String =
+            "net.extrawdw.apps.locationhistory.permission.READ_ANNOTATIONS"
+
+        /**
+         * Create/update/delete **tags and memories** on visible targets (see [Annotations]). The
+         * structured, agent-friendly write tier. Notes are deliberately carved out into
+         * [WRITE_ANNOTATIONS_NOTES] — they are human prose.
+         */
+        const val WRITE_ANNOTATIONS: String =
+            "net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS"
+
+        /** Create/update/delete **notes** on visible targets (see [Annotations]). */
+        const val WRITE_ANNOTATIONS_NOTES: String =
+            "net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS_NOTES"
+
+        /**
+         * Use the search endpoints ([QueryParams.Q]). Gates the mechanism only: the **scope** of
+         * what a search can match and return is governed by the read permissions held —
+         * [READ_TIMELINE] for visit/trip hits, [READ_ALL_PLACES] for place coverage beyond grants,
+         * [READ_ANNOTATIONS] for matching/returning annotation fields.
+         */
+        const val SEARCH_DATA: String =
+            "net.extrawdw.apps.locationhistory.permission.SEARCH_DATA"
     }
 
     /**
@@ -219,7 +316,7 @@ object PathlineContract {
 
         /**
          * The route as a Google-format encoded polyline (precision 5), or `null` when the caller
-         * lacks both [Permissions.READ_TIMELINE_ROUTE] and [Permissions.READ_LOCATION_HISTORY].
+         * lacks both [Permissions.READ_TIMELINE_ROUTES] and [Permissions.READ_LOCATION_HISTORY].
          * Consumers must handle a null value (a timeline-only caller always sees null here).
          */
         const val ENCODED_POLYLINE: String = "encoded_polyline"
@@ -322,9 +419,13 @@ object PathlineContract {
      * returned (an unfiltered query simply omits it; a [QueryParams.IDS] filter naming it omits that id) — so this
      * endpoint never widens what an app can learn, it only lets it resolve the **details** (name,
      * address) of places it has already touched, **once**, instead of re-sending them on every visit.
+     * A caller holding [Permissions.READ_ALL_PLACES] bypasses that scoping entirely and reads the
+     * whole saved-place corpus.
      *
      * Not time-windowed: [QueryParams.START] / [QueryParams.END] are ignored. Pass [QueryParams.IDS]
-     * to fetch specific places, or omit it for all allowed places. Requires [Permissions.READ_TIMELINE].
+     * to fetch specific places, or omit it for all allowed places. With [QueryParams.Q] it becomes a
+     * place search (see [QueryParams.Q]). Requires [Permissions.READ_TIMELINE] (grant-scoped) or
+     * [Permissions.READ_ALL_PLACES] (full corpus).
      *
      * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.place`.
      */
@@ -438,6 +539,184 @@ object PathlineContract {
                 ID, START_MS, END_MS, PLACE_ID, LATITUDE, LONGITUDE,
                 RADIUS_METERS, CONFIDENCE, CONFIRMED, IS_ONGOING,
             )
+        }
+    }
+
+    /**
+     * The user's **tags** — short labels attachable to places, visits and trips. Two spellings that
+     * differ only in case or word separators are the **same** tag: `My Home`, `my_home` and
+     * `My HoME` all canonicalize to `my-home` (lowercase, every run of whitespace/`-`/`_` collapsed
+     * to a single `-`), while `myhome` — no separator — stays distinct. [NAME] carries the most
+     * recent human spelling, [CANONICAL_NAME] the stable key.
+     *
+     * Queried at `content://…/tags`, this lists every tag attached to at least one target the
+     * caller can see: places it has been granted (or all of them under
+     * [Permissions.READ_ALL_PLACES]), and confirmed visits/trips — from the last 30 days only,
+     * unless the caller holds [Permissions.READ_EXTENDED_HISTORY]. Not time-windowed
+     * ([QueryParams.START]/[QueryParams.END] are ignored). Requires [Permissions.READ_ANNOTATIONS];
+     * the visit/trip- and place-attached parts of the scope additionally follow the caller's
+     * [Permissions.READ_TIMELINE] / place coverage. With [QueryParams.Q] it becomes a tag-name
+     * search (see [QueryParams.Q]; requires [Permissions.SEARCH_DATA]).
+     *
+     * The same row shape is returned by the per-target `…/tags` sub-collections — see [Annotations].
+     * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.tag`.
+     */
+    object Tags {
+        const val PATH: String = "tags"
+
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        const val CONTENT_TYPE: String =
+            "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.tag"
+
+        /** Stable tag id (the cursor's `_id`). One id per canonical name. */
+        const val ID: String = "_id"
+
+        /** The tag's display name — the most recent human spelling written. Also the
+         *  [android.content.ContentValues] key for applying a tag (see [Annotations]). */
+        const val NAME: String = "name"
+
+        /** The normalized identity key two spellings of the same tag share (see class doc). */
+        const val CANONICAL_NAME: String = "canonical_name"
+
+        /** When the tag was first created, epoch milliseconds. */
+        const val CREATED_AT_MS: String = "created_at_ms"
+
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(ID, NAME, CANONICAL_NAME, CREATED_AT_MS)
+    }
+
+    /**
+     * Per-target **annotations**: the tags, the single free-text note, and the single key→value
+     * **memory map** of one place, visit or trip, addressed as sub-collections of the parent row —
+     *
+     * ```
+     * content://…/{places|visits|trips}/<id>/tags
+     * content://…/{places|visits|trips}/<id>/notes
+     * content://…/{places|visits|trips}/<id>/memories
+     * ```
+     *
+     * (build the URIs with [tagsUri] / [notesUri] / [memoriesUri]). Memories are an agent's
+     * structured scratchpad: a **flat** string→string map — values must be plain strings, never
+     * nested JSON — where each entry also carries the writer's [Memories.CONFIDENCE] in it.
+     * Pathline's own UI shows them to the user read-only.
+     *
+     * ## Reading
+     * Requires [Permissions.READ_ANNOTATIONS], plus the target itself being visible to the caller:
+     * a place it has been granted (or [Permissions.READ_ALL_PLACES]), or — under
+     * [Permissions.READ_TIMELINE] — a **confirmed** visit/trip no older than 30 days (any age with
+     * [Permissions.READ_EXTENDED_HISTORY]). A target outside that scope returns no rows,
+     * indistinguishable from one that doesn't exist. `…/tags` returns [Tags] rows; `…/notes`
+     * returns 0 or 1 [Notes] row; `…/memories` returns one [Memories] row per key.
+     *
+     * ## Writing
+     * The annotation sub-collections are the **only** writable URIs in the API; everything else
+     * remains read-only. Writes require [Permissions.WRITE_ANNOTATIONS] (tags, memories) or
+     * [Permissions.WRITE_ANNOTATIONS_NOTES] (notes), the user's data-access switch being on, and
+     * the same target visibility as reads — in particular an **unconfirmed** visit/trip is never
+     * writable (its id is ephemeral; Pathline rebuilds unconfirmed timeline rows). Every write is
+     * recorded in the user's access log and may notify, like reads.
+     *
+     * - **Apply a tag:** `insert` on `…/tags` with [Tags.NAME] = the display spelling. Re-applying
+     *   an existing tag is a no-op that refreshes the spelling. Returns the link URI.
+     * - **Remove a tag:** `delete` on `…/tags/<name>` ([tagUri]; any spelling of the name works).
+     *   The tag itself survives for reuse; only the link to this target is removed.
+     * - **Set the note:** `insert` (or `update`) on `…/notes` with [Notes.CONTENT] = the text —
+     *   replaces the whole note. **Clear it:** `delete` on `…/notes`.
+     * - **Put one memory:** `insert` (or `update`) on `…/memories` with [Memories.KEY] and
+     *   [Memories.VALUE] (both strings), plus an optional [Memories.CONFIDENCE] (float in [0,1],
+     *   default 1.0) — other keys are untouched. **Remove one:** `delete` on `…/memories/<key>`
+     *   ([memoryUri]). **Clear the map:** `delete` on `…/memories`.
+     *
+     * `delete` returns the number of rows/links/keys actually removed (0 when there was nothing).
+     *
+     * ## Durability
+     * Annotations ride Pathline's timeline maintenance: when adjacent confirmed visits/trips are
+     * merged, the surviving row inherits the union of both rows' tags and a concatenation of
+     * conflicting note/memory text — nothing a consumer wrote is lost. Deleting a place/visit/trip
+     * deletes its annotations with it.
+     */
+    object Annotations {
+        /** Sub-collection path segments under a place/visit/trip row. */
+        const val TAGS_PATH: String = "tags"
+        const val NOTES_PATH: String = "notes"
+        const val MEMORIES_PATH: String = "memories"
+
+        /** `content://…/<collection>/<id>/tags` — [collection] is one of [Places.CONTENT_URI],
+         *  [Visits.CONTENT_URI], [Trips.CONTENT_URI]. */
+        @JvmStatic
+        fun tagsUri(collection: Uri, id: Long): Uri =
+            collection.buildUpon().appendPath(id.toString()).appendPath(TAGS_PATH).build()
+
+        /** `content://…/<collection>/<id>/tags/<name>` — one tag link, for `delete`. */
+        @JvmStatic
+        fun tagUri(collection: Uri, id: Long, name: String): Uri =
+            tagsUri(collection, id).buildUpon().appendPath(name).build()
+
+        /** `content://…/<collection>/<id>/notes` — the target's single note. */
+        @JvmStatic
+        fun notesUri(collection: Uri, id: Long): Uri =
+            collection.buildUpon().appendPath(id.toString()).appendPath(NOTES_PATH).build()
+
+        /** `content://…/<collection>/<id>/memories` — the target's memory map. */
+        @JvmStatic
+        fun memoriesUri(collection: Uri, id: Long): Uri =
+            collection.buildUpon().appendPath(id.toString()).appendPath(MEMORIES_PATH).build()
+
+        /** `content://…/<collection>/<id>/memories/<key>` — one memory entry, for `delete`. */
+        @JvmStatic
+        fun memoryUri(collection: Uri, id: Long, key: String): Uri =
+            memoriesUri(collection, id).buildUpon().appendPath(key).build()
+
+        /**
+         * The target's single free-text **note** (0 or 1 row). MIME type:
+         * `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.note`.
+         */
+        object Notes {
+            const val CONTENT_TYPE: String =
+                "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.note"
+
+            /** Stable annotation row id (the cursor's `_id`). */
+            const val ID: String = "_id"
+
+            /** The note text. Also the [android.content.ContentValues] key for writing it. */
+            const val CONTENT: String = "content"
+
+            /** Last modification time, epoch milliseconds. */
+            const val UPDATED_AT_MS: String = "updated_at_ms"
+
+            @JvmField
+            val COLUMNS: Array<String> = arrayOf(ID, CONTENT, UPDATED_AT_MS)
+        }
+
+        /**
+         * The target's **memory map**, one row per key — a single query on `…/memories` returns the
+         * whole map at once. Values are always plain strings — a write with anything else is
+         * rejected. Each entry additionally carries the writer's [CONFIDENCE] in it. MIME type:
+         * `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.memory`.
+         */
+        object Memories {
+            const val CONTENT_TYPE: String =
+                "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.memory"
+
+            /** The entry's key. Also a [android.content.ContentValues] key for writing. */
+            const val KEY: String = "key"
+
+            /** The entry's string value. Also a [android.content.ContentValues] key for writing. */
+            const val VALUE: String = "value"
+
+            /**
+             * The writer's confidence in this entry, a float in **[0, 1]**. Optional on writes
+             * (defaults to 1.0 — stated as fact); rewriting a key replaces value and confidence
+             * together. Always present on reads.
+             */
+            const val CONFIDENCE: String = "confidence"
+
+            /** When the target's memory map was last modified (map-wide), epoch milliseconds. */
+            const val UPDATED_AT_MS: String = "updated_at_ms"
+
+            @JvmField
+            val COLUMNS: Array<String> = arrayOf(KEY, VALUE, CONFIDENCE, UPDATED_AT_MS)
         }
     }
 

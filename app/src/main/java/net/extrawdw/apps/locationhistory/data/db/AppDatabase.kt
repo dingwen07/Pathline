@@ -32,6 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun backupDao(): BackupDao
     abstract fun tagDao(): TagDao
     abstract fun annotationDao(): AnnotationDao
+    abstract fun searchDao(): SearchDao
 
     companion object {
         const val NAME = "pathline.db"

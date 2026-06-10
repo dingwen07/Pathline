@@ -76,11 +76,19 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
         } else {
             val summary = dataSummary(ctx, recent)
             notificationId = Notifications.apiAccessReadNotificationId(pkg)
-            title = ctx.getString(R.string.api_notify_read_title)
-            text = if (summary != null) {
-                ctx.getString(R.string.api_notify_read_text_one, label, summary)
-            } else {
-                ctx.getString(R.string.api_notify_read_text_generic, label)
+            // Annotation writes ride the read lane (same back-off); when the window holds ONLY
+            // writes, say "updated" instead of "accessed".
+            val successes = recent.filter { it.deniedPermission == null }
+            val onlyWrites = successes.isNotEmpty() && successes.all { it.isWrite }
+            title = ctx.getString(
+                if (onlyWrites) R.string.api_notify_write_title else R.string.api_notify_read_title,
+            )
+            text = when {
+                summary != null && onlyWrites ->
+                    ctx.getString(R.string.api_notify_write_text_one, label, summary)
+                summary != null ->
+                    ctx.getString(R.string.api_notify_read_text_one, label, summary)
+                else -> ctx.getString(R.string.api_notify_read_text_generic, label)
             }
         }
 
@@ -155,6 +163,15 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
                         nf.format(it)
                     )
                 )
+            }
+            maxByType["tags"]?.let {
+                add(ctx.getString(R.string.api_notify_data_tags, nf.format(it)))
+            }
+            maxByType["notes"]?.let {
+                add(ctx.getString(R.string.api_notify_data_notes, nf.format(it)))
+            }
+            maxByType["memories"]?.let {
+                add(ctx.getString(R.string.api_notify_data_memories, nf.format(it)))
             }
         }
         if (parts.isEmpty()) return null

@@ -24,8 +24,8 @@ import javax.inject.Singleton
 /** A scope another app can request, paired with the OS permission that gates it. */
 enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) {
     TIMELINE(PathlineContract.Permissions.READ_TIMELINE, R.string.api_scope_timeline),
-    TIMELINE_ROUTE(
-        PathlineContract.Permissions.READ_TIMELINE_ROUTE,
+    TIMELINE_ROUTES(
+        PathlineContract.Permissions.READ_TIMELINE_ROUTES,
         R.string.api_scope_timeline_route
     ),
     LOCATION_HISTORY(
@@ -35,6 +35,26 @@ enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) 
     EXTENDED_HISTORY(
         PathlineContract.Permissions.READ_EXTENDED_HISTORY,
         R.string.api_scope_extended_history
+    ),
+    ALL_PLACES(
+        PathlineContract.Permissions.READ_ALL_PLACES,
+        R.string.api_scope_all_places
+    ),
+    ANNOTATIONS(
+        PathlineContract.Permissions.READ_ANNOTATIONS,
+        R.string.api_scope_annotations
+    ),
+    SEARCH(
+        PathlineContract.Permissions.SEARCH_DATA,
+        R.string.api_scope_search
+    ),
+    WRITE_ANNOTATIONS(
+        PathlineContract.Permissions.WRITE_ANNOTATIONS,
+        R.string.api_scope_write_annotations
+    ),
+    WRITE_NOTES(
+        PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
+        R.string.api_scope_write_notes
     );
 
     companion object {
@@ -43,6 +63,11 @@ enum class ApiScope(val permission: String, @param:StringRes val labelRes: Int) 
             PathlineContract.Places.PATH, PathlineContract.Places.VISITS_DATA_TYPE -> TIMELINE
 
             PathlineContract.Samples.PATH -> LOCATION_HISTORY
+
+            PathlineContract.Tags.PATH,
+            PathlineContract.Annotations.NOTES_PATH,
+            PathlineContract.Annotations.MEMORIES_PATH -> ANNOTATIONS
+
             else -> null
         }
     }

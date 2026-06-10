@@ -104,9 +104,10 @@ data class PlaceEntity(
 )
 
 /**
- * A user/agent **tag**. [canonicalName] is the dedup key — [displayName] lowercased with spaces, `-`
- * and `_` removed — so "Coffee Shop", "coffee-shop", "COFFEE_SHOP" collapse to one row.
- * [displayName] keeps the most recent human spelling. Tags attach to targets via [EntityTagEntity].
+ * A user/agent **tag**. [canonicalName] is the dedup key — [displayName] lowercased with every run
+ * of whitespace/`-`/`_` collapsed to a single `-` — so "Coffee Shop", "coffee-shop", "COFFEE_SHOP"
+ * collapse to one row while "coffeeshop" stays distinct. [displayName] keeps the most recent human
+ * spelling. Tags attach to targets via [EntityTagEntity].
  */
 @Serializable
 @Entity(

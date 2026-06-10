@@ -337,6 +337,18 @@
     <string name="perm_read_extended_history_description">读取 30 天前的 Pathline 数据</string>
     <string name="perm_group_location_history_label">Pathline 位置历史</string>
     <string name="perm_group_location_history_description">读取 Pathline 记录的精确轨迹和原始位置采样</string>
+    <string name="perm_read_all_places_label">读取所有 Pathline 地点</string>
+    <string name="perm_read_all_places_description">读取 Pathline 中保存的所有地点</string>
+    <string name="perm_read_annotations_label">读取 Pathline 标签和笔记</string>
+    <string name="perm_read_annotations_description">读取附加在 Pathline 地点、访问和行程上的标签、笔记和记忆</string>
+    <string name="perm_search_data_label">搜索 Pathline 数据</string>
+    <string name="perm_search_data_description">搜索 Pathline 中的地点、访问、行程和标签</string>
+    <string name="perm_write_annotations_label">编辑 Pathline 标签和记忆</string>
+    <string name="perm_write_annotations_description">在 Pathline 地点、访问和行程上添加或移除标签和记忆</string>
+    <string name="perm_write_annotations_notes_label">编辑 Pathline 笔记</string>
+    <string name="perm_write_annotations_notes_description">在 Pathline 地点、访问和行程上创建或修改笔记</string>
+    <string name="perm_group_search_label">Pathline 搜索</string>
+    <string name="perm_group_search_description">搜索并读取 Pathline 中保存的地点、标签和笔记</string>
 
     <!-- ===================== API 访问管理 ===================== -->
     <string name="settings_api_access_title">访问 Pathline 数据</string>
@@ -387,12 +399,21 @@
     <string name="api_scope_timeline_route">行程轨迹</string>
     <string name="api_scope_location_history">位置历史</string>
     <string name="api_scope_extended_history">历史数据</string>
+    <string name="api_scope_all_places">所有地点</string>
+    <string name="api_scope_annotations">标签和笔记</string>
+    <string name="api_scope_search">搜索</string>
+    <string name="api_scope_write_annotations">编辑标签和记忆</string>
+    <string name="api_scope_write_notes">编辑笔记</string>
     <string name="api_data_visits">访问地点</string>
     <string name="api_data_trips">行程</string>
     <string name="api_data_samples">位置采样</string>
     <string name="api_data_places">地点</string>
     <string name="api_data_place_visits">地点历史</string>
+    <string name="api_data_tags">标签</string>
+    <string name="api_data_notes">笔记</string>
+    <string name="api_data_memories">记忆</string>
     <string name="api_data_unknown">数据</string>
+    <string name="api_access_event_write_subtitle">更新了 %1$d 个%2$s</string>
 
     <!-- 隐私通知 -->
     <string name="api_access_channel_name">数据访问提醒</string>
@@ -407,6 +428,11 @@
     <string name="api_notify_data_samples">%1$s 个位置采样</string>
     <string name="api_notify_data_places">%1$s 个地点</string>
     <string name="api_notify_data_place_visits">%1$s 条地点历史</string>
+    <string name="api_notify_data_tags">%1$s 个标签</string>
+    <string name="api_notify_data_notes">%1$s 条笔记</string>
+    <string name="api_notify_data_memories">%1$s 条记忆</string>
+    <string name="api_notify_write_title">有应用更新了您的 Pathline 注释</string>
+    <string name="api_notify_write_text_one">%1$s 更新了%2$s。</string>
     <string name="api_notify_data_separator">、</string>
     <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
     <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>

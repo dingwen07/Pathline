@@ -1,4 +1,4 @@
-<!-- Icon shown in the system permission UI for READ_TIMELINE_ROUTE (a trip's encoded route). -->
+<!-- Icon shown in the system permission UI for READ_TIMELINE_ROUTES (a trip's encoded route). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

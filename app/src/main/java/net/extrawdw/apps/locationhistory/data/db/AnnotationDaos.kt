@@ -29,6 +29,18 @@ interface TagDao {
     @Query("SELECT * FROM tags ORDER BY displayName")
     suspend fun all(): List<TagEntity>
 
+    @Query("SELECT * FROM tags WHERE id IN (:ids) ORDER BY displayName")
+    suspend fun byIds(ids: List<Long>): List<TagEntity>
+
+    /** Every tag<->target link. Small by nature (only user-curated content); the data API loads it
+     *  whole to scope the tag list to the caller's visible targets, which span two databases. */
+    @Query("SELECT * FROM entity_tags")
+    suspend fun allLinks(): List<EntityTagEntity>
+
+    /** Targets of [type] carrying any of [tagIds] — the tag leg of the data API's search. */
+    @Query("SELECT DISTINCT targetId FROM entity_tags WHERE targetType = :type AND tagId IN (:tagIds)")
+    suspend fun targetIdsForTags(type: AnnotationTarget, tagIds: List<Long>): List<Long>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun link(link: EntityTagEntity)
 
@@ -39,7 +51,7 @@ interface TagDao {
     suspend fun tagsFor(type: AnnotationTarget, id: Long): List<TagEntity>
 
     @Query("DELETE FROM entity_tags WHERE tagId = :tagId AND targetType = :type AND targetId = :id")
-    suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long)
+    suspend fun unlink(tagId: Long, type: AnnotationTarget, id: Long): Int
 
     /** Drop every tag link for a target (used when the target is deleted; no FK to cascade). */
     @Query("DELETE FROM entity_tags WHERE targetType = :type AND targetId = :id")
@@ -72,6 +84,24 @@ interface AnnotationDao {
 
     @Query("SELECT * FROM annotations WHERE targetType = :type AND targetId = :id")
     suspend fun allForTarget(type: AnnotationTarget, id: Long): List<AnnotationEntity>
+
+    /** Targets of [type] whose note/memory text contains [pattern] (a `%…%` LIKE pattern with `\`
+     *  as escape) — the annotation leg of the data API's search. Substring, case-insensitive. */
+    @Query(
+        "SELECT DISTINCT targetId FROM annotations " +
+            "WHERE targetType = :type AND kind = :kind AND content LIKE :pattern ESCAPE '\\'",
+    )
+    suspend fun targetIdsWithContentLike(
+        type: AnnotationTarget,
+        kind: AnnotationKind,
+        pattern: String,
+    ): List<Long>
+
+    /** Every annotation row of one [kind] for one target [type] — small by nature (one row per
+     *  annotated target). The data API's memory search decodes these and matches in code, because a
+     *  raw LIKE over the stored JSON would also hit its structural keys. */
+    @Query("SELECT * FROM annotations WHERE targetType = :type AND kind = :kind")
+    suspend fun allOfKind(type: AnnotationTarget, kind: AnnotationKind): List<AnnotationEntity>
 
     /** Clear just one payload (note OR memory) of a target, leaving the other intact. */
     @Query("DELETE FROM annotations WHERE targetType = :type AND targetId = :id AND kind = :kind")

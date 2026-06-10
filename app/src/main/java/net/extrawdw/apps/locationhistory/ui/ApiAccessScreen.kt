@@ -610,6 +610,9 @@ private fun groupSummary(events: List<ApiAccessEventEntity>): String {
         maxByType["samples"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_samples)}" },
         maxByType["places"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_places)}" },
         maxByType["place_visits"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_place_visits)}" },
+        maxByType["tags"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_tags)}" },
+        maxByType["notes"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_notes)}" },
+        maxByType["memories"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_memories)}" },
     )
     val requests = stringResource(R.string.api_access_group_requests, events.size)
     return if (parts.isEmpty()) requests
@@ -884,6 +887,14 @@ private fun eventSubtitle(event: ApiAccessEventEntity, zone: ZoneId): String {
         val label = stringResource(scope?.labelRes ?: R.string.api_data_unknown)
         return stringResource(R.string.api_access_event_denied, label, range)
     }
+    // Annotation writes have no requested range (the window is the write instant).
+    if (event.isWrite) {
+        return stringResource(
+            R.string.api_access_event_write_subtitle,
+            event.rowCount,
+            dataTypeLabel(event.dataType),
+        )
+    }
     val base = stringResource(
         R.string.api_access_event_subtitle,
         event.rowCount,
@@ -905,6 +916,9 @@ private fun dataTypeLabel(dataType: String): String = stringResource(
         "samples" -> R.string.api_data_samples
         "places" -> R.string.api_data_places
         "place_visits" -> R.string.api_data_place_visits
+        "tags" -> R.string.api_data_tags
+        "notes" -> R.string.api_data_notes
+        "memories" -> R.string.api_data_memories
         else -> R.string.api_data_unknown
     },
 )
