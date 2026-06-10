@@ -117,7 +117,12 @@ object PathlineContract {
          * listing, only rows matching the text — in the fields selected by [FIELDS] — are returned,
          * in the collection's normal row shape. Matching is case-insensitive; FTS-backed fields
          * (place name/address/category/types, tag names) match on word prefixes, annotation text
-         * matches on substrings. In search mode [START]/[END] become optional on `visits`/`trips`:
+         * matches on substrings. A query of **several words** (whitespace/comma-separated) matches
+         * rows containing **any** of them — OR semantics, each word as its own prefix/substring;
+         * common connector words (`and`, `or`, `the`, ...) are ignored when other words remain, so
+         * `bakery and cafe` means bakery|cafe. Wrap the whole query in double quotes
+         * (`"south lions"`) to require the exact phrase instead. In search mode [START]/[END]
+         * become optional on `visits`/`trips`:
          * when omitted the window clamps per [Permissions.READ_EXTENDED_HISTORY]; an explicit window
          * is enforced exactly like a plain read. See [SearchFields] for the matchable fields.
          */

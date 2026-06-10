@@ -486,20 +486,25 @@ class PathlineProvider : ContentProvider() {
             }
         }
         if (PathlineContract.SearchFields.NOTES in fields) {
-            ids += entryPoint.annotationDao().targetIdsWithContentLike(
-                AnnotationTarget.PLACE, AnnotationKind.NOTE, ApiSearch.likePattern(q),
-            )
+            // One pattern per keyword (any-of), or a single pattern for a quoted phrase.
+            ApiSearch.likePatterns(q).forEach { pattern ->
+                ids += entryPoint.annotationDao().targetIdsWithContentLike(
+                    AnnotationTarget.PLACE, AnnotationKind.NOTE, pattern,
+                )
+            }
         }
         if (PathlineContract.SearchFields.MEMORIES in fields) {
             // Memories are stored as JSON objects; a raw LIKE would also match the structural
             // "value"/"confidence" keys, so decode and match keys + values in code instead.
-            val needle = q.trim()
+            val needles = ApiSearch.needles(q)
             ids += entryPoint.annotationDao()
                 .allOfKind(AnnotationTarget.PLACE, AnnotationKind.MEMORY)
                 .filter { row ->
                     MemoryMap.decode(row.content).any { (key, entry) ->
-                        key.contains(needle, ignoreCase = true) ||
-                                entry.value.contains(needle, ignoreCase = true)
+                        needles.any { needle ->
+                            key.contains(needle, ignoreCase = true) ||
+                                    entry.value.contains(needle, ignoreCase = true)
+                        }
                     }
                 }
                 .map { it.targetId }
@@ -930,9 +935,11 @@ class PathlineProvider : ContentProvider() {
             }
         }
         if (PathlineContract.SearchFields.NOTES in fields) {
-            val ids = entryPoint.annotationDao().targetIdsWithContentLike(
-                AnnotationTarget.VISIT, AnnotationKind.NOTE, ApiSearch.likePattern(q),
-            )
+            val ids = ApiSearch.likePatterns(q).flatMap { pattern ->
+                entryPoint.annotationDao().targetIdsWithContentLike(
+                    AnnotationTarget.VISIT, AnnotationKind.NOTE, pattern,
+                )
+            }.distinct()
             if (ids.isNotEmpty()) {
                 entryPoint.visitDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
             }
@@ -966,9 +973,11 @@ class PathlineProvider : ContentProvider() {
             }
         }
         if (PathlineContract.SearchFields.NOTES in fields) {
-            val ids = entryPoint.annotationDao().targetIdsWithContentLike(
-                AnnotationTarget.TRIP, AnnotationKind.NOTE, ApiSearch.likePattern(q),
-            )
+            val ids = ApiSearch.likePatterns(q).flatMap { pattern ->
+                entryPoint.annotationDao().targetIdsWithContentLike(
+                    AnnotationTarget.TRIP, AnnotationKind.NOTE, pattern,
+                )
+            }.distinct()
             if (ids.isNotEmpty()) {
                 entryPoint.tripDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
             }
