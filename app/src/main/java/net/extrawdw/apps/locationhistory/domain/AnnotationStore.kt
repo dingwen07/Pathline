@@ -1,5 +1,7 @@
 package net.extrawdw.apps.locationhistory.domain
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -188,6 +190,16 @@ class AnnotationStore @Inject constructor(
 ) {
     private fun now() = System.currentTimeMillis()
 
+    /**
+     * Serializes every read-modify-write of a memory map. A map is stored as ONE row, so each
+     * single-key change is decode -> copy -> encode; provider calls arrive concurrently on binder
+     * pool threads, and two unsynchronized writers would silently drop one's entry (lost update).
+     * One process-wide mutex is sufficient (single process, single DB) and also covers the
+     * maintenance fold racing an API write. Tag/note paths don't need it: their writes are
+     * single-row upserts, not read-modify-write.
+     */
+    private val memoryWriteMutex = Mutex()
+
     // --- Tags ----------------------------------------------------------------------------------
 
     /**
@@ -308,29 +320,44 @@ class AnnotationStore @Inject constructor(
         confidence: Float = 1f,
         source: String? = null,
         writer: String? = null,
-    ) = setMemories(
-        target, id,
-        getMemories(target, id) +
-                (
-                        key to MemoryEntry(
-                            value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null },
-                            updatedAtMs = now(),
-                            updatedBy = writer,
-                        )
-                        ),
-        writer,
-    )
+    ) = memoryWriteMutex.withLock {
+        setMemories(
+            target, id,
+            getMemories(target, id) +
+                    (
+                            key to MemoryEntry(
+                                value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null },
+                                updatedAtMs = now(),
+                                updatedBy = writer,
+                            )
+                            ),
+            writer,
+        )
+    }
 
-    /** Remove one memory key. */
+    /** Remove one memory key; true when it existed. */
     suspend fun removeMemory(
         target: AnnotationTarget,
         id: Long,
         key: String,
         writer: String? = null
-    ) {
+    ): Boolean = memoryWriteMutex.withLock {
         val current = getMemories(target, id)
-        if (key in current) setMemories(target, id, current - key, writer)
+        if (key in current) {
+            setMemories(target, id, current - key, writer)
+            true
+        } else {
+            false
+        }
     }
+
+    /** Clear the whole memory map; returns the number of keys removed. */
+    suspend fun clearMemories(target: AnnotationTarget, id: Long, writer: String? = null): Int =
+        memoryWriteMutex.withLock {
+            val current = getMemories(target, id)
+            if (current.isNotEmpty()) setMemories(target, id, emptyMap(), writer)
+            current.size
+        }
 
     // --- Merge fold & cascade delete -----------------------------------------------------------
 
@@ -384,7 +411,11 @@ class AnnotationStore @Inject constructor(
         }
     }
 
-    private suspend fun foldMemory(target: AnnotationTarget, survivorId: Long, dyingId: Long) {
+    private suspend fun foldMemory(
+        target: AnnotationTarget,
+        survivorId: Long,
+        dyingId: Long,
+    ) = memoryWriteMutex.withLock {
         val dying = MemoryMap.decode(
             annotationDao.byTarget(
                 target,
@@ -392,7 +423,7 @@ class AnnotationStore @Inject constructor(
                 AnnotationKind.MEMORY
             )?.content
         )
-        if (dying.isEmpty()) return
+        if (dying.isEmpty()) return@withLock
         val merged = LinkedHashMap(
             MemoryMap.decode(
                 annotationDao.byTarget(

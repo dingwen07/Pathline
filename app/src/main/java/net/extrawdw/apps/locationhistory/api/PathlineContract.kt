@@ -75,6 +75,17 @@ object PathlineContract {
     /** Authority of the Pathline data provider. Matches `applicationId` + `.provider`. */
     const val AUTHORITY: String = "net.extrawdw.apps.locationhistory.provider"
 
+    /**
+     * Version of this contract, reported live by the provider as [Status.API_VERSION]. A consumer
+     * compares it against the constant its bundled contract copy was built from: a **lower** value
+     * from the provider means the installed Pathline predates columns/URIs this copy documents
+     * (degrade gracefully — don't query what it can't know); a **higher** value is fine (the API
+     * only grows; existing columns keep their meaning once a version ships). History: 1 = timeline
+     * + samples + places; 2 = places types / visit-history / search / annotations; 3 = memory
+     * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts.
+     */
+    const val API_VERSION: Int = 3
+
     private val BASE: Uri = Uri.parse("content://$AUTHORITY")
 
     /** Time window (in milliseconds) that is always readable with only the base permissions. A
@@ -970,7 +981,8 @@ object PathlineContract {
 
     /**
      * Read-only status of the data API, for a consumer to check before reading. Returns a single row
-     * reporting whether the user's access switch is on ([ACCESS_ENABLED]).
+     * reporting whether the user's access switch is on ([ACCESS_ENABLED]) and which contract version
+     * the installed Pathline speaks ([API_VERSION]).
      *
      * Unlike the data collections it is **always answerable** — it needs no runtime permission, is not
      * gated by the access switch ([ACCESS_ENABLED] is exactly what it reports), and is not recorded in
@@ -990,8 +1002,15 @@ object PathlineContract {
         /** 1 when the user has turned third-party data access on, else 0 (all data reads are denied). */
         const val ACCESS_ENABLED: String = "access_enabled"
 
+        /**
+         * The provider's live [PathlineContract.API_VERSION]. Read it defensively (the column is
+         * absent on providers older than version 3) and compare against the constant in your
+         * bundled contract copy — see [PathlineContract.API_VERSION] for the semantics.
+         */
+        const val API_VERSION: String = "api_version"
+
         @JvmField
-        val COLUMNS: Array<String> = arrayOf(ACCESS_ENABLED)
+        val COLUMNS: Array<String> = arrayOf(ACCESS_ENABLED, API_VERSION)
     }
 
     /** Intents a consumer can fire toward Pathline. */

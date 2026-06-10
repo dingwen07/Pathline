@@ -1298,7 +1298,7 @@ class PathlineProvider : ContentProvider() {
      */
     private fun statusCursor(): Cursor {
         val cursor = MatrixCursor(PathlineContract.Status.COLUMNS, 1)
-        cursor.addRow(arrayOf<Any?>(if (apiAccessEnabled()) 1 else 0))
+        cursor.addRow(arrayOf<Any?>(if (apiAccessEnabled()) 1 else 0, PathlineContract.API_VERSION))
         return cursor
     }
 
@@ -1610,15 +1610,10 @@ class PathlineProvider : ContentProvider() {
             uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
+        // The read-modify-write lives in the store, under its memory-write mutex — doing it here
+        // would race other binder threads.
         val removed = runBlocking {
-            val store = entryPoint.annotationStore()
-            val current = store.getMemories(target, id)
-            if (key in current) {
-                store.setMemories(target, id, current - key, callingPackage)
-                1
-            } else {
-                0
-            }
+            if (entryPoint.annotationStore().removeMemory(target, id, key, callingPackage)) 1 else 0
         }
         logAccess(DATA_TYPE_MEMORIES, now, now, removed, now, groupId, null, null, isWrite = true)
         if (removed > 0) notifyChanged(uri)
@@ -1633,10 +1628,7 @@ class PathlineProvider : ContentProvider() {
             DATA_TYPE_MEMORIES, now,
         )
         val removed = runBlocking {
-            val store = entryPoint.annotationStore()
-            val current = store.getMemories(target, id)
-            if (current.isNotEmpty()) store.setMemories(target, id, emptyMap())
-            current.size
+            entryPoint.annotationStore().clearMemories(target, id, callingPackage)
         }
         logAccess(DATA_TYPE_MEMORIES, now, now, removed, now, groupId, null, null, isWrite = true)
         if (removed > 0) notifyChanged(uri)
