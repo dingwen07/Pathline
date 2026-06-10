@@ -145,6 +145,10 @@ class ApiAccessRepository @Inject constructor(
     ): Int =
         dao.pruneBefore(nowMs - retentionDays.toLong() * MS_PER_DAY)
 
+    /** Deletes the entire access log now. The place-grant ledger is deliberately kept — the log is
+     *  history, the grants are access state. Returns the number of rows removed. */
+    suspend fun clearAllLogs(): Int = dao.clearAll()
+
     /** The scheduled path: prune per the saved config, but only while auto-cleanup is enabled. */
     suspend fun runScheduledCleanup(nowMs: Long): Int {
         val config = cleanupConfig()

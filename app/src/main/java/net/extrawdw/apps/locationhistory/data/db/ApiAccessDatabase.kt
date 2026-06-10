@@ -154,6 +154,10 @@ interface ApiAccessDao {
     /** Deletes rows older than [cutoffMs]; returns the number removed. */
     @Query("DELETE FROM api_access_events WHERE timestampMs < :cutoffMs")
     suspend fun pruneBefore(cutoffMs: Long): Int
+
+    /** Deletes the whole access log (the place-grant ledger is untouched); returns the count. */
+    @Query("DELETE FROM api_access_events")
+    suspend fun clearAll(): Int
 }
 
 /**

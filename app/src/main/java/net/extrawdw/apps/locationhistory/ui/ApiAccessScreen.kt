@@ -162,6 +162,17 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
             },
+            onClearAll = {
+                scope.launch {
+                    val removed = viewModel.clearAllLogs()
+                    val msg = if (removed > 0) {
+                        context.getString(R.string.api_access_clear_all_done, removed)
+                    } else {
+                        context.getString(R.string.api_access_clear_all_none)
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+            },
             onResetBackoff = {
                 viewModel.resetNotificationBackoff()
                 Toast.makeText(context, R.string.api_access_backoff_reset, Toast.LENGTH_SHORT)
@@ -701,6 +712,7 @@ private fun MaintenanceDialog(
     onDismiss: () -> Unit,
     onSave: (enabled: Boolean, retentionDays: Int) -> Unit,
     onCleanupNow: (retentionDays: Int) -> Unit,
+    onClearAll: () -> Unit,
     onResetBackoff: () -> Unit,
 ) {
     var enabled by remember { mutableStateOf(config.enabled) }
@@ -786,6 +798,15 @@ private fun MaintenanceDialog(
                     modifier = Modifier.align(Alignment.End)
                 ) {
                     Text(stringResource(R.string.api_access_cleanup_now))
+                }
+                TextButton(
+                    onClick = onClearAll,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(
+                        stringResource(R.string.api_access_clear_all),
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 TextButton(onClick = onResetBackoff, modifier = Modifier.align(Alignment.End)) {

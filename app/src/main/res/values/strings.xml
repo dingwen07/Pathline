@@ -416,6 +416,9 @@
     <string name="api_access_cleanup_now">Delete old logs now</string>
     <string name="api_access_cleanup_done">Deleted %1$d old log entries.</string>
     <string name="api_access_cleanup_none">No logs old enough to delete.</string>
+    <string name="api_access_clear_all">Clear all logs now</string>
+    <string name="api_access_clear_all_done">Cleared the access log (%1$d entries).</string>
+    <string name="api_access_clear_all_none">The access log is already empty.</string>
     <string name="api_access_notif_off_title">Notifications are off</string>
     <string name="api_access_notif_off_desc">Pathline can\'t alert you when another app reads your timeline or location history. Turn on notifications to stay aware of who accesses your data.</string>
     <string name="api_access_notif_off_enable">Turn on</string>

@@ -392,6 +392,9 @@
     <string name="api_access_cleanup_now">立即删除旧日志</string>
     <string name="api_access_cleanup_done">已删除 %1$d 条旧日志。</string>
     <string name="api_access_cleanup_none">没有足够旧的日志可删除。</string>
+    <string name="api_access_clear_all">立即清空全部日志</string>
+    <string name="api_access_clear_all_done">已清空访问日志（%1$d 条）。</string>
+    <string name="api_access_clear_all_none">访问日志已是空的。</string>
     <string name="api_access_notif_off_title">通知已关闭</string>
     <string name="api_access_notif_off_desc">当其他应用读取您的时间线或位置历史时，Pathline 无法提醒您。请开启通知，以便随时了解谁访问了您的数据。</string>
     <string name="api_access_notif_off_enable">开启</string>

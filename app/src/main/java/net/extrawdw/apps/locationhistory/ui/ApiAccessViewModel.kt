@@ -112,6 +112,13 @@ class ApiAccessViewModel @Inject constructor(
         return removed
     }
 
+    /** Immediately delete the whole access log (place grants stay); refreshes and returns the count. */
+    suspend fun clearAllLogs(): Int {
+        val removed = withContext(Dispatchers.IO) { repo.clearAllLogs() }
+        refresh()
+        return removed
+    }
+
     private fun decodeIcon(bytes: ByteArray): ImageBitmap? =
         runCatching {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size).asImageBitmap()
