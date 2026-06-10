@@ -349,6 +349,8 @@
     <string name="perm_write_annotations_notes_description">在 Pathline 地点、访问和行程上创建或修改笔记</string>
     <string name="perm_group_search_label">Pathline 搜索</string>
     <string name="perm_group_search_description">搜索并读取 Pathline 中保存的地点、标签和笔记</string>
+    <string name="perm_group_write_annotations_label">编辑 Pathline 注释</string>
+    <string name="perm_group_write_annotations_description">在 Pathline 地点、访问和行程上添加或修改标签、笔记和记忆</string>
 
     <!-- ===================== API 访问管理 ===================== -->
     <string name="settings_api_access_title">访问 Pathline 数据</string>

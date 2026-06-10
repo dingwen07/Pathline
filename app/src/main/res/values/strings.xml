@@ -369,6 +369,8 @@
     <string name="perm_write_annotations_notes_description">create and change notes on Pathline places, visits and trips</string>
     <string name="perm_group_search_label">Pathline search</string>
     <string name="perm_group_search_description">search and read places, tags and notes saved in Pathline</string>
+    <string name="perm_group_write_annotations_label">Edit Pathline annotations</string>
+    <string name="perm_group_write_annotations_description">add and change tags, notes and memories on Pathline places, visits and trips</string>
 
     <!-- ===================== API access manager ===================== -->
     <string name="settings_api_access_title">Access to Pathline data</string>

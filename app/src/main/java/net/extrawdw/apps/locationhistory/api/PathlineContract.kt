@@ -210,12 +210,17 @@ object PathlineContract {
         /**
          * Create/update/delete **tags and memories** on visible targets (see [Annotations]). The
          * structured, agent-friendly write tier. Notes are deliberately carved out into
-         * [WRITE_ANNOTATIONS_NOTES] — they are human prose.
+         * [WRITE_ANNOTATIONS_NOTES] — they are human prose. The two write permissions share one
+         * permission **group** (a single "edit my annotations" sensitivity tier): once the user
+         * grants either, the other — if declared — is granted without a second prompt, and they
+         * are revoked together. The tags+memories vs notes split is enforced by **declaration**:
+         * an app that declares only this permission never gains note writes.
          */
         const val WRITE_ANNOTATIONS: String =
             "net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS"
 
-        /** Create/update/delete **notes** on visible targets (see [Annotations]). */
+        /** Create/update/delete **notes** on visible targets (see [Annotations]). Grouped with
+         *  [WRITE_ANNOTATIONS] — granted/revoked together once either is approved; see there. */
         const val WRITE_ANNOTATIONS_NOTES: String =
             "net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS_NOTES"
 

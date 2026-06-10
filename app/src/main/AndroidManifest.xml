@@ -83,15 +83,23 @@
       Annotation + search tier (see the data-API v3 design). SEARCH_DATA, READ_ALL_PLACES and
       READ_ANNOTATIONS share a group on purpose: search is only useful over a corpus, so the three
       grant and revoke as one tier. READ_EXTENDED_HISTORY deliberately stays OUTSIDE it - searching
-      must not quietly unlock deep history. The write permissions are ungrouped: WRITE_ANNOTATIONS
-      covers the structured, agent-friendly content (tags + memories) while notes - human prose -
-      are carved out into their own WRITE_ANNOTATIONS_NOTES.
+      must not quietly unlock deep history. The two WRITE_* permissions share their own group: both
+      are "edit my annotations" sensitivity, so they grant and revoke as one editing tier. The
+      tags+memories vs notes split stays enforced by DECLARATION - an app that doesn't declare
+      WRITE_ANNOTATIONS_NOTES never gains note writes even with the group granted - exactly like
+      READ_TIMELINE_ROUTES vs READ_LOCATION_HISTORY above.
     -->
     <permission-group
         android:name="net.extrawdw.apps.locationhistory.permission-group.SEARCH"
         android:icon="@drawable/ic_perm_search"
         android:label="@string/perm_group_search_label"
         android:description="@string/perm_group_search_description" />
+
+    <permission-group
+        android:name="net.extrawdw.apps.locationhistory.permission-group.WRITE_ANNOTATIONS"
+        android:icon="@drawable/ic_perm_write"
+        android:label="@string/perm_group_write_annotations_label"
+        android:description="@string/perm_group_write_annotations_description" />
 
     <permission
         android:name="net.extrawdw.apps.locationhistory.permission.READ_ALL_PLACES"
@@ -120,6 +128,7 @@
     <permission
         android:name="net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS"
         android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.WRITE_ANNOTATIONS"
         android:icon="@drawable/ic_perm_write"
         android:label="@string/perm_write_annotations_label"
         android:description="@string/perm_write_annotations_description" />
@@ -127,6 +136,7 @@
     <permission
         android:name="net.extrawdw.apps.locationhistory.permission.WRITE_ANNOTATIONS_NOTES"
         android:protectionLevel="dangerous"
+        android:permissionGroup="net.extrawdw.apps.locationhistory.permission-group.WRITE_ANNOTATIONS"
         android:icon="@drawable/ic_perm_write"
         android:label="@string/perm_write_annotations_notes_label"
         android:description="@string/perm_write_annotations_notes_description" />
