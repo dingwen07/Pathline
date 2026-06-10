@@ -715,7 +715,9 @@ class PathlineProvider : ContentProvider() {
         val entries = MemoryMap.decode(row?.content)
         val cursor = MatrixCursor(PathlineContract.Annotations.Memories.COLUMNS, entries.size)
         for ((k, e) in entries) {
-            cursor.addRow(arrayOf<Any?>(k, e.value, e.confidence, e.source, row!!.updatedAtMs))
+            // Entries stored before per-entry stamps existed have no stamp; null rather than a
+            // misleading fallback (the row's map-wide time moves with every write to the map).
+            cursor.addRow(arrayOf<Any?>(k, e.value, e.confidence, e.source, e.updatedAtMs))
         }
         logAccess(DATA_TYPE_MEMORIES, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }

@@ -41,29 +41,33 @@ object TagCanonicalizer {
 
 /**
  * One **memory** entry: the string [value] an agent stored under a key, with the agent's
- * [confidence] in it (in [0,1]; 1 when never stated) and an optional free-form [source] — the
- * writer's own provenance note ("user stated in chat", "inferred from visit:675 note"). Values are
- * always plain strings — the flat string->string rule of the data-API design; confidence and source
- * are metadata beside the value, never inside it.
+ * [confidence] in it (in [0,1]; 1 when never stated), an optional free-form [source] — the
+ * writer's own provenance note ("user stated in chat", "inferred from visit:675 note") — and
+ * [updatedAtMs], when this key was last written (null only for entries stored before per-entry
+ * stamps existed, which read back with no time at all). Values are always plain strings —
+ * the flat string->string rule of the data-API design; confidence, source and the stamp are
+ * metadata beside the value, never inside it.
  */
 data class MemoryEntry(
     val value: String,
     val confidence: Float = 1f,
     val source: String? = null,
+    val updatedAtMs: Long? = null,
 )
 
 /**
  * Serialization for a **memory** payload: a *flat* key->[MemoryEntry] map stored as a JSON object of
- * `{"value": <string>, "confidence": <0..1>, "source": <string?>}` objects. The map models an
- * agent's structured KV scratchpad; JSON is only the on-disk format. The "values must be plain
- * strings" rule of the public API is enforced at the provider write path (a memory write carries
- * value, confidence and source as separate typed fields), not here.
+ * `{"value": <string>, "confidence": <0..1>, "source": <string?>, "updatedAtMs": <long?>}` objects.
+ * The map models an agent's structured KV scratchpad; JSON is only the on-disk format. The "values
+ * must be plain strings" rule of the public API is enforced at the provider write path (a memory
+ * write carries value, confidence and source as separate typed fields), not here.
  */
 object MemoryMap {
     private val json = Json
     private const val VALUE = "value"
     private const val CONFIDENCE = "confidence"
     private const val SOURCE = "source"
+    private const val UPDATED_AT = "updatedAtMs"
 
     /** Serialize a flat map to its stored JSON-object form (insertion order preserved). */
     fun encode(entries: Map<String, MemoryEntry>): String =
@@ -74,6 +78,7 @@ object MemoryMap {
                         put(VALUE, JsonPrimitive(e.value))
                         put(CONFIDENCE, JsonPrimitive(e.confidence))
                         e.source?.let { put(SOURCE, JsonPrimitive(it)) }
+                        e.updatedAtMs?.let { put(UPDATED_AT, JsonPrimitive(it)) }
                     },
                 )
             },
@@ -83,7 +88,8 @@ object MemoryMap {
      * Lenient read of our own storage: tolerate null/blank/garbage as an empty map and silently drop
      * any malformed entry (the writer never produces them; this just keeps a corrupt row from
      * throwing on read). A bare string value (the pre-confidence dev format) reads as confidence 1;
-     * an out-of-range confidence is clamped.
+     * an out-of-range confidence is clamped; a missing/invalid stamp (any pre-stamp format) reads
+     * as null.
      */
     fun decode(content: String?): Map<String, MemoryEntry> {
         if (content.isNullOrBlank()) return emptyMap()
@@ -100,7 +106,9 @@ object MemoryMap {
                             ?.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
                         val source = (v[SOURCE] as? JsonPrimitive)?.takeIf { it.isString }?.content
                             ?.trim()?.ifEmpty { null }
-                        put(k, MemoryEntry(value, confidence, source))
+                        val updatedAt = (v[UPDATED_AT] as? JsonPrimitive)?.content?.toLongOrNull()
+                            ?.takeIf { it > 0 }
+                        put(k, MemoryEntry(value, confidence, source, updatedAt))
                     }
 
                     else -> continue
@@ -258,7 +266,8 @@ class AnnotationStore @Inject constructor(
         )
 
     /** Set one memory key, leaving the rest of the map intact. [confidence] is clamped to [0,1];
-     *  [source] is the writer's provenance note (null = none; a rewrite replaces it). */
+     *  [source] is the writer's provenance note (null = none; a rewrite replaces it). The entry is
+     *  stamped with the write time. */
     suspend fun putMemory(
         target: AnnotationTarget,
         id: Long,
@@ -269,7 +278,12 @@ class AnnotationStore @Inject constructor(
     ) = setMemories(
         target, id,
         getMemories(target, id) +
-            (key to MemoryEntry(value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null })),
+            (
+                key to MemoryEntry(
+                    value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null },
+                    updatedAtMs = now(),
+                )
+                ),
     )
 
     /** Remove one memory key. */
@@ -336,6 +350,9 @@ class AnnotationStore @Inject constructor(
         )
         for ((k, d) in dying) {
             val s = merged[k]
+            // The fold itself is not a write — the combined entry carries the later of the two
+            // writers' stamps (null only when both halves predate per-entry stamps).
+            val foldedAt = listOfNotNull(s?.updatedAtMs, d.updatedAtMs).maxOrNull()
             merged[k] = when {
                 s == null -> d
                 // Equal values collapse to one; the stronger claim survives (its confidence AND
@@ -347,6 +364,7 @@ class AnnotationStore @Inject constructor(
                         maxOf(s.confidence, d.confidence),
                         if (d.confidence > s.confidence) d.source ?: s.source
                         else s.source ?: d.source,
+                        foldedAt,
                     )
                 // Differing values concatenate oldest-first; the combined text is at most as
                 // trustworthy as its weaker half, and its provenance is both origins.
@@ -355,6 +373,7 @@ class AnnotationStore @Inject constructor(
                         foldText(s.value, d.value) ?: d.value,
                         minOf(s.confidence, d.confidence),
                         foldSources(s.source, d.source),
+                        foldedAt,
                     )
             }
         }

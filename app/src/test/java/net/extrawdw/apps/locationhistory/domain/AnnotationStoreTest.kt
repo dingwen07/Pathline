@@ -9,6 +9,7 @@ import net.extrawdw.apps.locationhistory.data.db.EntityTagEntity
 import net.extrawdw.apps.locationhistory.data.db.TagDao
 import net.extrawdw.apps.locationhistory.data.db.TagEntity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,12 +69,17 @@ class AnnotationStoreTest {
     fun memories_differingValuesFoldToConcatWithWeakerConfidence() = runBlocking {
         store.putMemory(AnnotationTarget.VISIT, 10, "k", "old", 0.9f)
         store.putMemory(AnnotationTarget.VISIT, 11, "k", "new", 0.4f)
+        val newerStamp = maxOf(
+            store.getMemories(AnnotationTarget.VISIT, 10).getValue("k").updatedAtMs!!,
+            store.getMemories(AnnotationTarget.VISIT, 11).getValue("k").updatedAtMs!!,
+        )
 
         store.foldOnMerge(AnnotationTarget.VISIT, survivorId = 10, dyingId = 11)
 
         val folded = store.getMemories(AnnotationTarget.VISIT, 10).getValue("k")
         assertEquals("old\n\nnew", folded.value)
         assertEquals(0.4f, folded.confidence, 0f) // differing values -> min confidence
+        assertEquals(newerStamp, folded.updatedAtMs) // fold keeps the later write stamp
     }
 
     @Test
@@ -96,6 +102,7 @@ class AnnotationStoreTest {
         val memories = store.getMemories(AnnotationTarget.PLACE, 30)
         assertEquals(1f, memories.getValue("fact").confidence, 0f)
         assertEquals(1f, memories.getValue("hunch").confidence, 0f) // clamped to [0,1]
+        assertNotNull(memories.getValue("fact").updatedAtMs) // every write stamps its entry
     }
 
     @Test

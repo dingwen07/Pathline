@@ -755,7 +755,13 @@ object PathlineContract {
              */
             const val SOURCE: String = "source"
 
-            /** When the target's memory map was last modified (map-wide), epoch milliseconds. */
+            /**
+             * When **this entry** was last written, epoch milliseconds — the staleness signal
+             * beside [CONFIDENCE] (a rewrite of the key refreshes it; writes to other keys don't).
+             * When a timeline merge folds two entries, the combined entry keeps the later of the
+             * two stamps. **Nullable**: null for entries stored before per-entry stamps existed
+             * (no last-write time is known for them).
+             */
             const val UPDATED_AT_MS: String = "updated_at_ms"
 
             @JvmField

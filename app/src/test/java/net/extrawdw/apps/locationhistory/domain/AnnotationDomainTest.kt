@@ -43,9 +43,26 @@ class AnnotationDomainTest {
         val map = linkedMapOf(
             "home" to MemoryEntry("1 Main St"),
             "vibe" to MemoryEntry("quiet", 0.6f),
-            "stars" to MemoryEntry("4", 0.85f, "user statement"),
+            "stars" to MemoryEntry("4", 0.85f, "user statement", 1_700_000_000_000L),
         )
         assertEquals(map.toList(), MemoryMap.decode(MemoryMap.encode(map)).toList())
+    }
+
+    @Test
+    fun memory_updatedAtIsOptionalAndOmittedWhenNull() {
+        // A pre-stamp stored entry decodes with a null stamp (readers fall back to the row time).
+        assertNull(MemoryMap.decode("""{"a":{"value":"x","confidence":0.5}}""").getValue("a").updatedAtMs)
+        // A non-positive stamp reads as none rather than a bogus instant.
+        assertNull(MemoryMap.decode("""{"a":{"value":"x","updatedAtMs":0}}""").getValue("a").updatedAtMs)
+        // A null stamp is omitted from the encoded form entirely; a present one is stored.
+        assertEquals(
+            """{"a":{"value":"x","confidence":1.0}}""",
+            MemoryMap.encode(mapOf("a" to MemoryEntry("x"))),
+        )
+        assertEquals(
+            """{"a":{"value":"x","confidence":1.0,"updatedAtMs":42}}""",
+            MemoryMap.encode(mapOf("a" to MemoryEntry("x", updatedAtMs = 42L))),
+        )
     }
 
     @Test
