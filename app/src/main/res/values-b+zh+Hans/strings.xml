@@ -88,6 +88,7 @@
     <string name="cd_remove_tag">移除标签</string>
     <string name="annotations_memories_label">记忆</string>
     <string name="annotations_memories_hint">由你已连接的应用保存。仅供查看。</string>
+    <string name="annotations_memory_source">来源：%1$s</string>
     <!-- Trip brief in the annotation header: distance · duration -->
     <string name="trip_brief">%1$s · %2$s</string>
     <string name="trip_summary">%1$s · %2$s · %3$s</string>

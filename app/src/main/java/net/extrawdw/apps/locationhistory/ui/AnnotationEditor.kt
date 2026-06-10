@@ -176,23 +176,32 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             state.memories.forEach { (key, entry) ->
-                Row(
+                Column(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(
-                        key,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(entry.value, style = MaterialTheme.typography.bodyMedium)
-                    // Only a hedged entry shows its confidence; "stated as fact" (1.0) stays clean.
-                    if (entry.confidence < 1f) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            "${(entry.confidence * 100).roundToInt()}%",
+                            key,
                             style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(entry.value, style = MaterialTheme.typography.bodyMedium)
+                        // Only a hedged entry shows its confidence; "stated as fact" (1.0) stays clean.
+                        if (entry.confidence < 1f) {
+                            Text(
+                                "${(entry.confidence * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    // Where the writer says the fact came from — transparency for agent writes.
+                    entry.source?.let { source ->
+                        Text(
+                            stringResource(R.string.annotations_memory_source, source),
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

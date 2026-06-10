@@ -717,16 +717,27 @@ object PathlineContract {
 
             /**
              * The writer's confidence in this entry, a float in **[0, 1]**. Optional on writes
-             * (defaults to 1.0 — stated as fact); rewriting a key replaces value and confidence
-             * together. Always present on reads.
+             * (defaults to 1.0 — stated as fact); rewriting a key replaces value, confidence and
+             * source together. Always present on reads.
              */
             const val CONFIDENCE: String = "confidence"
+
+            /**
+             * The writer's free-form **provenance note** for this entry — where the fact came from
+             * (e.g. `user statement`, `inferred from visit:675 note`). Optional on writes (omitted
+             * = none; rewriting a key replaces it with the new write's source or clears it);
+             * nullable on reads. This is the writer's self-description, **not** trusted
+             * attribution — the audit log records which app actually wrote. When a timeline merge
+             * folds two entries with differing values, their sources join `"a; b"` oldest-first;
+             * equal values keep the stronger claim's source.
+             */
+            const val SOURCE: String = "source"
 
             /** When the target's memory map was last modified (map-wide), epoch milliseconds. */
             const val UPDATED_AT_MS: String = "updated_at_ms"
 
             @JvmField
-            val COLUMNS: Array<String> = arrayOf(KEY, VALUE, CONFIDENCE, UPDATED_AT_MS)
+            val COLUMNS: Array<String> = arrayOf(KEY, VALUE, CONFIDENCE, SOURCE, UPDATED_AT_MS)
         }
     }
 

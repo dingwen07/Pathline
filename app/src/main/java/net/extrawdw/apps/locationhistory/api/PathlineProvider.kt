@@ -708,7 +708,7 @@ class PathlineProvider : ContentProvider() {
         val entries = MemoryMap.decode(row?.content)
         val cursor = MatrixCursor(PathlineContract.Annotations.Memories.COLUMNS, entries.size)
         for ((k, e) in entries) {
-            cursor.addRow(arrayOf<Any?>(k, e.value, e.confidence, row!!.updatedAtMs))
+            cursor.addRow(arrayOf<Any?>(k, e.value, e.confidence, e.source, row!!.updatedAtMs))
         }
         logAccess(DATA_TYPE_MEMORIES, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
@@ -1235,11 +1235,24 @@ class PathlineProvider : ContentProvider() {
         require(confidence in 0f..1f) {
             "'${PathlineContract.Annotations.Memories.CONFIDENCE}' must be within [0, 1], got $confidence"
         }
+        // Optional provenance note. Like the value it must be a plain string; bounded so a runaway
+        // writer can't stuff documents into metadata.
+        val source = when (val raw = values.get(PathlineContract.Annotations.Memories.SOURCE)) {
+            null -> null
+            is String -> raw.trim().ifEmpty { null }
+            else -> throw IllegalArgumentException(
+                "'${PathlineContract.Annotations.Memories.SOURCE}' must be a string",
+            )
+        }
+        require(source == null || source.length <= MAX_MEMORY_SOURCE_LENGTH) {
+            "'${PathlineContract.Annotations.Memories.SOURCE}' must be at most " +
+                "$MAX_MEMORY_SOURCE_LENGTH characters"
+        }
         val groupId = checkWrite(
             uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
-        runBlocking { entryPoint.annotationStore().putMemory(target, id, key, value, confidence) }
+        runBlocking { entryPoint.annotationStore().putMemory(target, id, key, value, confidence, source) }
         logAccess(DATA_TYPE_MEMORIES, now, now, 1, now, groupId, null, null, isWrite = true)
         notifyChanged(uri)
         return uri.buildUpon().appendPath(key).build()
@@ -1402,5 +1415,8 @@ class PathlineProvider : ContentProvider() {
 
         /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
         const val GROUP_FUTURE_TOLERANCE_MS = 5_000L
+
+        /** Upper bound for a memory entry's `source` provenance note (a pointer, not a document). */
+        const val MAX_MEMORY_SOURCE_LENGTH = 500
     }
 }

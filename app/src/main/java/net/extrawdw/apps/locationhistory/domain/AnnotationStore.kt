@@ -41,32 +41,40 @@ object TagCanonicalizer {
 
 /**
  * One **memory** entry: the string [value] an agent stored under a key, with the agent's
- * [confidence] in it (in [0,1]; 1 when never stated). Values are always plain strings — the flat
- * string->string rule of the data-API design; confidence is metadata beside the value, never inside it.
+ * [confidence] in it (in [0,1]; 1 when never stated) and an optional free-form [source] — the
+ * writer's own provenance note ("user stated in chat", "inferred from visit:675 note"). Values are
+ * always plain strings — the flat string->string rule of the data-API design; confidence and source
+ * are metadata beside the value, never inside it.
  */
-data class MemoryEntry(val value: String, val confidence: Float = 1f)
+data class MemoryEntry(
+    val value: String,
+    val confidence: Float = 1f,
+    val source: String? = null,
+)
 
 /**
  * Serialization for a **memory** payload: a *flat* key->[MemoryEntry] map stored as a JSON object of
- * `{"value": <string>, "confidence": <0..1>}` objects. The map models an agent's structured KV
- * scratchpad; JSON is only the on-disk format. The "values must be plain strings" rule of the public
- * API is enforced at the provider write path (a memory write carries value and confidence as separate
- * typed fields), not here.
+ * `{"value": <string>, "confidence": <0..1>, "source": <string?>}` objects. The map models an
+ * agent's structured KV scratchpad; JSON is only the on-disk format. The "values must be plain
+ * strings" rule of the public API is enforced at the provider write path (a memory write carries
+ * value, confidence and source as separate typed fields), not here.
  */
 object MemoryMap {
     private val json = Json
     private const val VALUE = "value"
     private const val CONFIDENCE = "confidence"
+    private const val SOURCE = "source"
 
     /** Serialize a flat map to its stored JSON-object form (insertion order preserved). */
     fun encode(entries: Map<String, MemoryEntry>): String =
         JsonObject(
             entries.mapValues { (_, e) ->
                 JsonObject(
-                    mapOf(
-                        VALUE to JsonPrimitive(e.value),
-                        CONFIDENCE to JsonPrimitive(e.confidence),
-                    ),
+                    buildMap {
+                        put(VALUE, JsonPrimitive(e.value))
+                        put(CONFIDENCE, JsonPrimitive(e.confidence))
+                        e.source?.let { put(SOURCE, JsonPrimitive(it)) }
+                    },
                 )
             },
         ).toString()
@@ -90,7 +98,9 @@ object MemoryMap {
                             ?: continue
                         val confidence = (v[CONFIDENCE] as? JsonPrimitive)?.content?.toFloatOrNull()
                             ?.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
-                        put(k, MemoryEntry(value, confidence))
+                        val source = (v[SOURCE] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                            ?.trim()?.ifEmpty { null }
+                        put(k, MemoryEntry(value, confidence, source))
                     }
 
                     else -> continue
@@ -118,6 +128,16 @@ internal fun foldText(a: String?, b: String?): String? {
         sa == sb -> sa
         else -> "$sa\n\n$sb"
     }
+}
+
+/**
+ * Combine two memory-entry **sources** when a merge folds rows together: nulls/blanks contribute
+ * nothing, equal sources collapse to one, differing sources join oldest-first with "; " — the
+ * combined value came from both origins, so the provenance says so. Null when both are absent.
+ */
+internal fun foldSources(a: String?, b: String?): String? {
+    val parts = listOfNotNull(a?.trim()?.ifEmpty { null }, b?.trim()?.ifEmpty { null }).distinct()
+    return parts.takeIf { it.isNotEmpty() }?.joinToString("; ")
 }
 
 /**
@@ -237,16 +257,19 @@ class AnnotationStore @Inject constructor(
             entries.takeIf { it.isNotEmpty() }?.let(MemoryMap::encode)
         )
 
-    /** Set one memory key, leaving the rest of the map intact. [confidence] is clamped to [0,1]. */
+    /** Set one memory key, leaving the rest of the map intact. [confidence] is clamped to [0,1];
+     *  [source] is the writer's provenance note (null = none; a rewrite replaces it). */
     suspend fun putMemory(
         target: AnnotationTarget,
         id: Long,
         key: String,
         value: String,
         confidence: Float = 1f,
+        source: String? = null,
     ) = setMemories(
         target, id,
-        getMemories(target, id) + (key to MemoryEntry(value, confidence.coerceIn(0f, 1f))),
+        getMemories(target, id) +
+            (key to MemoryEntry(value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null })),
     )
 
     /** Remove one memory key. */
@@ -315,18 +338,23 @@ class AnnotationStore @Inject constructor(
             val s = merged[k]
             merged[k] = when {
                 s == null -> d
-                // Equal values collapse to one; the stronger claim's confidence survives.
+                // Equal values collapse to one; the stronger claim survives (its confidence AND
+                // its source — value, confidence and source travel as one claim). Tie -> the
+                // survivor's source, falling back to the dying side's when the survivor has none.
                 s.value.trim() == d.value.trim() ->
                     MemoryEntry(
                         foldText(s.value, d.value) ?: d.value,
-                        maxOf(s.confidence, d.confidence)
+                        maxOf(s.confidence, d.confidence),
+                        if (d.confidence > s.confidence) d.source ?: s.source
+                        else s.source ?: d.source,
                     )
                 // Differing values concatenate oldest-first; the combined text is at most as
-                // trustworthy as its weaker half.
+                // trustworthy as its weaker half, and its provenance is both origins.
                 else ->
                     MemoryEntry(
                         foldText(s.value, d.value) ?: d.value,
-                        minOf(s.confidence, d.confidence)
+                        minOf(s.confidence, d.confidence),
+                        foldSources(s.source, d.source),
                     )
             }
         }

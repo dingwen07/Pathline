@@ -43,9 +43,25 @@ class AnnotationDomainTest {
         val map = linkedMapOf(
             "home" to MemoryEntry("1 Main St"),
             "vibe" to MemoryEntry("quiet", 0.6f),
-            "stars" to MemoryEntry("4", 0.85f),
+            "stars" to MemoryEntry("4", 0.85f, "user statement"),
         )
         assertEquals(map.toList(), MemoryMap.decode(MemoryMap.encode(map)).toList())
+    }
+
+    @Test
+    fun memory_sourceIsOptionalAndNormalized() {
+        // Absent source decodes as null (incl. the pre-source stored format).
+        assertEquals(
+            mapOf("a" to MemoryEntry("x", 0.5f, null)),
+            MemoryMap.decode("""{"a":{"value":"x","confidence":0.5}}"""),
+        )
+        // A blank stored source reads as none.
+        assertEquals(
+            mapOf("a" to MemoryEntry("x", 1f, null)),
+            MemoryMap.decode("""{"a":{"value":"x","source":"  "}}"""),
+        )
+        // A null source is omitted from the encoded form entirely.
+        assertEquals("""{"a":{"value":"x","confidence":1.0}}""", MemoryMap.encode(mapOf("a" to MemoryEntry("x"))))
     }
 
     @Test
@@ -91,5 +107,23 @@ class AnnotationDomainTest {
     fun foldText_collapsesEqualAndConcatsDiffering() {
         assertEquals("same", foldText("same", " same "))
         assertEquals("older\n\nnewer", foldText("  older ", " newer "))
+    }
+
+    // --- foldSources (memory-merge provenance rule) ---------------------------------------------
+
+    @Test
+    fun foldSources_skipsBlanksAndCollapsesEqual() {
+        assertNull(foldSources(null, null))
+        assertNull(foldSources(" ", ""))
+        assertEquals("user statement", foldSources("user statement", null))
+        assertEquals("user statement", foldSources(" user statement ", "user statement"))
+    }
+
+    @Test
+    fun foldSources_joinsDifferingOldestFirst() {
+        assertEquals(
+            "visit:75 note; user statement",
+            foldSources("visit:75 note", " user statement "),
+        )
     }
 }
