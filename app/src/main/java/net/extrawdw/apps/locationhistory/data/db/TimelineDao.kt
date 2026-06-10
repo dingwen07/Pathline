@@ -9,6 +9,15 @@ import kotlinx.coroutines.flow.Flow
 /** placeId -> visit count projection for [VisitDao.observePlaceVisitCounts]. */
 data class PlaceVisitCount(val placeId: Long, val visits: Int)
 
+/** Per-place aggregate over confirmed visits in a window, for the data API's `place_stats`. */
+data class PlaceStatsRow(
+    val placeId: Long,
+    val visitCount: Int,
+    val totalDurationMs: Long,
+    val firstVisitMs: Long,
+    val lastVisitMs: Long,
+)
+
 @Dao
 interface VisitDao {
 
@@ -50,6 +59,21 @@ interface VisitDao {
     /** placeId -> number of visits, for the Places list. */
     @Query("SELECT placeId AS placeId, COUNT(*) AS visits FROM visits WHERE placeId IS NOT NULL GROUP BY placeId")
     fun observePlaceVisitCounts(): Flow<List<PlaceVisitCount>>
+
+    /**
+     * Per-place aggregates over **confirmed** visits overlapping [startMs, endMs) — the data API's
+     * `place_stats`. Overlap semantics match the visits collection: an overlapping visit counts
+     * whole (durations are full visit spans, not clipped to the window). Most-visited first.
+     */
+    @Query(
+        "SELECT placeId AS placeId, COUNT(*) AS visitCount, " +
+                "SUM(endMs - startMs) AS totalDurationMs, " +
+                "MIN(startMs) AS firstVisitMs, MAX(endMs) AS lastVisitMs " +
+                "FROM visits WHERE confirmed = 1 AND placeId IS NOT NULL " +
+                "AND startMs < :endMs AND endMs > :startMs " +
+                "GROUP BY placeId ORDER BY visitCount DESC, totalDurationMs DESC"
+    )
+    suspend fun placeStatsOverlapping(startMs: Long, endMs: Long): List<PlaceStatsRow>
 
     @Query("SELECT * FROM visits WHERE dayEpoch = :dayEpoch ORDER BY startMs ASC")
     suspend fun byDay(dayEpoch: Long): List<VisitEntity>

@@ -98,6 +98,7 @@ class PathlineProvider : ContentProvider() {
         )
         addURI(PathlineContract.AUTHORITY, PathlineContract.Status.PATH, CODE_STATUS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Tags.PATH, CODE_TAGS)
+        addURI(PathlineContract.AUTHORITY, PathlineContract.PlaceStats.PATH, CODE_PLACE_STATS)
 
         // Single timeline rows by id
         addURI(PathlineContract.AUTHORITY, "$visits/#", CODE_VISIT_ITEM)
@@ -154,6 +155,7 @@ class PathlineProvider : ContentProvider() {
         CODE_SAMPLES -> PathlineContract.Samples.CONTENT_TYPE
         CODE_PLACES -> PathlineContract.Places.CONTENT_TYPE
         CODE_PLACE_VISITS -> PathlineContract.Places.VisitHistory.CONTENT_TYPE
+        CODE_PLACE_STATS -> PathlineContract.PlaceStats.CONTENT_TYPE
         CODE_STATUS -> PathlineContract.Status.CONTENT_TYPE
         CODE_TAGS, in TAGS_CODES -> PathlineContract.Tags.CONTENT_TYPE
         in TAG_NAME_CODES -> ITEM_TYPE_TAG
@@ -204,6 +206,7 @@ class PathlineProvider : ContentProvider() {
         when (code) {
             CODE_PLACES -> return placesQuery(uri, now)
             CODE_PLACE_VISITS -> return placeVisitsQuery(uri, now)
+            CODE_PLACE_STATS -> return placeStatsQuery(uri, now)
             CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(uri, code, now)
             CODE_TAGS -> return tagsQuery(uri, now)
             CODE_CONCEPTS -> return conceptsQuery(uri, now)
@@ -472,14 +475,17 @@ class PathlineProvider : ContentProvider() {
             } else {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                 val fields = placeSearchFields(uri, ::deny)
+                // matchedPlaceIds is relevance-ordered (bm25 FTS hits first); scope/ids filtering
+                // and the final fetch must all preserve that order — SQL `IN` doesn't, so reorder.
                 val matched = matchedPlaceIds(q, fields)
-                val scoped =
-                    if (allPlaces) matched.toList()
-                    else if (matched.isEmpty()) emptyList()
-                    else grantDao.grantedAmong(pkg, matched.toList())
-                val filtered =
-                    if (requested == null) scoped else scoped.filter { it in requested.toSet() }
-                if (filtered.isEmpty()) emptyList() else entryPoint.placeDao().byIds(filtered)
+                val allowed: Set<Long> =
+                    if (allPlaces || matched.isEmpty()) matched
+                    else grantDao.grantedAmong(pkg, matched.toList()).toSet()
+                val filtered = matched.filter {
+                    it in allowed && (requested == null || it in requested.toSet())
+                }
+                if (filtered.isEmpty()) emptyList()
+                else sortByIdOrder(entryPoint.placeDao().byIds(filtered), filtered) { it.id }
             }
         }
         val cursor = placesCursorOf(places)
@@ -505,14 +511,16 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** Union of the place ids matching [q] in each requested field (unscoped — callers intersect
-     *  with what the caller may see). */
+     *  with what the caller may see). **Relevance-ordered**: the FTS leg comes bm25-ranked and
+     *  first; the tag/note/memory legs (no score) append after in stable order. */
     private suspend fun matchedPlaceIds(q: String, fields: List<String>): LinkedHashSet<Long> {
         val ids = LinkedHashSet<Long>()
         val ftsColumns = fields.filter { it in PLACE_DETAIL_FIELDS }
         if (ftsColumns.isNotEmpty()) {
             ids += entryPoint.searchDao().matchRowIds(
                 SimpleSQLiteQuery(
-                    "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ?",
+                    "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ? " +
+                            "ORDER BY bm25(places_fts)",
                     arrayOf(ApiSearch.ftsQuery(q, ftsColumns)),
                 ),
             ).map { it.id }
@@ -584,6 +592,61 @@ class PathlineProvider : ContentProvider() {
         }
 
         val cursor = placeVisitsCursor(placeId, start, end)
+        logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /**
+     * `place_stats` collection: per-place aggregates over confirmed visits in the window, scoped to
+     * the caller's place grants (whole corpus under READ_ALL_PLACES), most-visited first. Windowed
+     * and extended-history-gated exactly like `visits`; one GROUP BY instead of the caller pulling
+     * and counting visit rows.
+     */
+    private fun placeStatsQuery(uri: Uri, now: Long): Cursor {
+        val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
+            ?: throw IllegalArgumentException(
+                "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
+            )
+        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
+        require(end > start) {
+            "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'"
+        }
+        val groupId = parseGroup(uri, now)
+        val dataType = PathlineContract.PlaceStats.PATH
+
+        fun requirePermission(permission: String) {
+            if (holds(permission)) return
+            logAccess(dataType, start, end, rowCount = 0, now, groupId, null, permission)
+            throw SecurityException("Caller must hold $permission")
+        }
+        requirePermission(PathlineContract.Permissions.READ_TIMELINE)
+        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
+            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
+        }
+
+        val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
+            ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.toSet()
+        val rows = runBlocking {
+            val all = entryPoint.visitDao().placeStatsOverlapping(start, end)
+            val scoped = if (holds(PathlineContract.Permissions.READ_ALL_PLACES)) {
+                all
+            } else {
+                val pkg = callingPackage ?: "unknown"
+                val granted = entryPoint.apiPlaceGrantDao()
+                    .grantedAmong(pkg, all.map { it.placeId }).toSet()
+                all.filter { it.placeId in granted }
+            }
+            if (requested == null) scoped else scoped.filter { it.placeId in requested }
+        }
+        val cursor = MatrixCursor(PathlineContract.PlaceStats.COLUMNS, rows.size)
+        for (r in rows) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    r.placeId, r.visitCount, r.totalDurationMs, r.firstVisitMs, r.lastVisitMs,
+                ),
+            )
+        }
         logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
@@ -683,13 +746,16 @@ class PathlineProvider : ContentProvider() {
 
         val tags: List<TagEntity> = runBlocking {
             val visible = visibleTagIds(now)
-            val ids = if (q != null) {
+            if (q != null) {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
-                visible.intersect(ftsTagIds(q))
+                // Filter the bm25-ranked hits by visibility (not the other way round) so the
+                // relevance order survives, then restore it after the unordered IN fetch.
+                val ids = ftsTagIds(q).filter { it in visible }
+                if (ids.isEmpty()) emptyList()
+                else sortByIdOrder(entryPoint.tagDao().byIds(ids), ids) { it.id }
             } else {
-                visible
+                if (visible.isEmpty()) emptyList() else entryPoint.tagDao().byIds(visible.toList())
             }
-            if (ids.isEmpty()) emptyList() else entryPoint.tagDao().byIds(ids.toList())
         }
         val cursor = tagsCursorOf(tags)
         logAccess(dataType, now, now, cursor.count, now, groupId, null, null)
@@ -951,8 +1017,10 @@ class PathlineProvider : ContentProvider() {
             var list = when {
                 q != null -> {
                     require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
+                    // bm25-ranked; byIds loses the order, so restore it.
                     val ids = ftsConceptIds(q)
-                    if (ids.isEmpty()) emptyList() else dao.byIds(ids.toList())
+                    if (ids.isEmpty()) emptyList()
+                    else sortByIdOrder(dao.byIds(ids.toList()), ids) { it.id }
                 }
 
                 kind != null -> dao.byKind(kind)
@@ -1056,13 +1124,14 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** Concept ids whose name/kind/description matches [q] (FTS5 prefix match). */
-    private suspend fun ftsConceptIds(q: String): Set<Long> =
+    private suspend fun ftsConceptIds(q: String): LinkedHashSet<Long> =
         entryPoint.searchDao().matchRowIds(
             SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ?",
+                "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ? " +
+                        "ORDER BY bm25(concepts_fts)",
                 arrayOf(ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description"))),
             ),
-        ).mapTo(HashSet()) { it.id }
+        ).mapTo(LinkedHashSet()) { it.id }
 
     /**
      * `visits/<id>` / `trips/<id>`: ONE timeline row by its stable id — the resolver for stored id
@@ -1271,16 +1340,17 @@ class PathlineProvider : ContentProvider() {
         return byId.values.sortedBy { it.startMs }
     }
 
-    /** Tag ids whose display name matches [q] (FTS5 prefix match). */
-    private suspend fun ftsTagIds(q: String): Set<Long> =
+    /** Tag ids whose display name matches [q] — **relevance-ordered** (bm25, best first). */
+    private suspend fun ftsTagIds(q: String): LinkedHashSet<Long> =
         entryPoint.searchDao().matchRowIds(
             SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM tags_fts WHERE tags_fts MATCH ?",
+                "SELECT rowid AS id FROM tags_fts WHERE tags_fts MATCH ? ORDER BY bm25(tags_fts)",
                 arrayOf(ApiSearch.ftsQuery(q, listOf("displayName"))),
             ),
-        ).mapTo(HashSet()) { it.id }
+        ).mapTo(LinkedHashSet()) { it.id }
 
-    /** Place ids whose **name** matches [q] — the place-name leg of visit/trip search. */
+    /** Place ids whose **name** matches [q] — the place-name leg of visit/trip search (order
+     *  irrelevant there: timeline search results stay chronological). */
     private suspend fun ftsPlaceIdsByName(q: String): Set<Long> =
         entryPoint.searchDao().matchRowIds(
             SimpleSQLiteQuery(
@@ -1288,6 +1358,17 @@ class PathlineProvider : ContentProvider() {
                 arrayOf(ApiSearch.ftsQuery(q, listOf(PathlineContract.SearchFields.NAME))),
             ),
         ).mapTo(HashSet()) { it.id }
+
+    /** [items] re-sorted to follow [order]'s id sequence — SQL `IN` fetches lose the relevance
+     *  order the FTS legs produced, so search paths restore it here. */
+    private inline fun <T> sortByIdOrder(
+        items: List<T>,
+        order: Collection<Long>,
+        crossinline id: (T) -> Long,
+    ): List<T> {
+        val rank = order.withIndex().associate { (i, v) -> v to i }
+        return items.sortedBy { rank[id(it)] ?: Int.MAX_VALUE }
+    }
 
     // ---- Status & shared helpers ----------------------------------------------------------------
 
@@ -1313,6 +1394,7 @@ class PathlineProvider : ContentProvider() {
         CODE_SAMPLES -> PathlineContract.Samples.PATH
         CODE_PLACES -> PathlineContract.Places.PATH
         CODE_PLACE_VISITS -> PathlineContract.Places.VISITS_DATA_TYPE
+        CODE_PLACE_STATS -> PathlineContract.PlaceStats.PATH
         CODE_TAGS, in TAGS_CODES, in TAG_NAME_CODES -> PathlineContract.Tags.PATH
         in NOTES_CODES -> DATA_TYPE_NOTES
         in MEMORIES_CODES, in MEMORY_KEY_CODES -> DATA_TYPE_MEMORIES
@@ -1823,6 +1905,7 @@ class PathlineProvider : ContentProvider() {
         const val CODE_TRIP_MEMORY_KEY = 24
         const val CODE_VISIT_ITEM = 25
         const val CODE_TRIP_ITEM = 26
+        const val CODE_PLACE_STATS = 39
 
         const val CODE_CONCEPTS = 27
         const val CODE_CONCEPT_ITEM = 28

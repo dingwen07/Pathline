@@ -444,6 +444,7 @@
     <string name="api_data_memories">Memories</string>
     <string name="api_data_concepts">Concepts</string>
     <string name="api_data_concept_members">Concept members</string>
+    <string name="api_data_place_stats">Place stats</string>
     <string name="api_data_unknown">Data</string>
     <!-- An annotation write, where the requested-range suffix makes no sense. "Updated 2 Tags" -->
     <string name="api_access_event_write_subtitle">Updated %1$d %2$s</string>

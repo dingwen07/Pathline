@@ -420,6 +420,7 @@
     <string name="api_data_memories">记忆</string>
     <string name="api_data_concepts">概念</string>
     <string name="api_data_concept_members">概念成员</string>
+    <string name="api_data_place_stats">地点统计</string>
     <string name="api_data_unknown">数据</string>
     <string name="api_access_event_write_subtitle">更新了 %1$d 个%2$s</string>
 

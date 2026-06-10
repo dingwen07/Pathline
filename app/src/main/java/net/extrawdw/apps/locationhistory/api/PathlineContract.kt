@@ -82,7 +82,8 @@ object PathlineContract {
      * (degrade gracefully — don't query what it can't know); a **higher** value is fine (the API
      * only grows; existing columns keep their meaning once a version ships). History: 1 = timeline
      * + samples + places; 2 = places types / visit-history / search / annotations; 3 = memory
-     * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts.
+     * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts + [PlaceStats] +
+     * relevance-ordered search (see [QueryParams.Q]).
      */
     const val API_VERSION: Int = 3
 
@@ -136,6 +137,11 @@ object PathlineContract {
          * become optional on `visits`/`trips`:
          * when omitted the window clamps per [Permissions.READ_EXTENDED_HISTORY]; an explicit window
          * is enforced exactly like a plain read. See [SearchFields] for the matchable fields.
+         *
+         * **Ordering:** `places` / `tags` / `concepts` search results are returned
+         * most-relevant-first (FTS bm25; rows matched only through annotation fields follow the
+         * ranked rows). `visits` / `trips` search results stay **chronological** — they are
+         * timeline data and callers display them in time order.
          */
         const val Q: String = "q"
 
@@ -977,6 +983,50 @@ object PathlineContract {
             val COLUMNS: Array<String> =
                 arrayOf(TARGET_TYPE, TARGET_ID, ATTACHED_AT_MS, ATTACHED_BY_ME)
         }
+    }
+
+    /**
+     * Per-place **aggregates** over confirmed visits in a window — the one-call answer to
+     * "most visited / favorite place" questions that would otherwise require reading and counting
+     * whole visit collections. One row per saved place with at least one confirmed visit
+     * overlapping the window, **most-visited first** ([VISIT_COUNT] descending, then
+     * [TOTAL_DURATION_MS] descending).
+     *
+     * Windowed like `visits`: [QueryParams.START] is required, [QueryParams.END] defaults to now,
+     * and a window reaching past 30 days needs [Permissions.READ_EXTENDED_HISTORY]. Overlap
+     * semantics also match `visits`: a visit crossing the window edge counts whole — durations are
+     * full visit spans, not clipped. Requires [Permissions.READ_TIMELINE]; rows are scoped to the
+     * caller's granted places (the whole corpus under [Permissions.READ_ALL_PLACES]) — resolve the
+     * ids to names via [Places]. [QueryParams.IDS] filters to specific places. Unconfirmed visits
+     * and visits at no saved place are never counted.
+     * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.place_stats`.
+     */
+    object PlaceStats {
+        const val PATH: String = "place_stats"
+
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        const val CONTENT_TYPE: String =
+            "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.place_stats"
+
+        /** The saved place these aggregates describe (a [Places] id). */
+        const val PLACE_ID: String = "place_id"
+
+        /** Number of confirmed visits overlapping the window. */
+        const val VISIT_COUNT: String = "visit_count"
+
+        /** Sum of those visits' full durations, milliseconds. */
+        const val TOTAL_DURATION_MS: String = "total_duration_ms"
+
+        /** Start of the earliest counted visit, epoch milliseconds. */
+        const val FIRST_VISIT_MS: String = "first_visit_ms"
+
+        /** End of the latest counted visit, epoch milliseconds. */
+        const val LAST_VISIT_MS: String = "last_visit_ms"
+
+        @JvmField
+        val COLUMNS: Array<String> =
+            arrayOf(PLACE_ID, VISIT_COUNT, TOTAL_DURATION_MS, FIRST_VISIT_MS, LAST_VISIT_MS)
     }
 
     /**
