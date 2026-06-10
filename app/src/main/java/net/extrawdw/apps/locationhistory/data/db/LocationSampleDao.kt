@@ -27,6 +27,14 @@ interface LocationSampleDao {
     @Query("SELECT * FROM location_samples WHERE timestampMs >= :startMs AND timestampMs < :endMs ORDER BY timestampMs ASC")
     suspend fun range(startMs: Long, endMs: Long): List<LocationSampleEntity>
 
+    /** The NEWEST [limit] samples of the window, descending — the data API's `limit=` path (the
+     *  caller re-ascends). LIMIT lives in SQL so the cap saves DB work, not just IPC marshaling. */
+    @Query(
+        "SELECT * FROM location_samples WHERE timestampMs >= :startMs AND timestampMs < :endMs " +
+                "ORDER BY timestampMs DESC LIMIT :limit"
+    )
+    suspend fun rangeNewest(startMs: Long, endMs: Long, limit: Int): List<LocationSampleEntity>
+
     @Query("SELECT * FROM location_samples ORDER BY timestampMs DESC LIMIT :limit")
     suspend fun latest(limit: Int): List<LocationSampleEntity>
 

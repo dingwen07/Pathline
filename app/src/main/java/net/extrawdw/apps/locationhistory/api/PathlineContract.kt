@@ -83,7 +83,8 @@ object PathlineContract {
      * only grows; existing columns keep their meaning once a version ships). History: 1 = timeline
      * + samples + places; 2 = places types / visit-history / search / annotations; 3 = memory
      * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts + [PlaceStats] +
-     * relevance-ordered search (see [QueryParams.Q]).
+     * relevance-ordered search (see [QueryParams.Q]) + proximity mode ([QueryParams.NEAR]) +
+     * [QueryParams.LIMIT].
      */
     const val API_VERSION: Int = 3
 
@@ -162,6 +163,35 @@ object PathlineContract {
          * every other collection.
          */
         const val KIND: String = "kind"
+
+        /**
+         * Proximity filter on the [Places] collection: a `lat,lng` point (decimal degrees, e.g.
+         * `near=40.7235,-74.0354`). Only places within [RADIUS_M] meters are returned, **ordered
+         * nearest-first** with [Places.DISTANCE_M] populated. Composable with [Q] (matches are
+         * intersected; nearest-first ordering wins) and [IDS]. Scope is unchanged — the caller's
+         * granted places, or the corpus under [Permissions.READ_ALL_PLACES]; proximity never
+         * widens visibility. Malformed coordinates are an error. Ignored by every other
+         * collection.
+         */
+        const val NEAR: String = "near"
+
+        /**
+         * Radius for [NEAR], meters. Optional — defaults to 500; values above 50 km clamp (never
+         * an error); non-positive or non-numeric values are an error. Ignored without [NEAR].
+         */
+        const val RADIUS_M: String = "radius_m"
+
+        /**
+         * Optional row cap, a positive integer (values above 5000 clamp; non-positive or
+         * non-numeric values are an error). Applies after scoping, search matching and ordering:
+         * chronological reads — [Visits], [Trips], [Samples], a place's visit history, and
+         * visit/trip search — keep the **most recent** rows (the returned order itself is
+         * unchanged, still oldest-first); ranked or named listings — [Places] (incl. search and
+         * [NEAR] mode), [Tags], [Concepts], [PlaceStats] — keep the **first** rows of their
+         * documented order. Ignored by the per-target annotation sub-collections, concept members
+         * and [Status].
+         */
+        const val LIMIT: String = "limit"
     }
 
     /**
@@ -525,10 +555,17 @@ object PathlineContract {
         /** Approximate radius of the place in meters. */
         const val RADIUS_METERS: String = "radius_meters"
 
+        /**
+         * Great-circle distance from the [QueryParams.NEAR] point, meters. **Null except in
+         * proximity mode** — populated only when the query carried `near=`, where rows are also
+         * ordered by it ascending.
+         */
+        const val DISTANCE_M: String = "distance_m"
+
         @JvmField
         val COLUMNS: Array<String> = arrayOf(
             ID, NAME, ADDRESS, CATEGORY, TYPES, SOURCE, GOOGLE_PLACE_ID,
-            LATITUDE, LONGITUDE, RADIUS_METERS,
+            LATITUDE, LONGITUDE, RADIUS_METERS, DISTANCE_M,
         )
 
         /** Sub-collection path segment for a place's visit history (see [visitHistoryUri]). */

@@ -272,10 +272,11 @@ class PathlineProvider : ContentProvider() {
         // route permission or full location-history unlocks it (a sample reader can rebuild the path).
         val routeWithheld: Boolean? = if (code == CODE_TRIPS) !routeUnlocked() else null
 
+        val limit = parseLimit(uri)
         val cursor = when (code) {
-            CODE_VISITS -> visitsCursor(start, end)
-            CODE_TRIPS -> tripsCursor(start, end, includeRoute = routeWithheld == false)
-            CODE_SAMPLES -> samplesCursor(start, end)
+            CODE_VISITS -> visitsCursor(start, end, limit)
+            CODE_TRIPS -> tripsCursor(start, end, includeRoute = routeWithheld == false, limit)
+            CODE_SAMPLES -> samplesCursor(start, end, limit)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
         logAccess(
@@ -337,8 +338,8 @@ class PathlineProvider : ContentProvider() {
 
     // ---- Timeline & samples ------------------------------------------------------------------
 
-    private fun visitsCursor(start: Long, end: Long): Cursor = runBlocking {
-        buildVisitsCursor(entryPoint.visitDao().overlapping(start, end))
+    private fun visitsCursor(start: Long, end: Long, limit: Int? = null): Cursor = runBlocking {
+        buildVisitsCursor(entryPoint.visitDao().overlapping(start, end).takeNewest(limit))
     }
 
     /** [PathlineContract.Visits] rows for [visits], resolving place names and recording grants. */
@@ -373,9 +374,19 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    private fun tripsCursor(start: Long, end: Long, includeRoute: Boolean): Cursor = runBlocking {
-        buildTripsCursor(entryPoint.tripDao().overlapping(start, end), includeRoute)
+    private fun tripsCursor(
+        start: Long,
+        end: Long,
+        includeRoute: Boolean,
+        limit: Int? = null,
+    ): Cursor = runBlocking {
+        buildTripsCursor(entryPoint.tripDao().overlapping(start, end).takeNewest(limit), includeRoute)
     }
+
+    /** The `limit=` rule for chronological lists: keep the NEWEST rows, order unchanged
+     *  (ascending). Null = uncapped. */
+    private fun <T> List<T>.takeNewest(limit: Int?): List<T> =
+        if (limit == null || size <= limit) this else takeLast(limit)
 
     private fun buildTripsCursor(trips: List<TripEntity>, includeRoute: Boolean): Cursor {
         val cursor = MatrixCursor(PathlineContract.Trips.COLUMNS, trips.size)
@@ -398,8 +409,12 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    private fun samplesCursor(start: Long, end: Long): Cursor = runBlocking {
-        val samples = entryPoint.locationSampleDao().range(start, end)
+    private fun samplesCursor(start: Long, end: Long, limit: Int? = null): Cursor = runBlocking {
+        // Samples are the one collection big enough for the cap to matter at the DB layer: a
+        // limited read fetches newest-first with SQL LIMIT, then re-ascends.
+        val samples =
+            if (limit == null) entryPoint.locationSampleDao().range(start, end)
+            else entryPoint.locationSampleDao().rangeNewest(start, end, limit).asReversed()
         val cursor = MatrixCursor(PathlineContract.Samples.COLUMNS, samples.size)
         for (s in samples) {
             cursor.addRow(
@@ -449,16 +464,50 @@ class PathlineProvider : ContentProvider() {
         if (q != null && !holds(PathlineContract.Permissions.SEARCH_DATA)) {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
+        val near = uri.getQueryParameter(PathlineContract.QueryParams.NEAR)
+            ?.let { GeoSearch.parseNear(it) }
+        val limit = parseLimit(uri)
 
         val pkg = callingPackage ?: "unknown"
+        // In proximity mode the rows also carry their distance from the `near` point.
+        var distances: Map<Long, Double>? = null
         val places: List<PlaceEntity> = runBlocking {
             val grantDao = entryPoint.apiPlaceGrantDao()
             val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
                 ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.distinct()
-            if (q == null) {
+            if (near != null) {
+                // Proximity mode: bounding-box prefilter (indexed) -> exact Haversine -> nearest
+                // first; then the same scope/q/ids filters as the other modes, order preserved.
+                val radius = GeoSearch.parseRadius(
+                    uri.getQueryParameter(PathlineContract.QueryParams.RADIUS_M),
+                )
+                val (lat, lng) = near
+                val box = GeoSearch.boundingBox(lat, lng, radius)
+                val candidates =
+                    if (box.wrapsAntimeridian) entryPoint.placeDao().all()
+                    else entryPoint.placeDao()
+                        .inBoundingBox(box.latMin, box.lngMin, box.latMax, box.lngMax)
+                var nearby = candidates
+                    .map { it to GeoSearch.haversineMeters(lat, lng, it.latitude, it.longitude) }
+                    .filter { (_, d) -> d <= radius }
+                    .sortedBy { (_, d) -> d }
+                if (!allPlaces) {
+                    val granted = grantDao.grantedAmong(pkg, nearby.map { it.first.id }).toSet()
+                    nearby = nearby.filter { (p, _) -> p.id in granted }
+                }
+                if (requested != null) nearby = nearby.filter { (p, _) -> p.id in requested.toSet() }
+                if (q != null) {
+                    require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
+                    val matched = matchedPlaceIds(q, placeSearchFields(uri, ::deny))
+                    nearby = nearby.filter { (p, _) -> p.id in matched }
+                }
+                if (limit != null) nearby = nearby.take(limit)
+                distances = nearby.associate { (p, d) -> p.id to d }
+                nearby.map { (p, _) -> p }
+            } else if (q == null) {
                 // Plain listing. Scope: the whole corpus (READ_ALL_PLACES) or the caller's grant
                 // set; an `ids` filter is intersected with that scope, never an error.
-                when {
+                val listed = when {
                     allPlaces && requested == null -> entryPoint.placeDao().all()
                     allPlaces -> if (requested!!.isEmpty()) emptyList() else entryPoint.placeDao()
                         .byIds(requested)
@@ -472,6 +521,7 @@ class PathlineProvider : ContentProvider() {
                         if (allowed.isEmpty()) emptyList() else entryPoint.placeDao().byIds(allowed)
                     }
                 }
+                if (limit == null) listed else listed.take(limit)
             } else {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                 val fields = placeSearchFields(uri, ::deny)
@@ -483,12 +533,12 @@ class PathlineProvider : ContentProvider() {
                     else grantDao.grantedAmong(pkg, matched.toList()).toSet()
                 val filtered = matched.filter {
                     it in allowed && (requested == null || it in requested.toSet())
-                }
+                }.let { if (limit == null) it else it.take(limit) }
                 if (filtered.isEmpty()) emptyList()
                 else sortByIdOrder(entryPoint.placeDao().byIds(filtered), filtered) { it.id }
             }
         }
-        val cursor = placesCursorOf(places)
+        val cursor = placesCursorOf(places, distances)
         logAccess(dataType, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
@@ -591,7 +641,7 @@ class PathlineProvider : ContentProvider() {
             requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
         }
 
-        val cursor = placeVisitsCursor(placeId, start, end)
+        val cursor = placeVisitsCursor(placeId, start, end, parseLimit(uri))
         logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
@@ -637,7 +687,9 @@ class PathlineProvider : ContentProvider() {
                     .grantedAmong(pkg, all.map { it.placeId }).toSet()
                 all.filter { it.placeId in granted }
             }
-            if (requested == null) scoped else scoped.filter { it.placeId in requested }
+            val filtered = if (requested == null) scoped else scoped.filter { it.placeId in requested }
+            parseLimit(uri)?.let { return@runBlocking filtered.take(it) }
+            filtered
         }
         val cursor = MatrixCursor(PathlineContract.PlaceStats.COLUMNS, rows.size)
         for (r in rows) {
@@ -652,7 +704,12 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    private fun placesCursorOf(places: List<PlaceEntity>): Cursor {
+    /** [PathlineContract.Places] rows. [distances] populates DISTANCE_M in proximity mode
+     *  (place id -> meters from the `near` point); null everywhere else. */
+    private fun placesCursorOf(
+        places: List<PlaceEntity>,
+        distances: Map<Long, Double>? = null,
+    ): Cursor {
         val cursor = MatrixCursor(PathlineContract.Places.COLUMNS, places.size)
         for (p in places) {
             cursor.addRow(
@@ -667,13 +724,19 @@ class PathlineProvider : ContentProvider() {
                     p.latitude,
                     p.longitude,
                     p.radiusMeters,
+                    distances?.get(p.id),
                 ),
             )
         }
         return cursor
     }
 
-    private fun placeVisitsCursor(placeId: Long, start: Long, end: Long): Cursor = runBlocking {
+    private fun placeVisitsCursor(
+        placeId: Long,
+        start: Long,
+        end: Long,
+        limit: Int? = null,
+    ): Cursor = runBlocking {
         val pkg = callingPackage ?: "unknown"
         // Scope: a place's history is readable only if this app already saw the place in a `visits`
         // read (or holds READ_ALL_PLACES). An unseen (or non-existent) place returns nothing —
@@ -681,7 +744,7 @@ class PathlineProvider : ContentProvider() {
         val granted = holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
                 entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)
         val visits = if (granted) {
-            entryPoint.visitDao().forPlaceOverlapping(placeId, start, end)
+            entryPoint.visitDao().forPlaceOverlapping(placeId, start, end).takeNewest(limit)
         } else {
             emptyList()
         }
@@ -744,6 +807,7 @@ class PathlineProvider : ContentProvider() {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
 
+        val limit = parseLimit(uri)
         val tags: List<TagEntity> = runBlocking {
             val visible = visibleTagIds(now)
             if (q != null) {
@@ -756,7 +820,7 @@ class PathlineProvider : ContentProvider() {
             } else {
                 if (visible.isEmpty()) emptyList() else entryPoint.tagDao().byIds(visible.toList())
             }
-        }
+        }.let { if (limit == null) it else it.take(limit) }
         val cursor = tagsCursorOf(tags)
         logAccess(dataType, now, now, cursor.count, now, groupId, null, null)
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
@@ -1028,6 +1092,7 @@ class PathlineProvider : ContentProvider() {
             }
             if (q != null && kind != null) list = list.filter { it.kind == kind }
             if (requested != null) list = list.filter { it.id in requested.toSet() }
+            parseLimit(uri)?.let { list = list.take(it) }
             list
         }
         val cursor = conceptsCursorOf(concepts)
@@ -1231,12 +1296,13 @@ class PathlineProvider : ContentProvider() {
         }
 
         val routeWithheld: Boolean? = if (code == CODE_TRIPS) !routeUnlocked() else null
+        val limit = parseLimit(uri)
         val cursor = runBlocking {
             if (code == CODE_VISITS) {
-                buildVisitsCursor(searchVisits(q, fields, start, end))
+                buildVisitsCursor(searchVisits(q, fields, start, end).takeNewest(limit))
             } else {
                 buildTripsCursor(
-                    searchTrips(q, fields, start, end),
+                    searchTrips(q, fields, start, end).takeNewest(limit),
                     includeRoute = routeWithheld == false
                 )
             }
@@ -1421,6 +1487,17 @@ class PathlineProvider : ContentProvider() {
     private fun targetIdFrom(uri: Uri): Long =
         uri.pathSegments.getOrNull(1)?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid target id in URI: $uri")
+
+    /** The optional `limit=` row cap: null when absent, else a positive int clamped to
+     *  [MAX_LIMIT]. Non-positive / non-numeric values are an error (never silently ignored). */
+    private fun parseLimit(uri: Uri): Int? {
+        val raw = uri.getQueryParameter(PathlineContract.QueryParams.LIMIT) ?: return null
+        val n = raw.toIntOrNull()
+        require(n != null && n > 0) {
+            "'${PathlineContract.QueryParams.LIMIT}' must be a positive integer (got '$raw')"
+        }
+        return n.coerceAtMost(MAX_LIMIT)
+    }
 
     /** The optional batch-correlation key, honoured only when within the grouping window of [now]. */
     private fun parseGroup(uri: Uri, now: Long): Long? {
@@ -1984,6 +2061,9 @@ class PathlineProvider : ContentProvider() {
             PathlineContract.SearchFields.TAGS,
             PathlineContract.SearchFields.NOTES,
         )
+
+        /** Server-side ceiling for the `limit=` row cap — larger asks clamp, they don't error. */
+        const val MAX_LIMIT = 5_000
 
         /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
         const val GROUP_FUTURE_TOLERANCE_MS = 5_000L
