@@ -100,6 +100,18 @@ interface VisitDao {
         endMs: Long
     ): List<VisitEntity>
 
+    /** Candidate-name leg of visit search; saved-place names are handled by [forPlacesOverlapping]. */
+    @Query(
+        "SELECT * FROM visits WHERE candidateName IS NOT NULL " +
+                "AND candidateName LIKE :pattern ESCAPE '\\' " +
+                "AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC"
+    )
+    suspend fun candidateNameLikeOverlapping(
+        pattern: String,
+        startMs: Long,
+        endMs: Long
+    ): List<VisitEntity>
+
     @Query("DELETE FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
 
@@ -152,6 +164,21 @@ interface TripDao {
     )
     suspend fun forEndpointPlacesOverlapping(
         placeIds: List<Long>,
+        startMs: Long,
+        endMs: Long
+    ): List<TripEntity>
+
+    /** Candidate-name leg of trip endpoint search; saved-place names use [forEndpointPlacesOverlapping]. */
+    @Query(
+        "SELECT * FROM trips WHERE (" +
+                "fromVisitId IN (SELECT id FROM visits WHERE candidateName IS NOT NULL " +
+                "AND candidateName LIKE :pattern ESCAPE '\\') OR " +
+                "toVisitId IN (SELECT id FROM visits WHERE candidateName IS NOT NULL " +
+                "AND candidateName LIKE :pattern ESCAPE '\\')) " +
+                "AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC"
+    )
+    suspend fun forEndpointCandidateNamesOverlapping(
+        pattern: String,
         startMs: Long,
         endMs: Long
     ): List<TripEntity>

@@ -1343,6 +1343,10 @@ class PathlineProvider : ContentProvider() {
                 entryPoint.visitDao().forPlacesOverlapping(placeIds.toList(), start, end)
                     .forEach { byId[it.id] = it }
             }
+            ApiSearch.likePatterns(q).forEach { pattern ->
+                entryPoint.visitDao().candidateNameLikeOverlapping(pattern, start, end)
+                    .forEach { byId[it.id] = it }
+            }
         }
         if (PathlineContract.SearchFields.TAGS in fields) {
             val tagIds = ftsTagIds(q)
@@ -1379,6 +1383,10 @@ class PathlineProvider : ContentProvider() {
             val placeIds = ftsPlaceIdsByName(q)
             if (placeIds.isNotEmpty()) {
                 entryPoint.tripDao().forEndpointPlacesOverlapping(placeIds.toList(), start, end)
+                    .forEach { byId[it.id] = it }
+            }
+            ApiSearch.likePatterns(q).forEach { pattern ->
+                entryPoint.tripDao().forEndpointCandidateNamesOverlapping(pattern, start, end)
                     .forEach { byId[it.id] = it }
             }
         }

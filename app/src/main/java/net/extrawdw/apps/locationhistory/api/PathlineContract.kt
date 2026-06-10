@@ -200,8 +200,8 @@ object PathlineContract {
      * - `places`: [NAME], [ADDRESS], [CATEGORY], [TYPES] (place details), plus [TAGS], [NOTES],
      *   [MEMORIES] (annotation fields, gated by [Permissions.READ_ANNOTATIONS]). A memories match
      *   considers both keys and values.
-     * - `visits` / `trips`: [PLACE_NAME] (the **saved place** attributed to the visit, or to the
-     *   trip's endpoint visits), plus [TAGS] and [NOTES] of the visit/trip itself.
+         * - `visits` / `trips`: [PLACE_NAME] (the saved place or candidate name attributed to the
+         *   visit, or to the trip's endpoint visits), plus [TAGS] and [NOTES] of the visit/trip itself.
      * - `tags`: matches tag names only; [QueryParams.FIELDS] is ignored.
      * - `concepts`: matches concept names, kinds and descriptions; [QueryParams.FIELDS] is ignored.
      */
