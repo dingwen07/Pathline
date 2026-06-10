@@ -250,6 +250,18 @@ object PathlineContract {
         val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
         const val CONTENT_TYPE: String =
             "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.visit"
+        const val ITEM_CONTENT_TYPE: String =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.visit"
+
+        /**
+         * `content://…/visits/<id>` — ONE visit by its stable id (0 or 1 row, same columns), the
+         * resolver for stored id references such as a memory source `visit:675 note`. Requires
+         * [Permissions.READ_TIMELINE]; visible only when **confirmed** and within the last 30 days
+         * (any age with [Permissions.READ_EXTENDED_HISTORY]). An invisible or nonexistent id
+         * returns no rows, indistinguishable on purpose.
+         */
+        @JvmStatic
+        fun itemUri(id: Long): Uri = CONTENT_URI.buildUpon().appendPath(id.toString()).build()
 
         /** Stable visit id (the cursor's `_id`). */
         const val ID: String = "_id"
@@ -302,6 +314,16 @@ object PathlineContract {
         val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
         const val CONTENT_TYPE: String =
             "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.trip"
+        const val ITEM_CONTENT_TYPE: String =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.trip"
+
+        /**
+         * `content://…/trips/<id>` — ONE trip by its stable id (0 or 1 row, same columns; route
+         * column per the caller's route permissions). Same gating and visibility rules as
+         * [Visits.itemUri].
+         */
+        @JvmStatic
+        fun itemUri(id: Long): Uri = CONTENT_URI.buildUpon().appendPath(id.toString()).build()
 
         /** Stable trip id (the cursor's `_id`). */
         const val ID: String = "_id"

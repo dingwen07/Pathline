@@ -91,6 +91,10 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, PathlineContract.Status.PATH, CODE_STATUS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Tags.PATH, CODE_TAGS)
 
+        // Single timeline rows by id
+        addURI(PathlineContract.AUTHORITY, "$visits/#", CODE_VISIT_ITEM)
+        addURI(PathlineContract.AUTHORITY, "$trips/#", CODE_TRIP_ITEM)
+
         // Annotation sub-collections of one place/visit/trip, plus the single-item forms used by
         // delete. (`places/#/visits` above predates these; the tags/notes/memories names can't
         // collide with it.)
@@ -122,6 +126,8 @@ class PathlineProvider : ContentProvider() {
     override fun getType(uri: Uri): String? = when (matcher.match(uri)) {
         CODE_VISITS -> PathlineContract.Visits.CONTENT_TYPE
         CODE_TRIPS -> PathlineContract.Trips.CONTENT_TYPE
+        CODE_VISIT_ITEM -> PathlineContract.Visits.ITEM_CONTENT_TYPE
+        CODE_TRIP_ITEM -> PathlineContract.Trips.ITEM_CONTENT_TYPE
         CODE_SAMPLES -> PathlineContract.Samples.CONTENT_TYPE
         CODE_PLACES -> PathlineContract.Places.CONTENT_TYPE
         CODE_PLACE_VISITS -> PathlineContract.Places.VisitHistory.CONTENT_TYPE
@@ -171,6 +177,7 @@ class PathlineProvider : ContentProvider() {
         when (code) {
             CODE_PLACES -> return placesQuery(uri, now)
             CODE_PLACE_VISITS -> return placeVisitsQuery(uri, now)
+            CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(uri, code, now)
             CODE_TAGS -> return tagsQuery(uri, now)
             in TAGS_CODES -> return targetTagsQuery(uri, targetFor(code), now)
             in NOTES_CODES -> return targetNotesQuery(uri, targetFor(code), now)
@@ -822,6 +829,50 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
+    /**
+     * `visits/<id>` / `trips/<id>`: ONE timeline row by its stable id — the resolver for stored id
+     * references (e.g. a memory source like `visit:675 note`). Visibility mirrors the windowless
+     * `visits`/`trips` **collection** read, not the annotation-target rule: gated by
+     * [PathlineContract.Permissions.READ_TIMELINE], confirmed **and** unconfirmed rows alike (the
+     * `confirmed` flag is just a column), inside the allowed horizon (last 30 days unless the caller
+     * holds READ_EXTENDED_HISTORY). This keeps "if a collection/search read returned an id, the
+     * single-item read resolves it" — otherwise an unconfirmed id surfaced by search would 404 here.
+     * An out-of-horizon or nonexistent id returns an **empty** cursor — indistinguishable on
+     * purpose, so ids can't be probed. A visit read records its place grant exactly like a windowed
+     * read (still confirmed-only — see [recordPlaceGrants]); trips include the route column only for
+     * route holders.
+     */
+    private fun timelineItemQuery(uri: Uri, code: Int, now: Long): Cursor {
+        val isVisit = code == CODE_VISIT_ITEM
+        val dataType =
+            if (isVisit) PathlineContract.Visits.PATH else PathlineContract.Trips.PATH
+        val groupId = parseGroup(uri, now)
+        if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
+            logAccess(
+                dataType, now, now, 0, now, groupId, null,
+                PathlineContract.Permissions.READ_TIMELINE,
+            )
+            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_TIMELINE}")
+        }
+        val id = uri.lastPathSegment?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid id in URI: $uri")
+        val routeWithheld: Boolean? = if (!isVisit) !routeUnlocked() else null
+        val cursor = runBlocking {
+            if (isVisit) {
+                val v = entryPoint.visitDao().byId(id)
+                    ?.takeIf { it.endMs > minVisibleEndMs(now) }
+                buildVisitsCursor(listOfNotNull(v))
+            } else {
+                val t = entryPoint.tripDao().byId(id)
+                    ?.takeIf { it.endMs > minVisibleEndMs(now) }
+                buildTripsCursor(listOfNotNull(t), includeRoute = routeWithheld == false)
+            }
+        }
+        logAccess(dataType, now, now, cursor.count, now, groupId, routeWithheld, null)
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
     // ---- Search over visits / trips ------------------------------------------------------------
 
     /**
@@ -1370,6 +1421,8 @@ class PathlineProvider : ContentProvider() {
         const val CODE_PLACE_MEMORY_KEY = 22
         const val CODE_VISIT_MEMORY_KEY = 23
         const val CODE_TRIP_MEMORY_KEY = 24
+        const val CODE_VISIT_ITEM = 25
+        const val CODE_TRIP_ITEM = 26
 
         val TAGS_CODES = setOf(CODE_PLACE_TAGS, CODE_VISIT_TAGS, CODE_TRIP_TAGS)
         val TAG_NAME_CODES = setOf(CODE_PLACE_TAG_NAME, CODE_VISIT_TAG_NAME, CODE_TRIP_TAG_NAME)
