@@ -86,8 +86,10 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
             text = when {
                 summary != null && onlyWrites ->
                     ctx.getString(R.string.api_notify_write_text_one, label, summary)
+
                 summary != null ->
                     ctx.getString(R.string.api_notify_read_text_one, label, summary)
+
                 else -> ctx.getString(R.string.api_notify_read_text_generic, label)
             }
         }

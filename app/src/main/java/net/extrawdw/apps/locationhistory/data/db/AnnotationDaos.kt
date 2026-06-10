@@ -46,7 +46,7 @@ interface TagDao {
 
     @Query(
         "SELECT t.* FROM tags t JOIN entity_tags e ON e.tagId = t.id " +
-            "WHERE e.targetType = :type AND e.targetId = :id ORDER BY t.displayName",
+                "WHERE e.targetType = :type AND e.targetId = :id ORDER BY t.displayName",
     )
     suspend fun tagsFor(type: AnnotationTarget, id: Long): List<TagEntity>
 
@@ -64,7 +64,7 @@ interface TagDao {
      */
     @Query(
         "UPDATE OR IGNORE entity_tags SET targetId = :toId " +
-            "WHERE targetType = :type AND targetId = :fromId",
+                "WHERE targetType = :type AND targetId = :fromId",
     )
     suspend fun rekeyLinks(type: AnnotationTarget, fromId: Long, toId: Long)
 }
@@ -89,7 +89,7 @@ interface AnnotationDao {
      *  as escape) — the annotation leg of the data API's search. Substring, case-insensitive. */
     @Query(
         "SELECT DISTINCT targetId FROM annotations " +
-            "WHERE targetType = :type AND kind = :kind AND content LIKE :pattern ESCAPE '\\'",
+                "WHERE targetType = :type AND kind = :kind AND content LIKE :pattern ESCAPE '\\'",
     )
     suspend fun targetIdsWithContentLike(
         type: AnnotationTarget,

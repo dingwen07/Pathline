@@ -156,35 +156,35 @@ abstract class AppDatabase : RoomDatabase() {
          */
         val FTS_CREATE: List<String> = listOf(
             "CREATE VIRTUAL TABLE IF NOT EXISTS places_fts USING fts5(" +
-                "name, address, category, types, content='places', content_rowid='id')",
+                    "name, address, category, types, content='places', content_rowid='id')",
             "CREATE TRIGGER IF NOT EXISTS trg_places_fts_ai AFTER INSERT ON places BEGIN " +
-                "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
+                    "INSERT INTO places_fts(rowid, name, address, category, types) " +
+                    "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
             "CREATE TRIGGER IF NOT EXISTS trg_places_fts_ad AFTER DELETE ON places BEGIN " +
-                "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
-                "VALUES('delete', old.id, old.name, old.address, old.category, old.types); END;",
+                    "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
+                    "VALUES('delete', old.id, old.name, old.address, old.category, old.types); END;",
             "CREATE TRIGGER IF NOT EXISTS trg_places_fts_au AFTER UPDATE ON places BEGIN " +
-                "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
-                "VALUES('delete', old.id, old.name, old.address, old.category, old.types); " +
-                "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
+                    "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
+                    "VALUES('delete', old.id, old.name, old.address, old.category, old.types); " +
+                    "INSERT INTO places_fts(rowid, name, address, category, types) " +
+                    "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
             "CREATE VIRTUAL TABLE IF NOT EXISTS tags_fts USING fts5(" +
-                "displayName, content='tags', content_rowid='id')",
+                    "displayName, content='tags', content_rowid='id')",
             "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_ai AFTER INSERT ON tags BEGIN " +
-                "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
+                    "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
             "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_ad AFTER DELETE ON tags BEGIN " +
-                "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
-                "VALUES('delete', old.id, old.displayName); END;",
+                    "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
+                    "VALUES('delete', old.id, old.displayName); END;",
             "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_au AFTER UPDATE ON tags BEGIN " +
-                "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
-                "VALUES('delete', old.id, old.displayName); " +
-                "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
+                    "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
+                    "VALUES('delete', old.id, old.displayName); " +
+                    "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
         )
 
         /** Populate the FTS indexes from rows that already exist (upgrade path only). */
         val FTS_BACKFILL: List<String> = listOf(
             "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                "SELECT id, name, address, category, types FROM places",
+                    "SELECT id, name, address, category, types FROM places",
             "INSERT INTO tags_fts(rowid, displayName) SELECT id, displayName FROM tags",
         )
     }

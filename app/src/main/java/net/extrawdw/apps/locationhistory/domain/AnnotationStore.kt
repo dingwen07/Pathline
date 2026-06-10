@@ -92,6 +92,7 @@ object MemoryMap {
                             ?.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
                         put(k, MemoryEntry(value, confidence))
                     }
+
                     else -> continue
                 }
             }
@@ -159,7 +160,14 @@ class AnnotationStore @Inject constructor(
         )
         val tag = tagDao.byCanonicalName(canonical) ?: return null
         if (tag.displayName != displayName) tagDao.updateDisplayName(tag.id, displayName)
-        tagDao.link(EntityTagEntity(tagId = tag.id, targetType = target, targetId = id, createdAtMs = ts))
+        tagDao.link(
+            EntityTagEntity(
+                tagId = tag.id,
+                targetType = target,
+                targetId = id,
+                createdAtMs = ts
+            )
+        )
         return tag.id
     }
 
@@ -170,7 +178,8 @@ class AnnotationStore @Inject constructor(
         return tagDao.unlink(tag.id, target, id)
     }
 
-    suspend fun tagsFor(target: AnnotationTarget, id: Long): List<TagEntity> = tagDao.tagsFor(target, id)
+    suspend fun tagsFor(target: AnnotationTarget, id: Long): List<TagEntity> =
+        tagDao.tagsFor(target, id)
 
     // --- In-app editor (load / save the whole editable bundle) ---------------------------------
 
@@ -221,7 +230,12 @@ class AnnotationStore @Inject constructor(
 
     /** Replace the whole memory map on [target]/[id] (an empty map clears it). */
     suspend fun setMemories(target: AnnotationTarget, id: Long, entries: Map<String, MemoryEntry>) =
-        put(target, id, AnnotationKind.MEMORY, entries.takeIf { it.isNotEmpty() }?.let(MemoryMap::encode))
+        put(
+            target,
+            id,
+            AnnotationKind.MEMORY,
+            entries.takeIf { it.isNotEmpty() }?.let(MemoryMap::encode)
+        )
 
     /** Set one memory key, leaving the rest of the map intact. [confidence] is clamped to [0,1]. */
     suspend fun putMemory(
@@ -280,10 +294,22 @@ class AnnotationStore @Inject constructor(
     }
 
     private suspend fun foldMemory(target: AnnotationTarget, survivorId: Long, dyingId: Long) {
-        val dying = MemoryMap.decode(annotationDao.byTarget(target, dyingId, AnnotationKind.MEMORY)?.content)
+        val dying = MemoryMap.decode(
+            annotationDao.byTarget(
+                target,
+                dyingId,
+                AnnotationKind.MEMORY
+            )?.content
+        )
         if (dying.isEmpty()) return
         val merged = LinkedHashMap(
-            MemoryMap.decode(annotationDao.byTarget(target, survivorId, AnnotationKind.MEMORY)?.content),
+            MemoryMap.decode(
+                annotationDao.byTarget(
+                    target,
+                    survivorId,
+                    AnnotationKind.MEMORY
+                )?.content
+            ),
         )
         for ((k, d) in dying) {
             val s = merged[k]
@@ -291,18 +317,29 @@ class AnnotationStore @Inject constructor(
                 s == null -> d
                 // Equal values collapse to one; the stronger claim's confidence survives.
                 s.value.trim() == d.value.trim() ->
-                    MemoryEntry(foldText(s.value, d.value) ?: d.value, maxOf(s.confidence, d.confidence))
+                    MemoryEntry(
+                        foldText(s.value, d.value) ?: d.value,
+                        maxOf(s.confidence, d.confidence)
+                    )
                 // Differing values concatenate oldest-first; the combined text is at most as
                 // trustworthy as its weaker half.
                 else ->
-                    MemoryEntry(foldText(s.value, d.value) ?: d.value, minOf(s.confidence, d.confidence))
+                    MemoryEntry(
+                        foldText(s.value, d.value) ?: d.value,
+                        minOf(s.confidence, d.confidence)
+                    )
             }
         }
         put(target, survivorId, AnnotationKind.MEMORY, MemoryMap.encode(merged))
     }
 
     /** Upsert one annotation payload, or delete it when [content] is null. Preserves the row id. */
-    private suspend fun put(target: AnnotationTarget, id: Long, kind: AnnotationKind, content: String?) {
+    private suspend fun put(
+        target: AnnotationTarget,
+        id: Long,
+        kind: AnnotationKind,
+        content: String?
+    ) {
         if (content == null) {
             annotationDao.deleteForTargetKind(target, id, kind)
             return

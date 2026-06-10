@@ -83,7 +83,11 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, trips, CODE_TRIPS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Samples.PATH, CODE_SAMPLES)
         addURI(PathlineContract.AUTHORITY, places, CODE_PLACES)
-        addURI(PathlineContract.AUTHORITY, "$places/#/${PathlineContract.Places.VISITS_PATH}", CODE_PLACE_VISITS)
+        addURI(
+            PathlineContract.AUTHORITY,
+            "$places/#/${PathlineContract.Places.VISITS_PATH}",
+            CODE_PLACE_VISITS
+        )
         addURI(PathlineContract.AUTHORITY, PathlineContract.Status.PATH, CODE_STATUS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Tags.PATH, CODE_TAGS)
 
@@ -415,7 +419,9 @@ class PathlineProvider : ContentProvider() {
                 // set; an `ids` filter is intersected with that scope, never an error.
                 when {
                     allPlaces && requested == null -> entryPoint.placeDao().all()
-                    allPlaces -> if (requested!!.isEmpty()) emptyList() else entryPoint.placeDao().byIds(requested)
+                    allPlaces -> if (requested!!.isEmpty()) emptyList() else entryPoint.placeDao()
+                        .byIds(requested)
+
                     else -> {
                         val allowed = when {
                             requested == null -> grantDao.grantedPlaceIds(pkg)
@@ -446,9 +452,10 @@ class PathlineProvider : ContentProvider() {
 
     /** The validated place-search field list — defaults to everything the caller may match. */
     private fun placeSearchFields(uri: Uri, deny: (String) -> Nothing): List<String> {
-        val fields = ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
-            ?: return PLACE_DETAIL_FIELDS +
-                if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) ANNOTATION_FIELDS else emptyList()
+        val fields =
+            ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
+                ?: return PLACE_DETAIL_FIELDS +
+                        if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) ANNOTATION_FIELDS else emptyList()
         val unknown = fields.filter { it !in PLACE_DETAIL_FIELDS && it !in ANNOTATION_FIELDS }
         require(unknown.isEmpty()) { "Unknown place search fields: $unknown" }
         if (fields.any { it in ANNOTATION_FIELDS } &&
@@ -487,11 +494,12 @@ class PathlineProvider : ContentProvider() {
             // Memories are stored as JSON objects; a raw LIKE would also match the structural
             // "value"/"confidence" keys, so decode and match keys + values in code instead.
             val needle = q.trim()
-            ids += entryPoint.annotationDao().allOfKind(AnnotationTarget.PLACE, AnnotationKind.MEMORY)
+            ids += entryPoint.annotationDao()
+                .allOfKind(AnnotationTarget.PLACE, AnnotationKind.MEMORY)
                 .filter { row ->
                     MemoryMap.decode(row.content).any { (key, entry) ->
                         key.contains(needle, ignoreCase = true) ||
-                            entry.value.contains(needle, ignoreCase = true)
+                                entry.value.contains(needle, ignoreCase = true)
                     }
                 }
                 .map { it.targetId }
@@ -565,7 +573,7 @@ class PathlineProvider : ContentProvider() {
         // read (or holds READ_ALL_PLACES). An unseen (or non-existent) place returns nothing —
         // indistinguishable, so the caller cannot probe for ids it was never shown.
         val granted = holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
-            entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)
+                entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)
         val visits = if (granted) {
             entryPoint.visitDao().forPlaceOverlapping(placeId, start, end)
         } else {
@@ -652,7 +660,8 @@ class PathlineProvider : ContentProvider() {
         val groupId = parseGroup(uri, now)
         requireAnnotationRead(target, PathlineContract.Tags.PATH, now, groupId)
         val tags = runBlocking {
-            if (targetVisible(target, id, now)) entryPoint.tagDao().tagsFor(target, id) else emptyList()
+            if (targetVisible(target, id, now)) entryPoint.tagDao()
+                .tagsFor(target, id) else emptyList()
         }
         val cursor = tagsCursorOf(tags)
         logAccess(PathlineContract.Tags.PATH, now, now, cursor.count, now, groupId, null, null)
@@ -723,6 +732,7 @@ class PathlineProvider : ContentProvider() {
                 ) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
                 }
+
             AnnotationTarget.VISIT, AnnotationTarget.TRIP ->
                 if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
@@ -741,11 +751,13 @@ class PathlineProvider : ContentProvider() {
             AnnotationTarget.PLACE -> {
                 val pkg = callingPackage ?: "unknown"
                 val inScope = holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
-                    entryPoint.apiPlaceGrantDao().isGranted(pkg, id)
+                        entryPoint.apiPlaceGrantDao().isGranted(pkg, id)
                 inScope && entryPoint.placeDao().byId(id) != null
             }
+
             AnnotationTarget.VISIT -> entryPoint.visitDao().byId(id)
                 ?.let { it.confirmed && it.endMs > minVisibleEndMs(now) } == true
+
             AnnotationTarget.TRIP -> entryPoint.tripDao().byId(id)
                 ?.let { it.confirmed && it.endMs > minVisibleEndMs(now) } == true
         }
@@ -775,6 +787,7 @@ class PathlineProvider : ContentProvider() {
                     val pkg = callingPackage ?: "unknown"
                     entryPoint.apiPlaceGrantDao().grantedAmong(pkg, placeIds).toSet()
                 }
+
                 else -> emptySet()
             }
             placeLinks.filter { it.targetId in visible }.mapTo(result) { it.tagId }
@@ -831,7 +844,8 @@ class PathlineProvider : ContentProvider() {
         val fields = timelineSearchFields(uri, ::deny)
 
         val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
-        val explicitStart = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
+        val explicitStart =
+            uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
         val start: Long
         if (explicitStart != null) {
             require(end > explicitStart) {
@@ -861,7 +875,10 @@ class PathlineProvider : ContentProvider() {
             if (code == CODE_VISITS) {
                 buildVisitsCursor(searchVisits(q, fields, start, end))
             } else {
-                buildTripsCursor(searchTrips(q, fields, start, end), includeRoute = routeWithheld == false)
+                buildTripsCursor(
+                    searchTrips(q, fields, start, end),
+                    includeRoute = routeWithheld == false
+                )
             }
         }
         logAccess(dataType, start, end, cursor.count, now, groupId, routeWithheld, null)
@@ -871,10 +888,11 @@ class PathlineProvider : ContentProvider() {
 
     /** The validated visit/trip-search field list — defaults to everything the caller may match. */
     private fun timelineSearchFields(uri: Uri, deny: (String) -> Nothing): List<String> {
-        val fields = ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
-            ?: return listOf(PathlineContract.SearchFields.PLACE_NAME) +
-                if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) TIMELINE_ANNOTATION_FIELDS
-                else emptyList()
+        val fields =
+            ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
+                ?: return listOf(PathlineContract.SearchFields.PLACE_NAME) +
+                        if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) TIMELINE_ANNOTATION_FIELDS
+                        else emptyList()
         val valid = TIMELINE_ANNOTATION_FIELDS + PathlineContract.SearchFields.PLACE_NAME
         val unknown = fields.filter { it !in valid }
         require(unknown.isEmpty()) { "Unknown visit/trip search fields: $unknown" }
@@ -903,9 +921,11 @@ class PathlineProvider : ContentProvider() {
         if (PathlineContract.SearchFields.TAGS in fields) {
             val tagIds = ftsTagIds(q)
             if (tagIds.isNotEmpty()) {
-                val ids = entryPoint.tagDao().targetIdsForTags(AnnotationTarget.VISIT, tagIds.toList())
+                val ids =
+                    entryPoint.tagDao().targetIdsForTags(AnnotationTarget.VISIT, tagIds.toList())
                 if (ids.isNotEmpty()) {
-                    entryPoint.visitDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
+                    entryPoint.visitDao().byIdsOverlapping(ids, start, end)
+                        .forEach { byId[it.id] = it }
                 }
             }
         }
@@ -937,9 +957,11 @@ class PathlineProvider : ContentProvider() {
         if (PathlineContract.SearchFields.TAGS in fields) {
             val tagIds = ftsTagIds(q)
             if (tagIds.isNotEmpty()) {
-                val ids = entryPoint.tagDao().targetIdsForTags(AnnotationTarget.TRIP, tagIds.toList())
+                val ids =
+                    entryPoint.tagDao().targetIdsForTags(AnnotationTarget.TRIP, tagIds.toList())
                 if (ids.isNotEmpty()) {
-                    entryPoint.tripDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
+                    entryPoint.tripDao().byIdsOverlapping(ids, start, end)
+                        .forEach { byId[it.id] = it }
                 }
             }
         }
@@ -1006,8 +1028,10 @@ class PathlineProvider : ContentProvider() {
     private fun targetFor(code: Int): AnnotationTarget = when (code) {
         CODE_PLACE_TAGS, CODE_PLACE_TAG_NAME, CODE_PLACE_NOTES,
         CODE_PLACE_MEMORIES, CODE_PLACE_MEMORY_KEY -> AnnotationTarget.PLACE
+
         CODE_VISIT_TAGS, CODE_VISIT_TAG_NAME, CODE_VISIT_NOTES,
         CODE_VISIT_MEMORIES, CODE_VISIT_MEMORY_KEY -> AnnotationTarget.VISIT
+
         else -> AnnotationTarget.TRIP
     }
 
@@ -1033,7 +1057,7 @@ class PathlineProvider : ContentProvider() {
     /** Whether the caller may see trip routes (the polyline column). */
     private fun routeUnlocked(): Boolean =
         holds(PathlineContract.Permissions.READ_TIMELINE_ROUTES) ||
-            holds(PathlineContract.Permissions.READ_LOCATION_HISTORY)
+                holds(PathlineContract.Permissions.READ_LOCATION_HISTORY)
 
     // ---- Annotation writes -----------------------------------------------------------------------
 
@@ -1045,6 +1069,7 @@ class PathlineProvider : ContentProvider() {
                 upsertNote(uri, targetFor(code), values, now)
                 uri
             }
+
             in MEMORIES_CODES -> upsertMemory(uri, targetFor(code), values, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
@@ -1064,10 +1089,12 @@ class PathlineProvider : ContentProvider() {
                 upsertNote(uri, targetFor(code), values, now)
                 1
             }
+
             in MEMORIES_CODES -> {
                 upsertMemory(uri, targetFor(code), values, now)
                 1
             }
+
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
@@ -1118,6 +1145,7 @@ class PathlineProvider : ContentProvider() {
                 ) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
                 }
+
             AnnotationTarget.VISIT, AnnotationTarget.TRIP ->
                 if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
                     deny(PathlineContract.Permissions.READ_TIMELINE)
@@ -1135,7 +1163,12 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** `insert` on `…/<id>/tags`: apply (or re-apply) the tag named in [PathlineContract.Tags.NAME]. */
-    private fun insertTag(uri: Uri, target: AnnotationTarget, values: ContentValues?, now: Long): Uri {
+    private fun insertTag(
+        uri: Uri,
+        target: AnnotationTarget,
+        values: ContentValues?,
+        now: Long
+    ): Uri {
         val id = targetIdFrom(uri)
         val name = values?.getAsString(PathlineContract.Tags.NAME)?.trim()
         require(!name.isNullOrEmpty()) { "Missing '${PathlineContract.Tags.NAME}' value" }
@@ -1166,7 +1199,12 @@ class PathlineProvider : ContentProvider() {
 
     /** `insert`/`update` on `…/<id>/memories`: put one key→value entry (value must be a string;
      *  confidence optional, a float in [0,1] defaulting to 1). */
-    private fun upsertMemory(uri: Uri, target: AnnotationTarget, values: ContentValues?, now: Long): Uri {
+    private fun upsertMemory(
+        uri: Uri,
+        target: AnnotationTarget,
+        values: ContentValues?,
+        now: Long
+    ): Uri {
         val id = targetIdFrom(uri)
         val key = values?.get(PathlineContract.Annotations.Memories.KEY) as? String
         require(!key.isNullOrBlank()) { "Missing '${PathlineContract.Annotations.Memories.KEY}' value" }
@@ -1176,14 +1214,15 @@ class PathlineProvider : ContentProvider() {
         require(value is String) {
             "'${PathlineContract.Annotations.Memories.VALUE}' must be a string (no nesting, no other types)"
         }
-        val confidence = when (val raw = values.get(PathlineContract.Annotations.Memories.CONFIDENCE)) {
-            null -> 1f
-            is Float -> raw
-            is Double -> raw.toFloat()
-            else -> throw IllegalArgumentException(
-                "'${PathlineContract.Annotations.Memories.CONFIDENCE}' must be a float",
-            )
-        }
+        val confidence =
+            when (val raw = values.get(PathlineContract.Annotations.Memories.CONFIDENCE)) {
+                null -> 1f
+                is Float -> raw
+                is Double -> raw.toFloat()
+                else -> throw IllegalArgumentException(
+                    "'${PathlineContract.Annotations.Memories.CONFIDENCE}' must be a float",
+                )
+            }
         require(confidence in 0f..1f) {
             "'${PathlineContract.Annotations.Memories.CONFIDENCE}' must be within [0, 1], got $confidence"
         }
@@ -1206,7 +1245,17 @@ class PathlineProvider : ContentProvider() {
             PathlineContract.Tags.PATH, now,
         )
         val removed = runBlocking { entryPoint.annotationStore().removeTag(target, id, name) }
-        logAccess(PathlineContract.Tags.PATH, now, now, removed, now, groupId, null, null, isWrite = true)
+        logAccess(
+            PathlineContract.Tags.PATH,
+            now,
+            now,
+            removed,
+            now,
+            groupId,
+            null,
+            null,
+            isWrite = true
+        )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
@@ -1304,15 +1353,18 @@ class PathlineProvider : ContentProvider() {
         val TAG_NAME_CODES = setOf(CODE_PLACE_TAG_NAME, CODE_VISIT_TAG_NAME, CODE_TRIP_TAG_NAME)
         val NOTES_CODES = setOf(CODE_PLACE_NOTES, CODE_VISIT_NOTES, CODE_TRIP_NOTES)
         val MEMORIES_CODES = setOf(CODE_PLACE_MEMORIES, CODE_VISIT_MEMORIES, CODE_TRIP_MEMORIES)
-        val MEMORY_KEY_CODES = setOf(CODE_PLACE_MEMORY_KEY, CODE_VISIT_MEMORY_KEY, CODE_TRIP_MEMORY_KEY)
+        val MEMORY_KEY_CODES =
+            setOf(CODE_PLACE_MEMORY_KEY, CODE_VISIT_MEMORY_KEY, CODE_TRIP_MEMORY_KEY)
 
         /** Audit-log `dataType` tokens for the two annotation payload kinds (tags use [PathlineContract.Tags.PATH]). */
         const val DATA_TYPE_NOTES = PathlineContract.Annotations.NOTES_PATH
         const val DATA_TYPE_MEMORIES = PathlineContract.Annotations.MEMORIES_PATH
 
         /** MIME types of the single-item annotation URIs (delete-only; not part of the contract). */
-        const val ITEM_TYPE_TAG = "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.tag"
-        const val ITEM_TYPE_MEMORY = "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.memory"
+        const val ITEM_TYPE_TAG =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.tag"
+        const val ITEM_TYPE_MEMORY =
+            "vnd.android.cursor.item/vnd.net.extrawdw.apps.locationhistory.memory"
 
         const val READ_ONLY_MESSAGE =
             "Pathline's data API is read-only except the annotation sub-collections (see PathlineContract.Annotations)"

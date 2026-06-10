@@ -70,7 +70,11 @@ interface VisitDao {
 
     /** Visits attributed to any of [placeIds] in the window — the place-name leg of visit search. */
     @Query("SELECT * FROM visits WHERE placeId IN (:placeIds) AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
-    suspend fun forPlacesOverlapping(placeIds: List<Long>, startMs: Long, endMs: Long): List<VisitEntity>
+    suspend fun forPlacesOverlapping(
+        placeIds: List<Long>,
+        startMs: Long,
+        endMs: Long
+    ): List<VisitEntity>
 
     @Query("DELETE FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
@@ -118,11 +122,15 @@ interface TripDao {
      *  the place-name leg of trip search. */
     @Query(
         "SELECT * FROM trips WHERE (" +
-            "fromVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds)) OR " +
-            "toVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds))) " +
-            "AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC",
+                "fromVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds)) OR " +
+                "toVisitId IN (SELECT id FROM visits WHERE placeId IN (:placeIds))) " +
+                "AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC",
     )
-    suspend fun forEndpointPlacesOverlapping(placeIds: List<Long>, startMs: Long, endMs: Long): List<TripEntity>
+    suspend fun forEndpointPlacesOverlapping(
+        placeIds: List<Long>,
+        startMs: Long,
+        endMs: Long
+    ): List<TripEntity>
 
     @Query("DELETE FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)

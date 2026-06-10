@@ -33,9 +33,9 @@ object AppMigrations {
 
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `tags` (" +
-                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                    "`canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
-                    "`createdAtMs` INTEGER NOT NULL)",
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
+                        "`createdAtMs` INTEGER NOT NULL)",
             )
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS `index_tags_canonicalName` ON `tags` (`canonicalName`)",
@@ -43,24 +43,24 @@ object AppMigrations {
 
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `entity_tags` (" +
-                    "`tagId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, " +
-                    "`createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`tagId`, `targetType`, `targetId`))",
+                        "`tagId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, " +
+                        "`createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`tagId`, `targetType`, `targetId`))",
             )
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_entity_tags_tagId` ON `entity_tags` (`tagId`)")
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS `index_entity_tags_targetType_targetId` " +
-                    "ON `entity_tags` (`targetType`, `targetId`)",
+                        "ON `entity_tags` (`targetType`, `targetId`)",
             )
 
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `annotations` (" +
-                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `targetType` TEXT NOT NULL, " +
-                    "`targetId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `content` TEXT NOT NULL, " +
-                    "`updatedAtMs` INTEGER NOT NULL)",
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `targetType` TEXT NOT NULL, " +
+                        "`targetId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `content` TEXT NOT NULL, " +
+                        "`updatedAtMs` INTEGER NOT NULL)",
             )
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS `index_annotations_targetType_targetId_kind` " +
-                    "ON `annotations` (`targetType`, `targetId`, `kind`)",
+                        "ON `annotations` (`targetType`, `targetId`, `kind`)",
             )
 
             AppDatabase.FTS_CREATE.forEach(db::execSQL)

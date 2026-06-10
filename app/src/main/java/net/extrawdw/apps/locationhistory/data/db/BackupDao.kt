@@ -166,17 +166,17 @@ interface BackupDao {
 
     @Query(
         "DELETE FROM entity_tags WHERE NOT (" +
-            "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
-            "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
-            "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+                "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
+                "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
     )
     suspend fun purgeDanglingEntityTags()
 
     @Query(
         "DELETE FROM annotations WHERE NOT (" +
-            "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
-            "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
-            "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+                "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
+                "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
     )
     suspend fun purgeDanglingAnnotations()
 
