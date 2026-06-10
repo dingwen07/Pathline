@@ -42,6 +42,11 @@ import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 
+data class PlaceSearchAnchor(
+    val latitude: Double,
+    val longitude: Double,
+)
+
 /**
  * Resolve a visit's place: **search** Google Places by name, pick a nearby suggestion, pick an
  * existing saved place (ranked by distance), or save a custom place. Used both when confirming a
@@ -57,13 +62,16 @@ fun ConfirmPlaceSheet(
     onConfirm: (PlaceChoice) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val anchor = remember(visit.id) {
+        PlaceSearchAnchor(visit.centroidLatitude, visit.centroidLongitude)
+    }
     var nearby by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var newName by remember { mutableStateOf(visit.candidateName ?: "") }
 
     LaunchedEffect(visit.id) {
-        nearby = loadNearby(visit.centroidLatitude, visit.centroidLongitude)
+        nearby = loadNearby(anchor.latitude, anchor.longitude)
     }
     // Debounced text search against the Maps API.
     LaunchedEffect(query) {
@@ -71,7 +79,7 @@ fun ConfirmPlaceSheet(
             results = emptyList(); return@LaunchedEffect
         }
         delay(350)
-        results = searchPlaces(query, visit.centroidLatitude, visit.centroidLongitude)
+        results = searchPlaces(query, anchor.latitude, anchor.longitude)
     }
 
     val context = LocalContext.current
@@ -81,8 +89,8 @@ fun ConfirmPlaceSheet(
         localPlaces
             .map {
                 it to Geo.distanceMeters(
-                    visit.centroidLatitude,
-                    visit.centroidLongitude,
+                    anchor.latitude,
+                    anchor.longitude,
                     it.latitude,
                     it.longitude
                 )
@@ -122,7 +130,7 @@ fun ConfirmPlaceSheet(
                 if (results.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.search_results_header)) }
                     items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) {
+                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) {
                             onConfirm(
                                 PlaceChoice.Google(c)
                             )
@@ -133,8 +141,8 @@ fun ConfirmPlaceSheet(
                     item { SectionLabel(stringResource(R.string.saved_places_nearest_header)) }
                     items(localNearby, key = { "l${it.id}" }) { place ->
                         val dist = Geo.distanceMeters(
-                            visit.centroidLatitude,
-                            visit.centroidLongitude,
+                            anchor.latitude,
+                            anchor.longitude,
                             place.latitude,
                             place.longitude
                         )
@@ -147,7 +155,7 @@ fun ConfirmPlaceSheet(
                 if (query.isBlank() && nearby.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.nearby_header)) }
                     items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, visit, c)) {
+                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) {
                             onConfirm(
                                 PlaceChoice.Google(c)
                             )
@@ -185,10 +193,81 @@ fun ConfirmPlaceSheet(
     }
 }
 
-/** "<distance> away · <address/type>" relative to the visit location. */
-private fun candidateSubtitle(context: Context, visit: VisitEntity, c: PlaceCandidate): String {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddGooglePlaceSheet(
+    anchor: PlaceSearchAnchor,
+    loadNearby: suspend (Double, Double) -> List<PlaceCandidate>,
+    searchPlaces: suspend (String, Double, Double) -> List<PlaceCandidate>,
+    onAdd: (PlaceCandidate) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var nearby by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+
+    LaunchedEffect(anchor) {
+        nearby = loadNearby(anchor.latitude, anchor.longitude)
+    }
+    LaunchedEffect(query, anchor) {
+        if (query.isBlank()) {
+            results = emptyList(); return@LaunchedEffect
+        }
+        delay(350)
+        results = searchPlaces(query, anchor.latitude, anchor.longitude)
+    }
+
+    val context = LocalContext.current
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
+        ) {
+            Text(
+                stringResource(R.string.add_place_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text(stringResource(R.string.search_places_label)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+            )
+
+            LazyColumn(
+                Modifier
+                    .heightIn(max = 380.dp)
+                    .padding(top = 8.dp)
+            ) {
+                if (results.isNotEmpty()) {
+                    item { SectionLabel(stringResource(R.string.search_results_header)) }
+                    items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->
+                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) { onAdd(c) }
+                    }
+                }
+                if (query.isBlank() && nearby.isNotEmpty()) {
+                    item { SectionLabel(stringResource(R.string.nearby_header)) }
+                    items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
+                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) { onAdd(c) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** "<distance> away · <address/type>" relative to the search hint location. */
+private fun candidateSubtitle(context: Context, anchor: PlaceSearchAnchor, c: PlaceCandidate): String {
     val dist =
-        Geo.distanceMeters(visit.centroidLatitude, visit.centroidLongitude, c.latitude, c.longitude)
+        Geo.distanceMeters(anchor.latitude, anchor.longitude, c.latitude, c.longitude)
     val detail = c.address ?: c.primaryType ?: context.getString(R.string.place_default_name)
     return context.getString(R.string.candidate_subtitle, Format.distance(context, dist), detail)
 }

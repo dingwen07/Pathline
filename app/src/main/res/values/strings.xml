@@ -101,6 +101,7 @@
     <string name="places_pending_header">Pending confirmation</string>
     <string name="places_saved_header">Saved places</string>
     <string name="places_assign">Assign place</string>
+    <string name="cd_place_add">Add place</string>
     <string name="cd_place_locked">Locked</string>
     <string name="cd_place_delete">Delete place</string>
     <string name="cd_place_edit">Edit place</string>
@@ -121,6 +122,9 @@
 
     <!-- ============================ Confirm / assign place ============================ -->
     <string name="assign_place_title">Assign place</string>
+    <string name="add_place_title">Add place</string>
+    <string name="add_place_no_location_title">No location yet</string>
+    <string name="add_place_no_location_message">Pathline needs a current location or at least one saved timeline location to search nearby places.</string>
     <string name="search_places_label">Search places</string>
     <string name="search_results_header">Search results (nearest first)</string>
     <string name="saved_places_nearest_header">Saved places (nearest first)</string>

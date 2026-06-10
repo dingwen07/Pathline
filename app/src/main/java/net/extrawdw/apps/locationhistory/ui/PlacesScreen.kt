@@ -8,8 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Place
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
@@ -53,8 +56,36 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     var deletePlace by remember { mutableStateOf<PlaceEntity?>(null) }
     var assignVisit by remember { mutableStateOf<VisitEntity?>(null) }
     var detailPlaceId by remember { mutableStateOf<Long?>(null) }
+    var addPlaceAnchor by remember { mutableStateOf<PlaceSearchAnchor?>(null) }
+    var showNoLocation by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.places_title)) }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.places_title)) },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                val anchor = viewModel.placeSearchAnchor()
+                                if (anchor != null) {
+                                    addPlaceAnchor = PlaceSearchAnchor(anchor.latitude, anchor.longitude)
+                                } else {
+                                    showNoLocation = true
+                                }
+                            }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = stringResource(R.string.cd_place_add)
+                        )
+                    }
+                },
+            )
+        },
+    ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -203,6 +234,32 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             searchPlaces = { q, lat, lon -> viewModel.searchPlaces(q, lat, lon) },
             onConfirm = { choice -> viewModel.confirmVisit(visit.id, choice); assignVisit = null },
             onDismiss = { assignVisit = null },
+        )
+    }
+
+    addPlaceAnchor?.let { anchor ->
+        AddGooglePlaceSheet(
+            anchor = anchor,
+            loadNearby = { lat, lon -> viewModel.nearbySuggestions(lat, lon) },
+            searchPlaces = { q, lat, lon -> viewModel.searchPlaces(q, lat, lon) },
+            onAdd = { candidate ->
+                viewModel.addGooglePlace(candidate)
+                addPlaceAnchor = null
+            },
+            onDismiss = { addPlaceAnchor = null },
+        )
+    }
+
+    if (showNoLocation) {
+        AlertDialog(
+            onDismissRequest = { showNoLocation = false },
+            title = { Text(stringResource(R.string.add_place_no_location_title)) },
+            text = { Text(stringResource(R.string.add_place_no_location_message)) },
+            confirmButton = {
+                TextButton(onClick = { showNoLocation = false }) {
+                    Text(stringResource(R.string.action_ok))
+                }
+            },
         )
     }
 

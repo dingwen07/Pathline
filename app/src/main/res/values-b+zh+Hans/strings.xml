@@ -98,6 +98,7 @@
     <string name="places_pending_header">待确认</string>
     <string name="places_saved_header">已保存的地点</string>
     <string name="places_assign">指定地点</string>
+    <string name="cd_place_add">添加地点</string>
     <string name="cd_place_locked">已锁定</string>
     <string name="cd_place_delete">删除地点</string>
     <string name="cd_place_edit">编辑地点</string>
@@ -117,6 +118,9 @@
 
     <!-- ============================ Confirm / assign place ============================ -->
     <string name="assign_place_title">指定地点</string>
+    <string name="add_place_title">添加地点</string>
+    <string name="add_place_no_location_title">暂无位置</string>
+    <string name="add_place_no_location_message">Pathline 需要当前位置，或至少一条已保存的时间线位置，才能搜索附近地点。</string>
     <string name="search_places_label">搜索地点</string>
     <string name="search_results_header">搜索结果（由近到远）</string>
     <string name="saved_places_nearest_header">已保存的地点（由近到远）</string>
