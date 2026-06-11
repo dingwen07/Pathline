@@ -289,6 +289,26 @@ class TimelineMergerTest {
     }
 
     @Test
+    fun consecutiveDriftTrips_bothRemoved_visitsCollapseToOne() {
+        // A - drift - A - drift - A: the second trip's bounds must be checked against the
+        // already-fused first pair, so the pass's visit snapshot has to track each fuse.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + hour + 600_000, end = t0 + 2 * hour),
+            visit(id = 3, start = t0 + 2 * hour + 600_000, end = t0 + 3 * hour),
+        )
+        val driftPoints = listOf(1.0 to 1.0, 1.0001 to 1.0003, 1.0 to 1.0003)
+        tripDao.seed(
+            trip(id = 1, start = t0 + hour, end = t0 + hour + 600_000, points = driftPoints),
+            trip(id = 2, start = t0 + 2 * hour, end = t0 + 2 * hour + 600_000, points = driftPoints),
+        )
+        merge()
+        assertTrue(tripDao.trips.isEmpty())
+        assertEquals(listOf(1L), visitDao.visits.map { it.id })
+        assertEquals(t0 to t0 + 3 * hour, visitDao.visits.single().let { it.startMs to it.endMs })
+    }
+
+    @Test
     fun confirmedShortTrip_isNotDrift() {
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour),

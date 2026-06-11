@@ -178,8 +178,9 @@ internal class FakeConceptDao : ConceptDao {
         members.filter { it.conceptId == conceptId }
             .sortedWith(compareBy({ it.createdAtMs }, { it.targetType }, { it.targetId }))
 
-    override suspend fun memberCounts(): List<ConceptMemberCount> =
-        members.groupBy { it.conceptId }.map { (id, rows) -> ConceptMemberCount(id, rows.size) }
+    override suspend fun memberCounts(ids: List<Long>): List<ConceptMemberCount> =
+        members.filter { it.conceptId in ids.toSet() }
+            .groupBy { it.conceptId }.map { (id, rows) -> ConceptMemberCount(id, rows.size) }
 
     override suspend fun membershipsFor(type: AnnotationTarget, id: Long): List<ConceptMemberEntity> =
         members.filter { it.targetType == type && it.targetId == id }

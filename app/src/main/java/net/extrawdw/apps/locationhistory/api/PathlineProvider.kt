@@ -307,14 +307,18 @@ class PathlineProvider : ContentProvider() {
         val limit = parseLimit(uri)
         val cursor = when (code) {
             CODE_VISITS -> runBlocking {
-                visitsCursorFor(caller, entryPoint.visitDao().overlapping(start, end).takeNewest(limit))
+                // Like samples, a limited read fetches newest-first with SQL LIMIT, then re-ascends.
+                val visits =
+                    if (limit == null) entryPoint.visitDao().overlapping(start, end)
+                    else entryPoint.visitDao().overlappingNewest(start, end, limit).asReversed()
+                visitsCursorFor(caller, visits)
             }
 
             CODE_TRIPS -> runBlocking {
-                ApiCursors.trips(
-                    entryPoint.tripDao().overlapping(start, end).takeNewest(limit),
-                    includeRoute = routeWithheld == false,
-                )
+                val trips =
+                    if (limit == null) entryPoint.tripDao().overlapping(start, end)
+                    else entryPoint.tripDao().overlappingNewest(start, end, limit).asReversed()
+                ApiCursors.trips(trips, includeRoute = routeWithheld == false)
             }
 
             CODE_SAMPLES -> samplesCursor(start, end, limit)
@@ -813,13 +817,11 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    /** The MEMBER_COUNT join for concept rows: one GROUP BY over the member edge, filtered in
-     *  code to the rows being returned (no per-concept query). */
+    /** The MEMBER_COUNT join for concept rows: one GROUP BY over the member edge, scoped in SQL
+     *  to the rows being returned (no per-concept query). */
     private suspend fun memberCountsFor(concepts: List<ConceptEntity>): Map<Long, Int> {
         if (concepts.isEmpty()) return emptyMap()
-        val ids = concepts.mapTo(HashSet()) { it.id }
-        return entryPoint.conceptDao().memberCounts()
-            .filter { it.conceptId in ids }
+        return entryPoint.conceptDao().memberCounts(concepts.map { it.id })
             .associate { it.conceptId to it.members }
     }
 

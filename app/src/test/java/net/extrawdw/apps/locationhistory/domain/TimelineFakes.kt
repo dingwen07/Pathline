@@ -101,6 +101,10 @@ internal class FakeVisitDao : VisitDao {
     override suspend fun overlapping(startMs: Long, endMs: Long): List<VisitEntity> =
         visits.filter { it.startMs < endMs && it.endMs > startMs }.sortedBy { it.startMs }
 
+    override suspend fun overlappingNewest(startMs: Long, endMs: Long, limit: Int): List<VisitEntity> =
+        visits.filter { it.startMs < endMs && it.endMs > startMs }
+            .sortedByDescending { it.startMs }.take(limit)
+
     override suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<VisitEntity> =
         visits.filter { it.confirmed && it.startMs < endMs && it.endMs > startMs }
             .sortedBy { it.startMs }
@@ -170,6 +174,10 @@ internal class FakeTripDao(private val visitDao: FakeVisitDao? = null) : TripDao
 
     override suspend fun overlapping(startMs: Long, endMs: Long): List<TripEntity> =
         trips.filter { it.startMs < endMs && it.endMs > startMs }.sortedBy { it.startMs }
+
+    override suspend fun overlappingNewest(startMs: Long, endMs: Long, limit: Int): List<TripEntity> =
+        trips.filter { it.startMs < endMs && it.endMs > startMs }
+            .sortedByDescending { it.startMs }.take(limit)
 
     override suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<TripEntity> =
         trips.filter { it.confirmed && it.startMs < endMs && it.endMs > startMs }

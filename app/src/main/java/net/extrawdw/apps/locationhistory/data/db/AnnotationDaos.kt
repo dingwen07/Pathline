@@ -160,10 +160,10 @@ interface ConceptDao {
     @Query("SELECT * FROM concept_members WHERE conceptId = :conceptId ORDER BY createdAtMs, targetType, targetId")
     suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity>
 
-    /** conceptId -> member count, one GROUP BY — the data API's `member_count` column. Concepts
-     *  with no members simply have no row (callers default to 0). */
-    @Query("SELECT conceptId AS conceptId, COUNT(*) AS members FROM concept_members GROUP BY conceptId")
-    suspend fun memberCounts(): List<ConceptMemberCount>
+    /** conceptId -> member count for [ids], one GROUP BY — the data API's `member_count` column.
+     *  Concepts with no members simply have no row (callers default to 0). */
+    @Query("SELECT conceptId AS conceptId, COUNT(*) AS members FROM concept_members WHERE conceptId IN (:ids) GROUP BY conceptId")
+    suspend fun memberCounts(ids: List<Long>): List<ConceptMemberCount>
 
     /** Membership rows of one target — the reverse edge, with per-row attached-at/by intact. */
     @Query("SELECT * FROM concept_members WHERE targetType = :type AND targetId = :id")

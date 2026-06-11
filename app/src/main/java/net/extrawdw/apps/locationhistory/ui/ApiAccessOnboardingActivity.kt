@@ -50,7 +50,6 @@ import androidx.core.graphics.drawable.toBitmap
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.api.PathlineContract
 import net.extrawdw.apps.locationhistory.data.repo.ApiScope
@@ -96,28 +95,36 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
         // A request defaults to "declined" until the user turns it on, so a back-dismiss returns CANCELED.
         if (mode == MODE_REQUEST) setResultForRequest(enabled = false)
 
-        val state = runBlocking { settings.settings.first() }
-        when (mode) {
-            MODE_MANAGE -> if (state.apiAccessEnabled || state.apiAccessConsentNeverAsk) {
-                openManager(); finish(); return
-            }
-
-            MODE_ENABLE -> if (state.apiAccessEnabled) {
-                finish(); return
-            }
-
-            MODE_REQUEST -> when {
-                // Already on -> nothing to ask; return success without any UI.
-                state.apiAccessEnabled -> {
-                    setResultForRequest(enabled = true); finish(); return
+        // The routing decision needs the persisted settings, and a cold DataStore read hits disk —
+        // never block the main thread on it. Until it resolves the window simply shows the theme
+        // background; the explainer (or the short-circuit) follows in the same frame the read lands.
+        lifecycleScope.launch {
+            val state = settings.settings.first()
+            when (mode) {
+                MODE_MANAGE -> if (state.apiAccessEnabled || state.apiAccessConsentNeverAsk) {
+                    openManager(); finish(); return@launch
                 }
-                // The user chose "don't ask again" -> never prompt for a request; decline silently.
-                state.apiAccessConsentNeverAsk -> {
-                    setResultForRequest(enabled = false); finish(); return
+
+                MODE_ENABLE -> if (state.apiAccessEnabled) {
+                    finish(); return@launch
+                }
+
+                MODE_REQUEST -> when {
+                    // Already on -> nothing to ask; return success without any UI.
+                    state.apiAccessEnabled -> {
+                        setResultForRequest(enabled = true); finish(); return@launch
+                    }
+                    // The user chose "don't ask again" -> never prompt for a request; decline silently.
+                    state.apiAccessConsentNeverAsk -> {
+                        setResultForRequest(enabled = false); finish(); return@launch
+                    }
                 }
             }
+            showExplainer(mode)
         }
+    }
 
+    private fun showExplainer(mode: Int) {
         val requester = if (mode == MODE_REQUEST) resolveRequester() else null
         setContent {
             PathlineTheme {

@@ -147,6 +147,16 @@ internal class ApiGate(
         if (!caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
             deny(PathlineContract.Permissions.READ_ANNOTATIONS)
         }
+        requireTargetReadTier(caller, target, ::deny)
+    }
+
+    /** The read tier a target type lives under — one mapping shared by [requireAnnotationRead] and
+     *  [checkWrite] so the two gates can't drift. Calls [deny] (which logs + throws) on a miss. */
+    private fun requireTargetReadTier(
+        caller: Caller,
+        target: AnnotationTarget,
+        deny: (String) -> Nothing,
+    ) {
         when (target) {
             AnnotationTarget.PLACE ->
                 if (!caller.holds(PathlineContract.Permissions.READ_ALL_PLACES) &&
@@ -160,7 +170,7 @@ internal class ApiGate(
                     deny(PathlineContract.Permissions.READ_TIMELINE)
                 }
 
-            // Concepts are curation, not recorded data: READ_ANNOTATIONS alone suffices.
+            // Concepts are curation, not recorded data: the annotation permission alone suffices.
             AnnotationTarget.CONCEPT -> Unit
         }
     }
@@ -264,22 +274,7 @@ internal class ApiGate(
         fun deny(p: String): Nothing =
             deny(caller, p, dataType, nowMs, nowMs, nowMs, groupId, isWrite = true)
         if (!caller.holds(permission)) deny(permission)
-        when (target) {
-            AnnotationTarget.PLACE ->
-                if (!caller.holds(PathlineContract.Permissions.READ_ALL_PLACES) &&
-                    !caller.holds(PathlineContract.Permissions.READ_TIMELINE)
-                ) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            AnnotationTarget.VISIT, AnnotationTarget.TRIP ->
-                if (!caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            // Concepts carry no read tier beyond the annotation permissions themselves.
-            AnnotationTarget.CONCEPT -> Unit
-        }
+        requireTargetReadTier(caller, target, ::deny)
         if (!targetVisible(caller, target, id, nowMs)) {
             // A write aimed at nothing: logged (audit honesty) and rejected. The message must not
             // reveal whether the row exists.

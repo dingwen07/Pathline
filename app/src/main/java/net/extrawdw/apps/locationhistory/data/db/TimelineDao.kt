@@ -81,6 +81,11 @@ interface VisitDao {
     @Query("SELECT * FROM visits WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun overlapping(startMs: Long, endMs: Long): List<VisitEntity>
 
+    /** The newest [limit] overlapping visits, newest first — the data API's `limit=` cap pushed
+     *  into SQL (callers re-ascend with `asReversed()`), mirroring [LocationSampleDao.rangeNewest]. */
+    @Query("SELECT * FROM visits WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs DESC LIMIT :limit")
+    suspend fun overlappingNewest(startMs: Long, endMs: Long, limit: Int): List<VisitEntity>
+
     @Query("SELECT * FROM visits WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<VisitEntity>
 
@@ -143,6 +148,10 @@ interface TripDao {
 
     @Query("SELECT * FROM trips WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun overlapping(startMs: Long, endMs: Long): List<TripEntity>
+
+    /** The newest [limit] overlapping trips, newest first — see [VisitDao.overlappingNewest]. */
+    @Query("SELECT * FROM trips WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs DESC LIMIT :limit")
+    suspend fun overlappingNewest(startMs: Long, endMs: Long, limit: Int): List<TripEntity>
 
     @Query("SELECT * FROM trips WHERE confirmed = 1 AND startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     suspend fun confirmedOverlapping(startMs: Long, endMs: Long): List<TripEntity>

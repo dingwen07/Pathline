@@ -68,21 +68,27 @@ class TimelineMerger @Inject constructor(
      *  (the gap they leave behind is the drift trip's own duration, so the normal gap rule wouldn't
      *  bridge it). */
     private suspend fun removeDriftTrips(spanStartMs: Long, spanEndMs: Long) {
+        // One visit fetch for the whole pass, kept in step with every fuse below so later trips see
+        // the merged bounds, not the pre-fuse rows. The fused visit keeps the earlier start, so the
+        // in-place replacement preserves the startMs ordering.
+        val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
-            val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }
             val before = visits.lastOrNull { it.startMs <= trip.startMs }
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
             if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
-                    visitDao.update(mergedVisit(before, after))
+                    val merged = mergedVisit(before, after)
+                    visitDao.update(merged)
                     // before is the older survivor; fold the dying visit's annotations onto it.
                     if (after.confirmed) {
                         annotationStore.foldOnMerge(AnnotationTarget.VISIT, before.id, after.id)
                     }
                     visitDao.delete(after.id)
+                    visits[visits.indexOfFirst { it.id == before.id }] = merged
+                    visits.removeAll { it.id == after.id }
                 }
             }
         }
