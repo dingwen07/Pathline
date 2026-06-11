@@ -6,6 +6,7 @@ import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
 import net.extrawdw.apps.locationhistory.data.db.AnnotationEntity
 import net.extrawdw.apps.locationhistory.data.db.ConceptDao
 import net.extrawdw.apps.locationhistory.data.db.ConceptEntity
+import net.extrawdw.apps.locationhistory.data.db.ConceptMemberCount
 import net.extrawdw.apps.locationhistory.data.db.ConceptMemberEntity
 import net.extrawdw.apps.locationhistory.data.db.EntityTagEntity
 import net.extrawdw.apps.locationhistory.data.db.TagDao
@@ -176,6 +177,9 @@ internal class FakeConceptDao : ConceptDao {
     override suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity> =
         members.filter { it.conceptId == conceptId }
             .sortedWith(compareBy({ it.createdAtMs }, { it.targetType }, { it.targetId }))
+
+    override suspend fun memberCounts(): List<ConceptMemberCount> =
+        members.groupBy { it.conceptId }.map { (id, rows) -> ConceptMemberCount(id, rows.size) }
 
     override suspend fun membershipsFor(type: AnnotationTarget, id: Long): List<ConceptMemberEntity> =
         members.filter { it.targetType == type && it.targetId == id }

@@ -1,0 +1,220 @@
+package net.extrawdw.apps.locationhistory.service
+
+import net.extrawdw.apps.locationhistory.core.Constants
+import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Table tests for [RecordingHeuristics] — the pure decision core extracted from
+ * [RecordingController] (backlog #7). Pins the June 2026 movement-undersampling rules:
+ * [RecordingHeuristics.recentlyMoving] (premature AR-STILL rejection), the noise-widened drift
+ * guard, the stationary-cluster detector, and the significant-motion backoff curve.
+ */
+class RecordingHeuristicsTest {
+
+    private val t0 = 1_750_000_000_000L
+    private val h = RecordingHeuristics()
+
+    /** ~1.1 m per 1e-5 deg of latitude. */
+    private fun fix(
+        atSec: Long,
+        lat: Double = 40.0,
+        lon: Double = -74.0,
+        accuracy: Float? = 10f,
+        speed: Float? = 0f,
+        stationary: Boolean = true,
+    ) = RecentFix(t0 + atSec * 1000, lat, lon, accuracy, speed, stationary)
+
+    // ---- recentlyMoving -------------------------------------------------------------------------
+
+    @Test
+    fun recentlyMoving_falseWhenSettled() {
+        repeat(5) { h.pushFix(fix(atSec = it * 10L, speed = 0.2f)) }
+        assertFalse(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_trueOnGpsSpeed() {
+        h.pushFix(fix(atSec = 0, speed = 0.5f))
+        h.pushFix(fix(atSec = 10, speed = 2.0f))
+        assertTrue(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_trueOnSpreadBeyondStayRadius_evenWithoutSpeed() {
+        // ~110 m apart > 60 m stay radius; speeds null (e.g. network fixes).
+        h.pushFix(fix(atSec = 0, lat = 40.0, speed = null))
+        h.pushFix(fix(atSec = 30, lat = 40.001, speed = null))
+        assertTrue(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_ignoresMovementOlderThanTheWindow() {
+        // A fast fix 5 minutes ago must not block a genuine stop now: only the last 90 s count.
+        h.pushFix(fix(atSec = 0, speed = 20f))
+        repeat(4) { h.pushFix(fix(atSec = 300 + it * 10L, speed = 0.1f)) }
+        assertFalse(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_needsAtLeastTwoRecentFixes() {
+        h.pushFix(fix(atSec = 0, speed = 20f))
+        assertFalse(h.recentlyMoving().also { /* single fix - no verdict */ })
+    }
+
+    // ---- stationary cluster detector --------------------------------------------------------------
+
+    private fun settle(seconds: LongRange, stepSec: Long = 30) {
+        for (sec in seconds step stepSec) h.pushFix(fix(atSec = sec, speed = 0.1f))
+    }
+
+    @Test
+    fun cluster_emergesAfterSettlingForMinVisitDuration() {
+        settle(0L..240L)    // 4 min of tight, accurate, slow fixes (MIN_VISIT is 3 min)
+        val c = h.stationaryClusterCandidate()
+        assertNotNull(c)
+        assertEquals(40.0, c!!.centroidLatitude, 1e-6)
+        assertTrue(c.endMs - c.startMs >= (Constants.MIN_VISIT_DURATION_MS * 0.8).toLong())
+    }
+
+    @Test
+    fun cluster_nullWhileWindowTooShort() {
+        settle(0L..60L)
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    @Test
+    fun cluster_nullOnPoorAccuracy() {
+        for (sec in 0L..240L step 30) h.pushFix(fix(atSec = sec, accuracy = 90f, speed = 0.1f))
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    @Test
+    fun cluster_nullWhenStillDrifting() {
+        // Mean speed above the 0.6 m/s gate.
+        for (sec in 0L..240L step 30) h.pushFix(fix(atSec = sec, speed = 1.0f))
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    @Test
+    fun cluster_nullWhenSpreadExceedsStayRadius() {
+        // Fixes alternate between two points ~220 m apart.
+        for ((i, sec) in (0L..240L step 30).withIndex()) {
+            h.pushFix(fix(atSec = sec, lat = if (i % 2 == 0) 40.0 else 40.002, speed = 0.1f))
+        }
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    @Test
+    fun cluster_nullWhenFixesNotMostlyStationary() {
+        for ((i, sec) in (0L..240L step 30).withIndex()) {
+            h.pushFix(fix(atSec = sec, speed = 0.1f, stationary = i % 2 == 0))
+        }
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    // ---- drift guard -----------------------------------------------------------------------------
+
+    @Test
+    fun drift_neverWhileMoving() {
+        h.stationaryAnchor = 40.0 to -74.0
+        assertFalse(h.isDriftAt(DevicePhysicalState.WALKING, 40.0, -74.0, 0f, 0f))
+    }
+
+    @Test
+    fun drift_assumedWithoutAnchor() {
+        // Stationary but anchorless: nothing to measure against, suppress the exit.
+        assertTrue(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0, -74.0, 0f, 0f))
+    }
+
+    @Test
+    fun drift_overriddenByGpsSpeed_orPhysicalMotion() {
+        h.stationaryAnchor = 40.0 to -74.0
+        // At the anchor, but the phone is moving per GPS -> not drift.
+        assertFalse(
+            h.isDriftAt(
+                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                Constants.DRIFT_MOVING_SPEED_MPS, 0f,
+            ),
+        )
+        // At the anchor, no GPS speed, but the phone is shaking (a real walk) -> not drift.
+        assertFalse(
+            h.isDriftAt(
+                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                0f, Constants.DRIFT_MOTION_VARIANCE_CEILING,
+            ),
+        )
+    }
+
+    @Test
+    fun drift_nearAnchorPhysicallyStill_isDrift_farIsNot() {
+        h.stationaryAnchor = 40.0 to -74.0
+        // ~33 m from the anchor, still, slow: jitter.
+        assertTrue(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0003, -74.0, 0f, 0f))
+        // ~220 m away: beyond any noise widening (cap is 150 m): a real departure.
+        assertFalse(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.002, -74.0, 0f, 0f))
+    }
+
+    @Test
+    fun noiseRadius_floorsAtDriftDisplacement_widensWithGpsNoise_capsAtPlaceMax() {
+        // Fewer than 3 stationary fixes: the floor.
+        assertEquals(Constants.DRIFT_DISPLACEMENT_METERS, h.stationaryNoiseRadius(), 1e-9)
+        // A noisy place: stationary fixes wobbling ~110 m around the centroid widen the radius…
+        for ((i, sec) in (0L..240L step 30).withIndex()) {
+            h.pushFix(fix(atSec = sec, lat = if (i % 2 == 0) 40.0 else 40.002, speed = 0f))
+        }
+        // …but never past the place-radius cap.
+        assertEquals(Constants.PLACE_MAX_RADIUS_METERS, h.stationaryNoiseRadius(), 1e-9)
+    }
+
+    @Test
+    fun noiseRadius_ignoresNonStationaryFixes() {
+        // A departure trajectory (stationary=false) must not inflate the dead zone.
+        for (sec in 0L..240L step 30) {
+            h.pushFix(fix(atSec = sec, lat = 40.0 + sec * 1e-5, speed = 2f, stationary = false))
+        }
+        assertEquals(Constants.DRIFT_DISPLACEMENT_METERS, h.stationaryNoiseRadius(), 1e-9)
+    }
+
+    // ---- speed stats & buffers ---------------------------------------------------------------------
+
+    @Test
+    fun speedStats_meanMaxVariance_overCappedWindow() {
+        assertEquals(Triple(0f, 0f, 0f), h.speedStats())
+        // 12 pushes; the window keeps the last 10 (all 2f after the first two are evicted).
+        h.pushSpeed(100f)
+        h.pushSpeed(50f)
+        repeat(10) { h.pushSpeed(2f) }
+        val (mean, max, variance) = h.speedStats()
+        assertEquals(2f, mean)
+        assertEquals(2f, max)
+        assertEquals(0f, variance)
+    }
+
+    @Test
+    fun fixBuffer_trimsToRollingWindow() {
+        h.pushFix(fix(atSec = 0, speed = 30f))
+        // 7 minutes later (beyond the 6-minute fix window) the old fast fix is gone.
+        h.pushFix(fix(atSec = 420, speed = 0f))
+        h.pushFix(fix(atSec = 430, speed = 0f))
+        assertFalse(h.recentlyMoving())
+    }
+
+    // ---- significant-motion backoff ------------------------------------------------------------------
+
+    @Test
+    fun sigMotionBackoff_doublesAndCaps() {
+        assertEquals(30_000L, RecordingHeuristics.sigMotionBackoffMs(0))
+        assertEquals(60_000L, RecordingHeuristics.sigMotionBackoffMs(1))
+        assertEquals(120_000L, RecordingHeuristics.sigMotionBackoffMs(2))
+        assertEquals(16 * 60_000L, RecordingHeuristics.sigMotionBackoffMs(5))
+        assertEquals(30 * 60_000L, RecordingHeuristics.sigMotionBackoffMs(6))
+        // The streak keeps growing past the shift cap; the delay must not overflow or grow.
+        assertEquals(30 * 60_000L, RecordingHeuristics.sigMotionBackoffMs(40))
+    }
+}

@@ -2,13 +2,10 @@ package net.extrawdw.apps.locationhistory.api
 
 import android.content.ContentProvider
 import android.content.ContentValues
-import android.content.Context
 import android.content.UriMatcher
 import android.content.pm.PackageManager
 import android.database.Cursor
-import android.database.MatrixCursor
 import android.net.Uri
-import androidx.sqlite.db.SimpleSQLiteQuery
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -30,7 +27,6 @@ import net.extrawdw.apps.locationhistory.data.db.SearchDao
 import net.extrawdw.apps.locationhistory.data.db.TagDao
 import net.extrawdw.apps.locationhistory.data.db.TagEntity
 import net.extrawdw.apps.locationhistory.data.db.TripDao
-import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
@@ -50,6 +46,13 @@ import net.extrawdw.apps.locationhistory.work.WorkScheduler
  * the extended-history permission (explicit windows throw without it; windowless reads clamp).
  * The provider is read-only **except** the annotation sub-collections, where insert/update/delete
  * implement the scoped write surface of [PathlineContract.Annotations]; every other URI still throws.
+ *
+ * Structurally this class is the **router**: URI matching, dispatch, the audit-log sink and the
+ * write-path orchestration. The security kernel (permission gates, visibility scoping, window
+ * clamping) lives in [ApiGate], row mapping in [ApiCursors], and the search legs in
+ * [ApiSearchEngine] — all plain classes over DAO interfaces so they are unit-testable off-device.
+ * Each entry point captures the calling identity ONCE as a [Caller] and threads it explicitly;
+ * nothing below the entry points reads ambient binder state.
  *
  * Hilt cannot inject a [ContentProvider] directly (it is created before the Hilt component), so the
  * DAOs are pulled lazily from the application's [EntryPoint] on first query — by which time the app
@@ -145,6 +148,60 @@ class PathlineProvider : ContentProvider() {
         )
     }
 
+    /** The audit-log sink: append one row + schedule the user-facing access notification.
+     *  Best-effort: a logging failure must never break a caller's read. */
+    private val logger = AccessLogger { caller, event ->
+        runCatching {
+            runBlocking {
+                entryPoint.apiAccessDao().insert(
+                    ApiAccessEventEntity(
+                        packageName = caller.pkgOrUnknown,
+                        dataType = event.dataType,
+                        startMs = event.startMs,
+                        endMs = event.endMs,
+                        rowCount = event.rowCount,
+                        timestampMs = event.nowMs,
+                        groupId = event.groupId,
+                        routeWithheld = event.routeWithheld,
+                        deniedPermission = event.deniedPermission,
+                        isWrite = event.isWrite,
+                    ),
+                )
+            }
+        }
+        // Alert the user about this access — a successful read/write OR a denied (unauthorized)
+        // attempt, on separate per-app back-off lanes. Coalesced + rate-limited by WorkManager /
+        // the worker. Skipped (logged-only) for denials while the whole API is switched off.
+        if (!event.notify) return@AccessLogger
+        runCatching {
+            entryPoint.workScheduler()
+                .enqueueApiAccessNotification(caller.pkgOrUnknown, denied = event.deniedPermission != null)
+        }
+    }
+
+    private val gate: ApiGate by lazy {
+        ApiGate(
+            visitDao = entryPoint.visitDao(),
+            tripDao = entryPoint.tripDao(),
+            placeDao = entryPoint.placeDao(),
+            conceptDao = entryPoint.conceptDao(),
+            tagDao = entryPoint.tagDao(),
+            grantDao = entryPoint.apiPlaceGrantDao(),
+            accessEnabled = ::apiAccessEnabled,
+            logger = logger,
+        )
+    }
+
+    private val searchEngine: ApiSearchEngine by lazy {
+        ApiSearchEngine(
+            searchDao = entryPoint.searchDao(),
+            tagDao = entryPoint.tagDao(),
+            annotationDao = entryPoint.annotationDao(),
+            visitDao = entryPoint.visitDao(),
+            tripDao = entryPoint.tripDao(),
+        )
+    }
+
     override fun onCreate(): Boolean = true
 
     override fun getType(uri: Uri): String? = when (matcher.match(uri)) {
@@ -185,37 +242,31 @@ class PathlineProvider : ContentProvider() {
 
         // The status route is always answerable: it reports the access switch + the caller's grants,
         // returns no personal data, and is exempt from the switch and the audit log.
-        if (code == CODE_STATUS) return statusCursor()
+        if (code == CODE_STATUS) return ApiCursors.status(apiAccessEnabled())
 
-        // The single access switch gates EVERYTHING below. When off, no per-app permission matters:
-        // every data read is denied. The denial is logged (so the audit trail is honest) but does NOT
-        // notify the user — an app reading while the user has turned the whole API off is not a
-        // per-app breach worth alerting on. We attribute it to the install-time API gate.
-        if (!apiAccessEnabled()) {
-            logAccess(
-                dataTypeFor(code), now, now, rowCount = 0, now, parseGroup(uri, now),
-                routeWithheld = null,
-                deniedPermission = PathlineContract.Permissions.API,
-                notify = false,
-            )
-            throw SecurityException("Third-party access to Pathline data is turned off")
-        }
+        val caller = captureCaller()
+
+        // The single access switch gates EVERYTHING below; see [ApiGate.requireApiEnabled].
+        gate.requireApiEnabled(
+            caller, dataTypeFor(code),
+            startMs = now, endMs = now, nowMs = now, groupId = parseGroup(uri, now),
+        )
 
         // The windowless collections (places, tags, per-target annotations) branch off before the
         // required-`start` parsing below; so do searches, where `start` becomes optional.
         when (code) {
-            CODE_PLACES -> return placesQuery(uri, now)
-            CODE_PLACE_VISITS -> return placeVisitsQuery(uri, now)
-            CODE_PLACE_STATS -> return placeStatsQuery(uri, now)
-            CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(uri, code, now)
-            CODE_TAGS -> return tagsQuery(uri, now)
-            CODE_CONCEPTS -> return conceptsQuery(uri, now)
-            CODE_CONCEPT_ITEM -> return conceptItemQuery(uri, now)
-            CODE_CONCEPT_MEMBERS -> return conceptMembersQuery(uri, now)
-            in CONCEPTS_FOR_TARGET_CODES -> return targetConceptsQuery(uri, targetFor(code), now)
-            in TAGS_CODES -> return targetTagsQuery(uri, targetFor(code), now)
-            in NOTES_CODES -> return targetNotesQuery(uri, targetFor(code), now)
-            in MEMORIES_CODES -> return targetMemoriesQuery(uri, targetFor(code), now)
+            CODE_PLACES -> return placesQuery(caller, uri, now)
+            CODE_PLACE_VISITS -> return placeVisitsQuery(caller, uri, now)
+            CODE_PLACE_STATS -> return placeStatsQuery(caller, uri, now)
+            CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(caller, uri, code, now)
+            CODE_TAGS -> return tagsQuery(caller, uri, now)
+            CODE_CONCEPTS -> return conceptsQuery(caller, uri, now)
+            CODE_CONCEPT_ITEM -> return conceptItemQuery(caller, uri, now)
+            CODE_CONCEPT_MEMBERS -> return conceptMembersQuery(caller, uri, now)
+            in CONCEPTS_FOR_TARGET_CODES -> return targetConceptsQuery(caller, uri, targetFor(code), now)
+            in TAGS_CODES -> return targetTagsQuery(caller, uri, targetFor(code), now)
+            in NOTES_CODES -> return targetNotesQuery(caller, uri, targetFor(code), now)
+            in MEMORIES_CODES -> return targetMemoriesQuery(caller, uri, targetFor(code), now)
             // The single-item annotation/member URIs exist for delete only.
             in TAG_NAME_CODES, in MEMORY_KEY_CODES, CODE_CONCEPT_MEMBER_ITEM ->
                 throw IllegalArgumentException("Not a queryable URI (delete-only): $uri")
@@ -223,15 +274,14 @@ class PathlineProvider : ContentProvider() {
         if ((code == CODE_VISITS || code == CODE_TRIPS) &&
             uri.getQueryParameter(PathlineContract.QueryParams.Q) != null
         ) {
-            return timelineSearchQuery(uri, code, now)
+            return timelineSearchQuery(caller, uri, code, now)
         }
 
-        val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
-            ?: throw IllegalArgumentException(
-                "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
-            )
-        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
-        require(end > start) { "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'" }
+        val (start, end) = gate.requireWindow(
+            uri.getQueryParameter(PathlineContract.QueryParams.START),
+            uri.getQueryParameter(PathlineContract.QueryParams.END),
+            now,
+        )
 
         val dataType = uri.lastPathSegment ?: "?"
         val basePermission = when (code) {
@@ -245,142 +295,62 @@ class PathlineProvider : ContentProvider() {
         // from one app are aggregated in the access manager.
         val groupId = parseGroup(uri, now)
 
-        // Enforce each required permission. A well-formed request the caller isn't authorized for is
-        // recorded as a denied event (read nothing -> rowCount 0, no user notification) and then
-        // rejected; the window is never silently narrowed.
-        fun requirePermission(permission: String) {
-            if (holds(permission)) return
-            logAccess(
-                dataType,
-                start,
-                end,
-                rowCount = 0,
-                now,
-                groupId,
-                routeWithheld = null,
-                deniedPermission = permission
-            )
-            throw SecurityException("Caller must hold $permission")
-        }
-        requirePermission(basePermission)
-        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
-            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
-        }
+        // Enforce each required permission; a well-formed but unauthorized request is recorded as a
+        // denied event and rejected — the window is never silently narrowed.
+        gate.requireWindowedRead(caller, basePermission, dataType, start, end, now, groupId)
 
         // A trip's encoded route is the raw movement path, so it sits behind the location-trail tier:
         // a timeline-only caller still gets trip rows but with the polyline column nulled. Either the
         // route permission or full location-history unlocks it (a sample reader can rebuild the path).
-        val routeWithheld: Boolean? = if (code == CODE_TRIPS) !routeUnlocked() else null
+        val routeWithheld: Boolean? = if (code == CODE_TRIPS) !caller.routeUnlocked() else null
 
         val limit = parseLimit(uri)
         val cursor = when (code) {
-            CODE_VISITS -> visitsCursor(start, end, limit)
-            CODE_TRIPS -> tripsCursor(start, end, includeRoute = routeWithheld == false, limit)
+            CODE_VISITS -> runBlocking {
+                visitsCursorFor(caller, entryPoint.visitDao().overlapping(start, end).takeNewest(limit))
+            }
+
+            CODE_TRIPS -> runBlocking {
+                ApiCursors.trips(
+                    entryPoint.tripDao().overlapping(start, end).takeNewest(limit),
+                    includeRoute = routeWithheld == false,
+                )
+            }
+
             CODE_SAMPLES -> samplesCursor(start, end, limit)
             else -> throw IllegalArgumentException("Unknown URI: $uri")
         }
-        logAccess(
-            dataType,
-            start,
-            end,
-            cursor.count,
-            now,
-            groupId,
-            routeWithheld,
-            deniedPermission = null
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = start,
+                endMs = end,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+                routeWithheld = routeWithheld,
+            ),
         )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
-    /** Append one row to the audit log so the in-app access manager and warnings can surface it.
-     *  Best-effort: a logging failure must never break a caller's read. */
-    private fun logAccess(
-        dataType: String,
-        startMs: Long,
-        endMs: Long,
-        rowCount: Int,
-        nowMs: Long,
-        groupId: Long?,
-        routeWithheld: Boolean?,
-        deniedPermission: String?,
-        notify: Boolean = true,
-        isWrite: Boolean = false,
-    ) {
-        val pkg = callingPackage ?: "unknown"
-        runCatching {
-            runBlocking {
-                entryPoint.apiAccessDao().insert(
-                    ApiAccessEventEntity(
-                        packageName = pkg,
-                        dataType = dataType,
-                        startMs = startMs,
-                        endMs = endMs,
-                        rowCount = rowCount,
-                        timestampMs = nowMs,
-                        groupId = groupId,
-                        routeWithheld = routeWithheld,
-                        deniedPermission = deniedPermission,
-                        isWrite = isWrite,
-                    ),
-                )
-            }
-        }
-        // Alert the user about this access — a successful read/write OR a denied (unauthorized)
-        // attempt, on separate per-app back-off lanes. Coalesced + rate-limited by WorkManager / the
-        // worker. Skipped (logged-only) for denials while the whole API is switched off — see [query].
-        if (!notify) return
-        runCatching {
-            entryPoint.workScheduler()
-                .enqueueApiAccessNotification(pkg, denied = deniedPermission != null)
-        }
-    }
-
     // ---- Timeline & samples ------------------------------------------------------------------
 
-    private fun visitsCursor(start: Long, end: Long, limit: Int? = null): Cursor = runBlocking {
-        buildVisitsCursor(entryPoint.visitDao().overlapping(start, end).takeNewest(limit))
-    }
-
-    /** [PathlineContract.Visits] rows for [visits], resolving place names and recording grants. */
-    private suspend fun buildVisitsCursor(visits: List<VisitEntity>): Cursor {
+    /** [PathlineContract.Visits] rows for [visits]: resolve place names once per distinct place,
+     *  build the cursor, and record the caller's place grants (best-effort, never breaks a read). */
+    private suspend fun visitsCursorFor(caller: Caller, visits: List<VisitEntity>): Cursor {
         val placeDao = entryPoint.placeDao()
-        // Resolve place names once per distinct place (visit counts in a window are small).
         val names = HashMap<Long, String?>()
-        val cursor = MatrixCursor(PathlineContract.Visits.COLUMNS, visits.size)
         for (v in visits) {
-            val resolvedName = v.placeId?.let { id ->
-                names.getOrPut(id) { placeDao.byId(id)?.name }
-            } ?: v.candidateName
-            cursor.addRow(
-                arrayOf<Any?>(
-                    v.id,
-                    v.startMs,
-                    v.endMs,
-                    v.placeId,
-                    resolvedName,
-                    v.centroidLatitude,
-                    v.centroidLongitude,
-                    v.radiusMeters,
-                    v.confidence,
-                    if (v.confirmed) 1 else 0,
-                    if (v.isOngoing) 1 else 0,
-                ),
-            )
+            v.placeId?.let { id -> names.getOrPut(id) { placeDao.byId(id)?.name } }
         }
+        val cursor = ApiCursors.visits(visits, names)
         // Record that this caller has now seen these saved places, so it may later resolve their
         // details and history via the `places` collection. Best-effort: never break the read.
-        runCatching { recordPlaceGrants(visits) }
+        runCatching { recordPlaceGrants(caller, visits) }
         return cursor
-    }
-
-    private fun tripsCursor(
-        start: Long,
-        end: Long,
-        includeRoute: Boolean,
-        limit: Int? = null,
-    ): Cursor = runBlocking {
-        buildTripsCursor(entryPoint.tripDao().overlapping(start, end).takeNewest(limit), includeRoute)
     }
 
     /** The `limit=` rule for chronological lists: keep the NEWEST rows, order unchanged
@@ -388,87 +358,43 @@ class PathlineProvider : ContentProvider() {
     private fun <T> List<T>.takeNewest(limit: Int?): List<T> =
         if (limit == null || size <= limit) this else takeLast(limit)
 
-    private fun buildTripsCursor(trips: List<TripEntity>, includeRoute: Boolean): Cursor {
-        val cursor = MatrixCursor(PathlineContract.Trips.COLUMNS, trips.size)
-        for (t in trips) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    t.id,
-                    t.startMs,
-                    t.endMs,
-                    t.mode.name,
-                    t.modeConfidence,
-                    t.distanceMeters,
-                    if (includeRoute) t.encodedPolyline else null,
-                    if (t.confirmed) 1 else 0,
-                    t.fromVisitId,
-                    t.toVisitId,
-                ),
-            )
-        }
-        return cursor
-    }
-
     private fun samplesCursor(start: Long, end: Long, limit: Int? = null): Cursor = runBlocking {
         // Samples are the one collection big enough for the cap to matter at the DB layer: a
         // limited read fetches newest-first with SQL LIMIT, then re-ascends.
         val samples =
             if (limit == null) entryPoint.locationSampleDao().range(start, end)
             else entryPoint.locationSampleDao().rangeNewest(start, end, limit).asReversed()
-        val cursor = MatrixCursor(PathlineContract.Samples.COLUMNS, samples.size)
-        for (s in samples) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    s.id,
-                    s.timestampMs,
-                    s.latitude,
-                    s.longitude,
-                    s.altitude,
-                    s.accuracy,
-                    s.bearing,
-                    s.speed,
-                    s.provider,
-                    if (s.isMock) 1 else 0,
-                    s.devicePhysicalState.name,
-                    s.arActivity,
-                    s.networkTransport?.name,
-                    if (s.includedInComputation) 1 else 0,
-                ),
-            )
-        }
-        cursor
+        ApiCursors.samples(samples)
     }
 
     // ---- Places --------------------------------------------------------------------------------
 
     /**
      * `places` collection: saved-place details for places the caller may see — its grant set (built
-     * up by [buildVisitsCursor] reads) under READ_TIMELINE, or the whole corpus under
+     * up by [visitsCursorFor] reads) under READ_TIMELINE, or the whole corpus under
      * READ_ALL_PLACES. Not time-windowed (`start`/`end` ignored; the audit row records a zero-width
      * window at "now"). With `q` it switches into place search (SEARCH_DATA), matching the fields of
      * [PathlineContract.SearchFields] — annotation fields only under READ_ANNOTATIONS.
      */
-    private fun placesQuery(uri: Uri, now: Long): Cursor {
+    private fun placesQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
         val dataType = PathlineContract.Places.PATH
-        fun deny(permission: String): Nothing {
-            logAccess(dataType, now, now, 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
+        fun deny(permission: String): Nothing =
+            gate.deny(caller, permission, dataType, now, now, now, groupId)
 
-        val allPlaces = holds(PathlineContract.Permissions.READ_ALL_PLACES)
-        if (!allPlaces && !holds(PathlineContract.Permissions.READ_TIMELINE)) {
+        val allPlaces = caller.holds(PathlineContract.Permissions.READ_ALL_PLACES)
+        if (!allPlaces && !caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
             deny(PathlineContract.Permissions.READ_TIMELINE)
         }
         val q = uri.getQueryParameter(PathlineContract.QueryParams.Q)
-        if (q != null && !holds(PathlineContract.Permissions.SEARCH_DATA)) {
+        if (q != null && !caller.holds(PathlineContract.Permissions.SEARCH_DATA)) {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
         val near = uri.getQueryParameter(PathlineContract.QueryParams.NEAR)
             ?.let { GeoSearch.parseNear(it) }
         val limit = parseLimit(uri)
 
-        val pkg = callingPackage ?: "unknown"
+        val pkg = caller.pkgOrUnknown
         // In proximity mode the rows also carry their distance from the `near` point.
         var distances: Map<Long, Double>? = null
         val places: List<PlaceEntity> = runBlocking {
@@ -498,7 +424,14 @@ class PathlineProvider : ContentProvider() {
                 if (requested != null) nearby = nearby.filter { (p, _) -> p.id in requested.toSet() }
                 if (q != null) {
                     require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
-                    val matched = matchedPlaceIds(q, placeSearchFields(uri, ::deny))
+                    val matched = searchEngine.matchedPlaceIds(
+                        q,
+                        searchEngine.placeSearchFields(
+                            caller,
+                            uri.getQueryParameter(PathlineContract.QueryParams.FIELDS),
+                            ::deny,
+                        ),
+                    )
                     nearby = nearby.filter { (p, _) -> p.id in matched }
                 }
                 if (limit != null) nearby = nearby.take(limit)
@@ -524,10 +457,14 @@ class PathlineProvider : ContentProvider() {
                 if (limit == null) listed else listed.take(limit)
             } else {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
-                val fields = placeSearchFields(uri, ::deny)
+                val fields = searchEngine.placeSearchFields(
+                    caller,
+                    uri.getQueryParameter(PathlineContract.QueryParams.FIELDS),
+                    ::deny,
+                )
                 // matchedPlaceIds is relevance-ordered (bm25 FTS hits first); scope/ids filtering
                 // and the final fetch must all preserve that order — SQL `IN` doesn't, so reorder.
-                val matched = matchedPlaceIds(q, fields)
+                val matched = searchEngine.matchedPlaceIds(q, fields)
                 val allowed: Set<Long> =
                     if (allPlaces || matched.isEmpty()) matched
                     else grantDao.grantedAmong(pkg, matched.toList()).toSet()
@@ -538,74 +475,20 @@ class PathlineProvider : ContentProvider() {
                 else sortByIdOrder(entryPoint.placeDao().byIds(filtered), filtered) { it.id }
             }
         }
-        val cursor = placesCursorOf(places, distances)
-        logAccess(dataType, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.places(places, distances)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
-    }
-
-    /** The validated place-search field list — defaults to everything the caller may match. */
-    private fun placeSearchFields(uri: Uri, deny: (String) -> Nothing): List<String> {
-        val fields =
-            ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
-                ?: return PLACE_DETAIL_FIELDS +
-                        if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) ANNOTATION_FIELDS else emptyList()
-        val unknown = fields.filter { it !in PLACE_DETAIL_FIELDS && it !in ANNOTATION_FIELDS }
-        require(unknown.isEmpty()) { "Unknown place search fields: $unknown" }
-        if (fields.any { it in ANNOTATION_FIELDS } &&
-            !holds(PathlineContract.Permissions.READ_ANNOTATIONS)
-        ) {
-            deny(PathlineContract.Permissions.READ_ANNOTATIONS)
-        }
-        return fields
-    }
-
-    /** Union of the place ids matching [q] in each requested field (unscoped — callers intersect
-     *  with what the caller may see). **Relevance-ordered**: the FTS leg comes bm25-ranked and
-     *  first; the tag/note/memory legs (no score) append after in stable order. */
-    private suspend fun matchedPlaceIds(q: String, fields: List<String>): LinkedHashSet<Long> {
-        val ids = LinkedHashSet<Long>()
-        val ftsColumns = fields.filter { it in PLACE_DETAIL_FIELDS }
-        if (ftsColumns.isNotEmpty()) {
-            ids += entryPoint.searchDao().matchRowIds(
-                SimpleSQLiteQuery(
-                    "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ? " +
-                            "ORDER BY bm25(places_fts)",
-                    arrayOf(ApiSearch.ftsQuery(q, ftsColumns)),
-                ),
-            ).map { it.id }
-        }
-        if (PathlineContract.SearchFields.TAGS in fields) {
-            val tagIds = ftsTagIds(q)
-            if (tagIds.isNotEmpty()) {
-                ids += entryPoint.tagDao().targetIdsForTags(AnnotationTarget.PLACE, tagIds.toList())
-            }
-        }
-        if (PathlineContract.SearchFields.NOTES in fields) {
-            // One pattern per keyword (any-of), or a single pattern for a quoted phrase.
-            ApiSearch.likePatterns(q).forEach { pattern ->
-                ids += entryPoint.annotationDao().targetIdsWithContentLike(
-                    AnnotationTarget.PLACE, AnnotationKind.NOTE, pattern,
-                )
-            }
-        }
-        if (PathlineContract.SearchFields.MEMORIES in fields) {
-            // Memories are stored as JSON objects; a raw LIKE would also match the structural
-            // "value"/"confidence" keys, so decode and match keys + values in code instead.
-            val needles = ApiSearch.needles(q)
-            ids += entryPoint.annotationDao()
-                .allOfKind(AnnotationTarget.PLACE, AnnotationKind.MEMORY)
-                .filter { row ->
-                    MemoryMap.decode(row.content).any { (key, entry) ->
-                        needles.any { needle ->
-                            key.contains(needle, ignoreCase = true) ||
-                                    entry.value.contains(needle, ignoreCase = true)
-                        }
-                    }
-                }
-                .map { it.targetId }
-        }
-        return ids
     }
 
     /**
@@ -615,34 +498,49 @@ class PathlineProvider : ContentProvider() {
      * default when no `start` is given, needs it). Scoped to the caller's place grants, or the whole
      * corpus under READ_ALL_PLACES.
      */
-    private fun placeVisitsQuery(uri: Uri, now: Long): Cursor {
+    private fun placeVisitsQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val placeId = uri.pathSegments.getOrNull(1)?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid place id in URI: $uri")
         // Windowed like the other collections: `start` is required (callers must be explicit about how
         // far back they read), `end` defaults to now. Reaching past 30 days still needs extended history.
-        val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
-            ?: throw IllegalArgumentException(
-                "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
-            )
-        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
-        require(end > start) {
-            "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'"
-        }
+        val (start, end) = gate.requireWindow(
+            uri.getQueryParameter(PathlineContract.QueryParams.START),
+            uri.getQueryParameter(PathlineContract.QueryParams.END),
+            now,
+        )
         val groupId = parseGroup(uri, now)
         val dataType = PathlineContract.Places.VISITS_DATA_TYPE
 
-        fun requirePermission(permission: String) {
-            if (holds(permission)) return
-            logAccess(dataType, start, end, rowCount = 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        requirePermission(PathlineContract.Permissions.READ_TIMELINE)
-        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
-            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
-        }
+        gate.requireWindowedRead(
+            caller, PathlineContract.Permissions.READ_TIMELINE, dataType, start, end, now, groupId,
+        )
 
-        val cursor = placeVisitsCursor(placeId, start, end, parseLimit(uri))
-        logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
+        val cursor = runBlocking {
+            val pkg = caller.pkgOrUnknown
+            // Scope: a place's history is readable only if this app already saw the place in a
+            // `visits` read (or holds READ_ALL_PLACES). An unseen (or non-existent) place returns
+            // nothing — indistinguishable, so the caller cannot probe for ids it was never shown.
+            val granted = caller.holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
+                    entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)
+            val visits = if (granted) {
+                entryPoint.visitDao().forPlaceOverlapping(placeId, start, end)
+                    .takeNewest(parseLimit(uri))
+            } else {
+                emptyList()
+            }
+            ApiCursors.placeVisits(visits)
+        }
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = start,
+                endMs = end,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
@@ -653,119 +551,48 @@ class PathlineProvider : ContentProvider() {
      * and extended-history-gated exactly like `visits`; one GROUP BY instead of the caller pulling
      * and counting visit rows.
      */
-    private fun placeStatsQuery(uri: Uri, now: Long): Cursor {
-        val start = uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
-            ?: throw IllegalArgumentException(
-                "Missing required '${PathlineContract.QueryParams.START}' query parameter (epoch ms)",
-            )
-        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
-        require(end > start) {
-            "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'"
-        }
+    private fun placeStatsQuery(caller: Caller, uri: Uri, now: Long): Cursor {
+        val (start, end) = gate.requireWindow(
+            uri.getQueryParameter(PathlineContract.QueryParams.START),
+            uri.getQueryParameter(PathlineContract.QueryParams.END),
+            now,
+        )
         val groupId = parseGroup(uri, now)
         val dataType = PathlineContract.PlaceStats.PATH
 
-        fun requirePermission(permission: String) {
-            if (holds(permission)) return
-            logAccess(dataType, start, end, rowCount = 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        requirePermission(PathlineContract.Permissions.READ_TIMELINE)
-        if (start < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS) {
-            requirePermission(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
-        }
+        gate.requireWindowedRead(
+            caller, PathlineContract.Permissions.READ_TIMELINE, dataType, start, end, now, groupId,
+        )
 
         val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
             ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.toSet()
         val rows = runBlocking {
             val all = entryPoint.visitDao().placeStatsOverlapping(start, end)
-            val scoped = if (holds(PathlineContract.Permissions.READ_ALL_PLACES)) {
+            val scoped = if (caller.holds(PathlineContract.Permissions.READ_ALL_PLACES)) {
                 all
             } else {
-                val pkg = callingPackage ?: "unknown"
                 val granted = entryPoint.apiPlaceGrantDao()
-                    .grantedAmong(pkg, all.map { it.placeId }).toSet()
+                    .grantedAmong(caller.pkgOrUnknown, all.map { it.placeId }).toSet()
                 all.filter { it.placeId in granted }
             }
             val filtered = if (requested == null) scoped else scoped.filter { it.placeId in requested }
             parseLimit(uri)?.let { return@runBlocking filtered.take(it) }
             filtered
         }
-        val cursor = MatrixCursor(PathlineContract.PlaceStats.COLUMNS, rows.size)
-        for (r in rows) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    r.placeId, r.visitCount, r.totalDurationMs, r.firstVisitMs, r.lastVisitMs,
-                ),
-            )
-        }
-        logAccess(dataType, start, end, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.placeStats(rows)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = start,
+                endMs = end,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
-    }
-
-    /** [PathlineContract.Places] rows. [distances] populates DISTANCE_M in proximity mode
-     *  (place id -> meters from the `near` point); null everywhere else. */
-    private fun placesCursorOf(
-        places: List<PlaceEntity>,
-        distances: Map<Long, Double>? = null,
-    ): Cursor {
-        val cursor = MatrixCursor(PathlineContract.Places.COLUMNS, places.size)
-        for (p in places) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    p.id,
-                    p.name,
-                    p.address,
-                    p.category,
-                    p.types,
-                    p.source.name,
-                    p.googlePlaceId,
-                    p.latitude,
-                    p.longitude,
-                    p.radiusMeters,
-                    distances?.get(p.id),
-                ),
-            )
-        }
-        return cursor
-    }
-
-    private fun placeVisitsCursor(
-        placeId: Long,
-        start: Long,
-        end: Long,
-        limit: Int? = null,
-    ): Cursor = runBlocking {
-        val pkg = callingPackage ?: "unknown"
-        // Scope: a place's history is readable only if this app already saw the place in a `visits`
-        // read (or holds READ_ALL_PLACES). An unseen (or non-existent) place returns nothing —
-        // indistinguishable, so the caller cannot probe for ids it was never shown.
-        val granted = holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
-                entryPoint.apiPlaceGrantDao().isGranted(pkg, placeId)
-        val visits = if (granted) {
-            entryPoint.visitDao().forPlaceOverlapping(placeId, start, end).takeNewest(limit)
-        } else {
-            emptyList()
-        }
-        val cursor = MatrixCursor(PathlineContract.Places.VisitHistory.COLUMNS, visits.size)
-        for (v in visits) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    v.id,
-                    v.startMs,
-                    v.endMs,
-                    v.placeId,
-                    v.centroidLatitude,
-                    v.centroidLongitude,
-                    v.radiusMeters,
-                    v.confidence,
-                    if (v.confirmed) 1 else 0,
-                    if (v.isOngoing) 1 else 0,
-                ),
-            )
-        }
-        cursor
     }
 
     /**
@@ -774,8 +601,8 @@ class PathlineProvider : ContentProvider() {
      * but once any confirmed visit grants the place, the place's full history (including its unconfirmed
      * visits) becomes readable, which is fine since the place is legitimately in scope.
      */
-    private suspend fun recordPlaceGrants(visits: List<VisitEntity>) {
-        val pkg = callingPackage ?: return
+    private suspend fun recordPlaceGrants(caller: Caller, visits: List<VisitEntity>) {
+        val pkg = caller.pkg ?: return
         val placeIds = visits.filter { it.confirmed }.mapNotNull { it.placeId }.distinct()
         if (placeIds.isEmpty()) return
         val now = System.currentTimeMillis()
@@ -792,49 +619,57 @@ class PathlineProvider : ContentProvider() {
      * allowed window. Windowless: without READ_EXTENDED_HISTORY the visit/trip leg **clamps** to the
      * last 30 days instead of throwing. With `q` it becomes a tag-name search (SEARCH_DATA).
      */
-    private fun tagsQuery(uri: Uri, now: Long): Cursor {
+    private fun tagsQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
         val dataType = PathlineContract.Tags.PATH
-        fun deny(permission: String): Nothing {
-            logAccess(dataType, now, now, 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+        fun deny(permission: String): Nothing =
+            gate.deny(caller, permission, dataType, now, now, now, groupId)
+        if (!caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
             deny(PathlineContract.Permissions.READ_ANNOTATIONS)
         }
         val q = uri.getQueryParameter(PathlineContract.QueryParams.Q)
-        if (q != null && !holds(PathlineContract.Permissions.SEARCH_DATA)) {
+        if (q != null && !caller.holds(PathlineContract.Permissions.SEARCH_DATA)) {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
 
         val limit = parseLimit(uri)
         val tags: List<TagEntity> = runBlocking {
-            val visible = visibleTagIds(now)
+            val visible = gate.visibleTagIds(caller, now)
             if (q != null) {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                 // Filter the bm25-ranked hits by visibility (not the other way round) so the
                 // relevance order survives, then restore it after the unordered IN fetch.
-                val ids = ftsTagIds(q).filter { it in visible }
+                val ids = searchEngine.ftsTagIds(q).filter { it in visible }
                 if (ids.isEmpty()) emptyList()
                 else sortByIdOrder(entryPoint.tagDao().byIds(ids), ids) { it.id }
             } else {
                 if (visible.isEmpty()) emptyList() else entryPoint.tagDao().byIds(visible.toList())
             }
         }.let { if (limit == null) it else it.take(limit) }
-        val cursor = tagsCursorOf(tags)
-        logAccess(dataType, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.tags(caller, tags)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** `…/<target>/<id>/tags`: the tags of one place/visit/trip/concept, as [PathlineContract.Tags]
      *  rows — here with the per-link [PathlineContract.Tags.ATTACHED_BY_ME] populated. */
-    private fun targetTagsQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetTagsQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
-        requireAnnotationRead(target, PathlineContract.Tags.PATH, now, groupId)
+        gate.requireAnnotationRead(caller, target, PathlineContract.Tags.PATH, now, groupId)
         val (tags, attachedBy) = runBlocking {
-            if (targetVisible(target, id, now)) {
+            if (gate.targetVisible(caller, target, id, now)) {
                 val dao = entryPoint.tagDao()
                 dao.tagsFor(target, id) to
                         dao.linksFor(target, id).associate { it.tagId to it.createdBy }
@@ -842,209 +677,78 @@ class PathlineProvider : ContentProvider() {
                 emptyList<TagEntity>() to emptyMap()
             }
         }
-        val cursor = tagsCursorOf(tags, attachedBy)
-        logAccess(PathlineContract.Tags.PATH, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.tags(caller, tags, attachedBy)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = PathlineContract.Tags.PATH,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** `…/<target>/<id>/notes`: the target's single note (0/1 rows). */
-    private fun targetNotesQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetNotesQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
-        requireAnnotationRead(target, DATA_TYPE_NOTES, now, groupId)
+        gate.requireAnnotationRead(caller, target, DATA_TYPE_NOTES, now, groupId)
         val note = runBlocking {
-            if (targetVisible(target, id, now)) {
+            if (gate.targetVisible(caller, target, id, now)) {
                 entryPoint.annotationDao().byTarget(target, id, AnnotationKind.NOTE)
             } else {
                 null
             }
         }
-        val cursor = MatrixCursor(PathlineContract.Annotations.Notes.COLUMNS, 1)
-        note?.let {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    it.id,
-                    it.content,
-                    it.updatedAtMs,
-                    byMe(it.updatedBy)
-                )
-            )
-        }
-        logAccess(DATA_TYPE_NOTES, now, now, cursor.count, now, groupId, null, null)
+        val cursor =
+            ApiCursors.note(caller, note?.id, note?.content, note?.updatedAtMs, note?.updatedBy)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_NOTES,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** `…/<target>/<id>/memories`: the target's memory map, one row per key. */
-    private fun targetMemoriesQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetMemoriesQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
-        requireAnnotationRead(target, DATA_TYPE_MEMORIES, now, groupId)
+        gate.requireAnnotationRead(caller, target, DATA_TYPE_MEMORIES, now, groupId)
         val row = runBlocking {
-            if (targetVisible(target, id, now)) {
+            if (gate.targetVisible(caller, target, id, now)) {
                 entryPoint.annotationDao().byTarget(target, id, AnnotationKind.MEMORY)
             } else {
                 null
             }
         }
-        val entries = MemoryMap.decode(row?.content)
-        val cursor = MatrixCursor(PathlineContract.Annotations.Memories.COLUMNS, entries.size)
-        for ((k, e) in entries) {
-            // Entries stored before per-entry stamps existed have no stamp; null rather than a
-            // misleading fallback (the row's map-wide time moves with every write to the map).
-            cursor.addRow(
-                arrayOf<Any?>(
-                    k,
-                    e.value,
-                    e.confidence,
-                    e.source,
-                    e.updatedAtMs,
-                    byMe(e.updatedBy)
-                )
-            )
-        }
-        logAccess(DATA_TYPE_MEMORIES, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.memories(caller, MemoryMap.decode(row?.content))
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_MEMORIES,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
-
-    /** Permissions shared by all per-target annotation reads: READ_ANNOTATIONS plus the read tier
-     *  the target type lives under. Logs + throws on the first one missing. */
-    private fun requireAnnotationRead(
-        target: AnnotationTarget,
-        dataType: String,
-        now: Long,
-        groupId: Long?,
-    ) {
-        fun deny(permission: String): Nothing {
-            logAccess(dataType, now, now, 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
-            deny(PathlineContract.Permissions.READ_ANNOTATIONS)
-        }
-        when (target) {
-            AnnotationTarget.PLACE ->
-                if (!holds(PathlineContract.Permissions.READ_ALL_PLACES) &&
-                    !holds(PathlineContract.Permissions.READ_TIMELINE)
-                ) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            AnnotationTarget.VISIT, AnnotationTarget.TRIP ->
-                if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            // Concepts are curation, not recorded data: READ_ANNOTATIONS alone suffices.
-            AnnotationTarget.CONCEPT -> Unit
-        }
-    }
-
-    /**
-     * Whether one annotation target is visible to (and writable by) the caller: a granted/existing
-     * place (any place under READ_ALL_PLACES), or a **confirmed** visit/trip inside the allowed
-     * window — the last 30 days unless the caller holds READ_EXTENDED_HISTORY. An invisible target
-     * reads as empty and rejects writes, indistinguishable from a nonexistent one.
-     */
-    private suspend fun targetVisible(target: AnnotationTarget, id: Long, now: Long): Boolean =
-        when (target) {
-            AnnotationTarget.PLACE -> {
-                val pkg = callingPackage ?: "unknown"
-                val inScope = holds(PathlineContract.Permissions.READ_ALL_PLACES) ||
-                        entryPoint.apiPlaceGrantDao().isGranted(pkg, id)
-                inScope && entryPoint.placeDao().byId(id) != null
-            }
-
-            AnnotationTarget.VISIT -> entryPoint.visitDao().byId(id)
-                ?.let { it.confirmed && it.endMs > minVisibleEndMs(now) } == true
-
-            AnnotationTarget.TRIP -> entryPoint.tripDao().byId(id)
-                ?.let { it.confirmed && it.endMs > minVisibleEndMs(now) } == true
-
-            // Any existing concept — visible to every annotation reader (see the contract).
-            AnnotationTarget.CONCEPT -> entryPoint.conceptDao().byId(id) != null
-        }
-
-    /** The end-time floor a visit/trip must reach to be visible on a windowless read (clamp). */
-    private fun minVisibleEndMs(now: Long): Long =
-        if (holds(PathlineContract.Permissions.READ_EXTENDED_HISTORY)) Long.MIN_VALUE
-        else now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS
-
-    /**
-     * Ids of every tag attached to at least one target visible to the caller. The tag links live in
-     * the encrypted DB and the place grants in the audit DB, so the scoping joins in code: load the
-     * (small, user-curated) link table whole, then keep links whose target the caller can see.
-     */
-    private suspend fun visibleTagIds(now: Long): Set<Long> {
-        val links = entryPoint.tagDao().allLinks()
-        if (links.isEmpty()) return emptySet()
-        val result = HashSet<Long>()
-        val minEnd = minVisibleEndMs(now)
-
-        val placeLinks = links.filter { it.targetType == AnnotationTarget.PLACE }
-        if (placeLinks.isNotEmpty()) {
-            val placeIds = placeLinks.map { it.targetId }.distinct()
-            val visible: Set<Long> = when {
-                holds(PathlineContract.Permissions.READ_ALL_PLACES) -> placeIds.toSet()
-                holds(PathlineContract.Permissions.READ_TIMELINE) -> {
-                    val pkg = callingPackage ?: "unknown"
-                    entryPoint.apiPlaceGrantDao().grantedAmong(pkg, placeIds).toSet()
-                }
-
-                else -> emptySet()
-            }
-            placeLinks.filter { it.targetId in visible }.mapTo(result) { it.tagId }
-        }
-        if (holds(PathlineContract.Permissions.READ_TIMELINE)) {
-            val visitLinks = links.filter { it.targetType == AnnotationTarget.VISIT }
-            if (visitLinks.isNotEmpty()) {
-                val visible = entryPoint.visitDao()
-                    .confirmedIdsAmong(visitLinks.map { it.targetId }.distinct(), minEnd).toSet()
-                visitLinks.filter { it.targetId in visible }.mapTo(result) { it.tagId }
-            }
-            val tripLinks = links.filter { it.targetType == AnnotationTarget.TRIP }
-            if (tripLinks.isNotEmpty()) {
-                val visible = entryPoint.tripDao()
-                    .confirmedIdsAmong(tripLinks.map { it.targetId }.distinct(), minEnd).toSet()
-                tripLinks.filter { it.targetId in visible }.mapTo(result) { it.tagId }
-            }
-        }
-        // Concept-attached tags: every existing concept is visible to an annotation reader.
-        val conceptLinks = links.filter { it.targetType == AnnotationTarget.CONCEPT }
-        if (conceptLinks.isNotEmpty()) {
-            val existing = entryPoint.conceptDao()
-                .byIds(conceptLinks.map { it.targetId }.distinct()).map { it.id }.toSet()
-            conceptLinks.filter { it.targetId in existing }.mapTo(result) { it.tagId }
-        }
-        return result
-    }
-
-    /** [PathlineContract.Tags] rows. [attachedBy] is the per-link writer map of a per-target
-     *  listing (tagId -> link createdBy), or null on the global `tags` collection where
-     *  ATTACHED_BY_ME is always null. */
-    private fun tagsCursorOf(
-        tags: List<TagEntity>,
-        attachedBy: Map<Long, String?>? = null
-    ): Cursor {
-        val cursor = MatrixCursor(PathlineContract.Tags.COLUMNS, tags.size)
-        for (t in tags) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    t.id, t.displayName, t.canonicalName, t.createdAtMs,
-                    byMe(t.createdBy),
-                    attachedBy?.let { byMe(it[t.id]) },
-                ),
-            )
-        }
-        return cursor
-    }
-
-    /** The nullable-boolean `*_by_me` encoding: 1 = the calling app wrote it, 0 = a different app,
-     *  null = Pathline itself (in-app user edit, maintenance fold, or pre-attribution data). */
-    private fun byMe(writer: String?): Int? =
-        writer?.let { if (it == callingPackage) 1 else 0 }
 
     // ---- Concepts (read) -------------------------------------------------------------------------
 
@@ -1053,17 +757,15 @@ class PathlineProvider : ContentProvider() {
      * contract). With `q` a name/kind/description search (SEARCH_DATA); with `kind` an exact
      * canonicalized filter; with `ids` an id filter. Windowless.
      */
-    private fun conceptsQuery(uri: Uri, now: Long): Cursor {
+    private fun conceptsQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
-        fun deny(permission: String): Nothing {
-            logAccess(DATA_TYPE_CONCEPTS, now, now, 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+        fun deny(permission: String): Nothing =
+            gate.deny(caller, permission, DATA_TYPE_CONCEPTS, now, now, now, groupId)
+        if (!caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
             deny(PathlineContract.Permissions.READ_ANNOTATIONS)
         }
         val q = uri.getQueryParameter(PathlineContract.QueryParams.Q)
-        if (q != null && !holds(PathlineContract.Permissions.SEARCH_DATA)) {
+        if (q != null && !caller.holds(PathlineContract.Permissions.SEARCH_DATA)) {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
         val kind = uri.getQueryParameter(PathlineContract.QueryParams.KIND)?.let {
@@ -1076,13 +778,13 @@ class PathlineProvider : ContentProvider() {
         val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
             ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.distinct()
 
-        val concepts = runBlocking {
+        val (concepts, memberCounts) = runBlocking {
             val dao = entryPoint.conceptDao()
             var list = when {
                 q != null -> {
                     require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                     // bm25-ranked; byIds loses the order, so restore it.
-                    val ids = ftsConceptIds(q)
+                    val ids = searchEngine.ftsConceptIds(q)
                     if (ids.isEmpty()) emptyList()
                     else sortByIdOrder(dao.byIds(ids.toList()), ids) { it.id }
                 }
@@ -1093,110 +795,125 @@ class PathlineProvider : ContentProvider() {
             if (q != null && kind != null) list = list.filter { it.kind == kind }
             if (requested != null) list = list.filter { it.id in requested.toSet() }
             parseLimit(uri)?.let { list = list.take(it) }
-            list
+            list to memberCountsFor(list)
         }
-        val cursor = conceptsCursorOf(concepts)
-        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.concepts(caller, concepts, memberCounts)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
+    /** The MEMBER_COUNT join for concept rows: one GROUP BY over the member edge, filtered in
+     *  code to the rows being returned (no per-concept query). */
+    private suspend fun memberCountsFor(concepts: List<ConceptEntity>): Map<Long, Int> {
+        if (concepts.isEmpty()) return emptyMap()
+        val ids = concepts.mapTo(HashSet()) { it.id }
+        return entryPoint.conceptDao().memberCounts()
+            .filter { it.conceptId in ids }
+            .associate { it.conceptId to it.members }
+    }
+
     /** `concepts/<id>`: one concept row (empty when the id doesn't exist). */
-    private fun conceptItemQuery(uri: Uri, now: Long): Cursor {
+    private fun conceptItemQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
-        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
-            logAccess(
-                DATA_TYPE_CONCEPTS, now, now, 0, now, groupId, null,
-                PathlineContract.Permissions.READ_ANNOTATIONS,
+        if (!caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+            gate.deny(
+                caller, PathlineContract.Permissions.READ_ANNOTATIONS,
+                DATA_TYPE_CONCEPTS, now, now, now, groupId,
             )
-            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_ANNOTATIONS}")
         }
         val id = uri.lastPathSegment?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid concept id in URI: $uri")
-        val concept = runBlocking { entryPoint.conceptDao().byId(id) }
-        val cursor = conceptsCursorOf(listOfNotNull(concept))
-        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        val (concept, memberCounts) = runBlocking {
+            val row = entryPoint.conceptDao().byId(id)
+            row to memberCountsFor(listOfNotNull(row))
+        }
+        val cursor = ApiCursors.concepts(caller, listOfNotNull(concept), memberCounts)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** `concepts/<id>/members`: the membership edge, one row per member (empty for an unknown id). */
-    private fun conceptMembersQuery(uri: Uri, now: Long): Cursor {
+    private fun conceptMembersQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
-        if (!holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
-            logAccess(
-                DATA_TYPE_CONCEPT_MEMBERS, now, now, 0, now, groupId, null,
-                PathlineContract.Permissions.READ_ANNOTATIONS,
+        if (!caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) {
+            gate.deny(
+                caller, PathlineContract.Permissions.READ_ANNOTATIONS,
+                DATA_TYPE_CONCEPT_MEMBERS, now, now, now, groupId,
             )
-            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_ANNOTATIONS}")
         }
         val id = targetIdFrom(uri)
         val members = runBlocking { entryPoint.conceptDao().membersOf(id) }
-        val cursor = MatrixCursor(PathlineContract.Concepts.Members.COLUMNS, members.size)
-        for (m in members) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    m.targetType.name.lowercase(),
-                    m.targetId,
-                    m.createdAtMs,
-                    byMe(m.createdBy),
-                ),
-            )
-        }
-        logAccess(DATA_TYPE_CONCEPT_MEMBERS, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.conceptMembers(caller, members)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPT_MEMBERS,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
     /** `…/<target>/<id>/concepts`: the concepts a visible target belongs to, with ATTACHED_BY_ME. */
-    private fun targetConceptsQuery(uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetConceptsQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
-        requireAnnotationRead(target, DATA_TYPE_CONCEPTS, now, groupId)
-        val (concepts, attachedBy) = runBlocking {
-            if (targetVisible(target, id, now)) {
+        gate.requireAnnotationRead(caller, target, DATA_TYPE_CONCEPTS, now, groupId)
+        val (concepts, attachedBy, memberCounts) = runBlocking {
+            if (gate.targetVisible(caller, target, id, now)) {
                 val dao = entryPoint.conceptDao()
-                dao.conceptsFor(target, id) to
-                        dao.membershipsFor(target, id).associate { it.conceptId to it.createdBy }
+                val list = dao.conceptsFor(target, id)
+                Triple(
+                    list,
+                    dao.membershipsFor(target, id).associate { it.conceptId to it.createdBy },
+                    memberCountsFor(list),
+                )
             } else {
-                emptyList<ConceptEntity>() to emptyMap()
+                Triple(emptyList<ConceptEntity>(), emptyMap(), emptyMap())
             }
         }
-        val cursor = conceptsCursorOf(concepts, attachedBy)
-        logAccess(DATA_TYPE_CONCEPTS, now, now, cursor.count, now, groupId, null, null)
+        val cursor = ApiCursors.concepts(caller, concepts, memberCounts, attachedBy)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
-
-    /** [PathlineContract.Concepts] rows. [attachedBy] populates ATTACHED_BY_ME on per-target
-     *  listings (conceptId -> membership createdBy); null elsewhere. */
-    private fun conceptsCursorOf(
-        concepts: List<ConceptEntity>,
-        attachedBy: Map<Long, String?>? = null,
-    ): Cursor {
-        val cursor = MatrixCursor(PathlineContract.Concepts.COLUMNS, concepts.size)
-        for (c in concepts) {
-            cursor.addRow(
-                arrayOf<Any?>(
-                    c.id, c.displayName, c.canonicalName, c.kind, c.description,
-                    c.createdAtMs, c.updatedAtMs,
-                    byMe(c.createdBy), byMe(c.updatedBy),
-                    attachedBy?.let { byMe(it[c.id]) },
-                ),
-            )
-        }
-        return cursor
-    }
-
-    /** Concept ids whose name/kind/description matches [q] (FTS5 prefix match). */
-    private suspend fun ftsConceptIds(q: String): LinkedHashSet<Long> =
-        entryPoint.searchDao().matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ? " +
-                        "ORDER BY bm25(concepts_fts)",
-                arrayOf(ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description"))),
-            ),
-        ).mapTo(LinkedHashSet()) { it.id }
 
     /**
      * `visits/<id>` / `trips/<id>`: ONE timeline row by its stable id — the resolver for stored id
@@ -1211,33 +928,43 @@ class PathlineProvider : ContentProvider() {
      * read (still confirmed-only — see [recordPlaceGrants]); trips include the route column only for
      * route holders.
      */
-    private fun timelineItemQuery(uri: Uri, code: Int, now: Long): Cursor {
+    private fun timelineItemQuery(caller: Caller, uri: Uri, code: Int, now: Long): Cursor {
         val isVisit = code == CODE_VISIT_ITEM
         val dataType =
             if (isVisit) PathlineContract.Visits.PATH else PathlineContract.Trips.PATH
         val groupId = parseGroup(uri, now)
-        if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
-            logAccess(
-                dataType, now, now, 0, now, groupId, null,
-                PathlineContract.Permissions.READ_TIMELINE,
+        if (!caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
+            gate.deny(
+                caller, PathlineContract.Permissions.READ_TIMELINE,
+                dataType, now, now, now, groupId,
             )
-            throw SecurityException("Caller must hold ${PathlineContract.Permissions.READ_TIMELINE}")
         }
         val id = uri.lastPathSegment?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid id in URI: $uri")
-        val routeWithheld: Boolean? = if (!isVisit) !routeUnlocked() else null
+        val routeWithheld: Boolean? = if (!isVisit) !caller.routeUnlocked() else null
         val cursor = runBlocking {
             if (isVisit) {
                 val v = entryPoint.visitDao().byId(id)
-                    ?.takeIf { it.endMs > minVisibleEndMs(now) }
-                buildVisitsCursor(listOfNotNull(v))
+                    ?.takeIf { it.endMs > gate.minVisibleEndMs(caller, now) }
+                visitsCursorFor(caller, listOfNotNull(v))
             } else {
                 val t = entryPoint.tripDao().byId(id)
-                    ?.takeIf { it.endMs > minVisibleEndMs(now) }
-                buildTripsCursor(listOfNotNull(t), includeRoute = routeWithheld == false)
+                    ?.takeIf { it.endMs > gate.minVisibleEndMs(caller, now) }
+                ApiCursors.trips(listOfNotNull(t), includeRoute = routeWithheld == false)
             }
         }
-        logAccess(dataType, now, now, cursor.count, now, groupId, routeWithheld, null)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+                routeWithheld = routeWithheld,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
@@ -1250,216 +977,77 @@ class PathlineProvider : ContentProvider() {
      * fields additionally READ_ANNOTATIONS). `start` is optional here: when omitted the window
      * clamps per extended-history; an explicit window is enforced exactly like a plain read.
      */
-    private fun timelineSearchQuery(uri: Uri, code: Int, now: Long): Cursor {
+    private fun timelineSearchQuery(caller: Caller, uri: Uri, code: Int, now: Long): Cursor {
         val dataType =
             if (code == CODE_VISITS) PathlineContract.Visits.PATH else PathlineContract.Trips.PATH
         val groupId = parseGroup(uri, now)
-        fun deny(permission: String): Nothing {
-            logAccess(dataType, now, now, 0, now, groupId, null, permission)
-            throw SecurityException("Caller must hold $permission")
-        }
-        if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
+        fun deny(permission: String): Nothing =
+            gate.deny(caller, permission, dataType, now, now, now, groupId)
+        if (!caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
             deny(PathlineContract.Permissions.READ_TIMELINE)
         }
-        if (!holds(PathlineContract.Permissions.SEARCH_DATA)) {
+        if (!caller.holds(PathlineContract.Permissions.SEARCH_DATA)) {
             deny(PathlineContract.Permissions.SEARCH_DATA)
         }
         val q = uri.getQueryParameter(PathlineContract.QueryParams.Q)!!
         require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
-        val fields = timelineSearchFields(uri, ::deny)
+        val fields = searchEngine.timelineSearchFields(
+            caller,
+            uri.getQueryParameter(PathlineContract.QueryParams.FIELDS),
+            ::deny,
+        )
 
-        val end = uri.getQueryParameter(PathlineContract.QueryParams.END)?.toLongOrNull() ?: now
-        val explicitStart =
-            uri.getQueryParameter(PathlineContract.QueryParams.START)?.toLongOrNull()
-        val start: Long
-        if (explicitStart != null) {
-            require(end > explicitStart) {
-                "'${PathlineContract.QueryParams.END}' must be greater than '${PathlineContract.QueryParams.START}'"
-            }
-            if (explicitStart < now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS &&
-                !holds(PathlineContract.Permissions.READ_EXTENDED_HISTORY)
-            ) {
-                logAccess(
-                    dataType, explicitStart, end, 0, now, groupId, null,
-                    PathlineContract.Permissions.READ_EXTENDED_HISTORY,
-                )
-                throw SecurityException(
-                    "Caller must hold ${PathlineContract.Permissions.READ_EXTENDED_HISTORY}",
-                )
-            }
-            start = explicitStart
-        } else {
-            // Windowless search clamps instead of throwing: all-time with extended history,
-            // otherwise the last 30 days.
-            start = if (holds(PathlineContract.Permissions.READ_EXTENDED_HISTORY)) 0
-            else now - PathlineContract.EXTENDED_HISTORY_WINDOW_MS
-        }
+        val (start, end) = gate.searchWindow(
+            caller,
+            uri.getQueryParameter(PathlineContract.QueryParams.START),
+            uri.getQueryParameter(PathlineContract.QueryParams.END),
+            dataType, now, groupId,
+        )
 
-        val routeWithheld: Boolean? = if (code == CODE_TRIPS) !routeUnlocked() else null
+        val routeWithheld: Boolean? = if (code == CODE_TRIPS) !caller.routeUnlocked() else null
         val limit = parseLimit(uri)
         val cursor = runBlocking {
             if (code == CODE_VISITS) {
-                buildVisitsCursor(searchVisits(q, fields, start, end).takeNewest(limit))
+                visitsCursorFor(
+                    caller,
+                    searchEngine.searchVisits(q, fields, start, end).takeNewest(limit),
+                )
             } else {
-                buildTripsCursor(
-                    searchTrips(q, fields, start, end).takeNewest(limit),
-                    includeRoute = routeWithheld == false
+                ApiCursors.trips(
+                    searchEngine.searchTrips(q, fields, start, end).takeNewest(limit),
+                    includeRoute = routeWithheld == false,
                 )
             }
         }
-        logAccess(dataType, start, end, cursor.count, now, groupId, routeWithheld, null)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = start,
+                endMs = end,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+                routeWithheld = routeWithheld,
+            ),
+        )
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }
 
-    /** The validated visit/trip-search field list — defaults to everything the caller may match. */
-    private fun timelineSearchFields(uri: Uri, deny: (String) -> Nothing): List<String> {
-        val fields =
-            ApiSearch.parseFields(uri.getQueryParameter(PathlineContract.QueryParams.FIELDS))
-                ?: return listOf(PathlineContract.SearchFields.PLACE_NAME) +
-                        if (holds(PathlineContract.Permissions.READ_ANNOTATIONS)) TIMELINE_ANNOTATION_FIELDS
-                        else emptyList()
-        val valid = TIMELINE_ANNOTATION_FIELDS + PathlineContract.SearchFields.PLACE_NAME
-        val unknown = fields.filter { it !in valid }
-        require(unknown.isEmpty()) { "Unknown visit/trip search fields: $unknown" }
-        if (fields.any { it in TIMELINE_ANNOTATION_FIELDS } &&
-            !holds(PathlineContract.Permissions.READ_ANNOTATIONS)
-        ) {
-            deny(PathlineContract.Permissions.READ_ANNOTATIONS)
-        }
-        return fields
-    }
-
-    private suspend fun searchVisits(
-        q: String,
-        fields: List<String>,
-        start: Long,
-        end: Long,
-    ): List<VisitEntity> {
-        val byId = LinkedHashMap<Long, VisitEntity>()
-        if (PathlineContract.SearchFields.PLACE_NAME in fields) {
-            val placeIds = ftsPlaceIdsByName(q)
-            if (placeIds.isNotEmpty()) {
-                entryPoint.visitDao().forPlacesOverlapping(placeIds.toList(), start, end)
-                    .forEach { byId[it.id] = it }
-            }
-            ApiSearch.likePatterns(q).forEach { pattern ->
-                entryPoint.visitDao().candidateNameLikeOverlapping(pattern, start, end)
-                    .forEach { byId[it.id] = it }
-            }
-        }
-        if (PathlineContract.SearchFields.TAGS in fields) {
-            val tagIds = ftsTagIds(q)
-            if (tagIds.isNotEmpty()) {
-                val ids =
-                    entryPoint.tagDao().targetIdsForTags(AnnotationTarget.VISIT, tagIds.toList())
-                if (ids.isNotEmpty()) {
-                    entryPoint.visitDao().byIdsOverlapping(ids, start, end)
-                        .forEach { byId[it.id] = it }
-                }
-            }
-        }
-        if (PathlineContract.SearchFields.NOTES in fields) {
-            val ids = ApiSearch.likePatterns(q).flatMap { pattern ->
-                entryPoint.annotationDao().targetIdsWithContentLike(
-                    AnnotationTarget.VISIT, AnnotationKind.NOTE, pattern,
-                )
-            }.distinct()
-            if (ids.isNotEmpty()) {
-                entryPoint.visitDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
-            }
-        }
-        return byId.values.sortedBy { it.startMs }
-    }
-
-    private suspend fun searchTrips(
-        q: String,
-        fields: List<String>,
-        start: Long,
-        end: Long,
-    ): List<TripEntity> {
-        val byId = LinkedHashMap<Long, TripEntity>()
-        if (PathlineContract.SearchFields.PLACE_NAME in fields) {
-            val placeIds = ftsPlaceIdsByName(q)
-            if (placeIds.isNotEmpty()) {
-                entryPoint.tripDao().forEndpointPlacesOverlapping(placeIds.toList(), start, end)
-                    .forEach { byId[it.id] = it }
-            }
-            ApiSearch.likePatterns(q).forEach { pattern ->
-                entryPoint.tripDao().forEndpointCandidateNamesOverlapping(pattern, start, end)
-                    .forEach { byId[it.id] = it }
-            }
-        }
-        if (PathlineContract.SearchFields.TAGS in fields) {
-            val tagIds = ftsTagIds(q)
-            if (tagIds.isNotEmpty()) {
-                val ids =
-                    entryPoint.tagDao().targetIdsForTags(AnnotationTarget.TRIP, tagIds.toList())
-                if (ids.isNotEmpty()) {
-                    entryPoint.tripDao().byIdsOverlapping(ids, start, end)
-                        .forEach { byId[it.id] = it }
-                }
-            }
-        }
-        if (PathlineContract.SearchFields.NOTES in fields) {
-            val ids = ApiSearch.likePatterns(q).flatMap { pattern ->
-                entryPoint.annotationDao().targetIdsWithContentLike(
-                    AnnotationTarget.TRIP, AnnotationKind.NOTE, pattern,
-                )
-            }.distinct()
-            if (ids.isNotEmpty()) {
-                entryPoint.tripDao().byIdsOverlapping(ids, start, end).forEach { byId[it.id] = it }
-            }
-        }
-        return byId.values.sortedBy { it.startMs }
-    }
-
-    /** Tag ids whose display name matches [q] — **relevance-ordered** (bm25, best first). */
-    private suspend fun ftsTagIds(q: String): LinkedHashSet<Long> =
-        entryPoint.searchDao().matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM tags_fts WHERE tags_fts MATCH ? ORDER BY bm25(tags_fts)",
-                arrayOf(ApiSearch.ftsQuery(q, listOf("displayName"))),
-            ),
-        ).mapTo(LinkedHashSet()) { it.id }
-
-    /** Place ids whose **name** matches [q] — the place-name leg of visit/trip search (order
-     *  irrelevant there: timeline search results stay chronological). */
-    private suspend fun ftsPlaceIdsByName(q: String): Set<Long> =
-        entryPoint.searchDao().matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ?",
-                arrayOf(ApiSearch.ftsQuery(q, listOf(PathlineContract.SearchFields.NAME))),
-            ),
-        ).mapTo(HashSet()) { it.id }
-
-    /** [items] re-sorted to follow [order]'s id sequence — SQL `IN` fetches lose the relevance
-     *  order the FTS legs produced, so search paths restore it here. */
-    private inline fun <T> sortByIdOrder(
-        items: List<T>,
-        order: Collection<Long>,
-        crossinline id: (T) -> Long,
-    ): List<T> {
-        val rank = order.withIndex().associate { (i, v) -> v to i }
-        return items.sortedBy { rank[id(it)] ?: Int.MAX_VALUE }
-    }
-
     // ---- Status & shared helpers ----------------------------------------------------------------
-
-    /**
-     * One-row [PathlineContract.Status] cursor: whether the access switch is on. Not gated by the switch
-     * and not logged (it returns no personal data), so a consumer can always check whether to read or to
-     * prompt the user to turn access on.
-     */
-    private fun statusCursor(): Cursor {
-        val cursor = MatrixCursor(PathlineContract.Status.COLUMNS, 1)
-        cursor.addRow(arrayOf<Any?>(if (apiAccessEnabled()) 1 else 0, PathlineContract.API_VERSION))
-        return cursor
-    }
 
     /** The current access-switch state, read off the settings store (cached in memory after first read). */
     private fun apiAccessEnabled(): Boolean =
         runBlocking { entryPoint.settingsRepository().apiAccessEnabled() }
+
+    /** The request identity, captured ONCE per entry point and threaded explicitly — see [Caller]. */
+    private fun captureCaller(): Caller {
+        val ctx = context ?: throw SecurityException("Provider not attached")
+        return Caller(callingPackage) { permission ->
+            ctx.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
 
     /** The audit-log `dataType` token for a collection [code] (place-history is distinct from its path). */
     private fun dataTypeFor(code: Int): String = when (code) {
@@ -1496,50 +1084,29 @@ class PathlineProvider : ContentProvider() {
         uri.pathSegments.getOrNull(1)?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid target id in URI: $uri")
 
-    /** The optional `limit=` row cap: null when absent, else a positive int clamped to
-     *  [MAX_LIMIT]. Non-positive / non-numeric values are an error (never silently ignored). */
-    private fun parseLimit(uri: Uri): Int? {
-        val raw = uri.getQueryParameter(PathlineContract.QueryParams.LIMIT) ?: return null
-        val n = raw.toIntOrNull()
-        require(n != null && n > 0) {
-            "'${PathlineContract.QueryParams.LIMIT}' must be a positive integer (got '$raw')"
-        }
-        return n.coerceAtMost(MAX_LIMIT)
-    }
+    /** See [ApiGate.parseLimit]. */
+    private fun parseLimit(uri: Uri): Int? =
+        gate.parseLimit(uri.getQueryParameter(PathlineContract.QueryParams.LIMIT))
 
-    /** The optional batch-correlation key, honoured only when within the grouping window of [now]. */
-    private fun parseGroup(uri: Uri, now: Long): Long? {
-        val raw = uri.getQueryParameter(PathlineContract.QueryParams.GROUP)?.toLongOrNull()
-        return raw?.takeIf {
-            it in (now - PathlineContract.GROUP_WINDOW_MS)..(now + GROUP_FUTURE_TOLERANCE_MS)
-        }
-    }
-
-    /** True when the IPC caller (or our own process) holds [permission]. */
-    private fun holds(permission: String): Boolean {
-        val ctx: Context = context ?: throw SecurityException("Provider not attached")
-        return ctx.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-    }
-
-    /** Whether the caller may see trip routes (the polyline column). */
-    private fun routeUnlocked(): Boolean =
-        holds(PathlineContract.Permissions.READ_TIMELINE_ROUTES) ||
-                holds(PathlineContract.Permissions.READ_LOCATION_HISTORY)
+    /** See [ApiGate.parseGroup]. */
+    private fun parseGroup(uri: Uri, now: Long): Long? =
+        gate.parseGroup(uri.getQueryParameter(PathlineContract.QueryParams.GROUP), now)
 
     // ---- Annotation writes -----------------------------------------------------------------------
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
         val now = System.currentTimeMillis()
+        val caller = captureCaller()
         return when (val code = matcher.match(uri)) {
-            in TAGS_CODES -> insertTag(uri, targetFor(code), values, now)
+            in TAGS_CODES -> insertTag(caller, uri, targetFor(code), values, now)
             in NOTES_CODES -> {
-                upsertNote(uri, targetFor(code), values, now)
+                upsertNote(caller, uri, targetFor(code), values, now)
                 uri
             }
 
-            in MEMORIES_CODES -> upsertMemory(uri, targetFor(code), values, now)
-            CODE_CONCEPTS -> insertConcept(uri, values, now)
-            CODE_CONCEPT_MEMBERS -> insertConceptMember(uri, values, now)
+            in MEMORIES_CODES -> upsertMemory(caller, uri, targetFor(code), values, now)
+            CODE_CONCEPTS -> insertConcept(caller, uri, values, now)
+            CODE_CONCEPT_MEMBERS -> insertConceptMember(caller, uri, values, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
@@ -1551,45 +1118,42 @@ class PathlineProvider : ContentProvider() {
         selectionArgs: Array<out String>?,
     ): Int {
         val now = System.currentTimeMillis()
+        val caller = captureCaller()
         return when (val code = matcher.match(uri)) {
             // The note and a memory key are upserts: update == insert. (A tag link has no mutable
             // state — re-insert it to refresh the spelling.)
             in NOTES_CODES -> {
-                upsertNote(uri, targetFor(code), values, now)
+                upsertNote(caller, uri, targetFor(code), values, now)
                 1
             }
 
             in MEMORIES_CODES -> {
-                upsertMemory(uri, targetFor(code), values, now)
+                upsertMemory(caller, uri, targetFor(code), values, now)
                 1
             }
 
-            CODE_CONCEPT_ITEM -> updateConcept(uri, values, now)
+            CODE_CONCEPT_ITEM -> updateConcept(caller, uri, values, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
         val now = System.currentTimeMillis()
+        val caller = captureCaller()
         return when (val code = matcher.match(uri)) {
-            in TAG_NAME_CODES -> deleteTag(uri, targetFor(code), now)
-            in NOTES_CODES -> clearNote(uri, targetFor(code), now)
-            in MEMORY_KEY_CODES -> deleteMemory(uri, targetFor(code), now)
-            in MEMORIES_CODES -> clearMemories(uri, targetFor(code), now)
-            CODE_CONCEPT_ITEM -> deleteConcept(uri, now)
-            CODE_CONCEPT_MEMBER_ITEM -> deleteConceptMember(uri, now)
+            in TAG_NAME_CODES -> deleteTag(caller, uri, targetFor(code), now)
+            in NOTES_CODES -> clearNote(caller, uri, targetFor(code), now)
+            in MEMORY_KEY_CODES -> deleteMemory(caller, uri, targetFor(code), now)
+            in MEMORIES_CODES -> clearMemories(caller, uri, targetFor(code), now)
+            CODE_CONCEPT_ITEM -> deleteConcept(caller, uri, now)
+            CODE_CONCEPT_MEMBER_ITEM -> deleteConceptMember(caller, uri, now)
             else -> throw UnsupportedOperationException(READ_ONLY_MESSAGE)
         }
     }
 
-    /**
-     * Common gate for an annotation write: the access switch, the write permission for [dataType]'s
-     * tier, the read tier the target type lives under, and the target's visibility (see
-     * [targetVisible] — an unconfirmed visit/trip is never writable; an invisible target rejects
-     * indistinguishably from a nonexistent one). Returns the request's group id; throws after
-     * logging the denial otherwise.
-     */
+    /** [ApiGate.checkWrite] bridged onto the binder thread; returns the request's group id. */
     private fun checkWrite(
+        caller: Caller,
         uri: Uri,
         target: AnnotationTarget,
         id: Long,
@@ -1598,87 +1162,82 @@ class PathlineProvider : ContentProvider() {
         now: Long,
     ): Long? {
         val groupId = parseGroup(uri, now)
-        if (!apiAccessEnabled()) {
-            logAccess(
-                dataType, now, now, 0, now, groupId, null,
-                deniedPermission = PathlineContract.Permissions.API, notify = false, isWrite = true,
-            )
-            throw SecurityException("Third-party access to Pathline data is turned off")
-        }
-        fun deny(p: String): Nothing {
-            logAccess(dataType, now, now, 0, now, groupId, null, p, isWrite = true)
-            throw SecurityException("Caller must hold $p")
-        }
-        if (!holds(permission)) deny(permission)
-        when (target) {
-            AnnotationTarget.PLACE ->
-                if (!holds(PathlineContract.Permissions.READ_ALL_PLACES) &&
-                    !holds(PathlineContract.Permissions.READ_TIMELINE)
-                ) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            AnnotationTarget.VISIT, AnnotationTarget.TRIP ->
-                if (!holds(PathlineContract.Permissions.READ_TIMELINE)) {
-                    deny(PathlineContract.Permissions.READ_TIMELINE)
-                }
-
-            // Concepts carry no read tier beyond the annotation permissions themselves.
-            AnnotationTarget.CONCEPT -> Unit
-        }
-        if (!runBlocking { targetVisible(target, id, now) }) {
-            // A write aimed at nothing: logged (audit honesty) and rejected. The message must not
-            // reveal whether the row exists.
-            logAccess(dataType, now, now, 0, now, groupId, null, null, isWrite = true)
-            throw IllegalArgumentException(
-                "No writable ${target.name.lowercase()} with id $id (missing, unconfirmed, or not accessible)",
-            )
-        }
+        runBlocking { gate.checkWrite(caller, target, id, permission, dataType, now, groupId) }
         return groupId
     }
 
     /** `insert` on `…/<id>/tags`: apply (or re-apply) the tag named in [PathlineContract.Tags.NAME]. */
     private fun insertTag(
+        caller: Caller,
         uri: Uri,
         target: AnnotationTarget,
         values: ContentValues?,
-        now: Long
+        now: Long,
     ): Uri {
         val id = targetIdFrom(uri)
         val name = values?.getAsString(PathlineContract.Tags.NAME)?.trim()
         require(!name.isNullOrEmpty()) { "Missing '${PathlineContract.Tags.NAME}' value" }
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             PathlineContract.Tags.PATH, now,
         )
-        runBlocking { entryPoint.annotationStore().applyTag(target, id, name, callingPackage) }
+        runBlocking { entryPoint.annotationStore().applyTag(target, id, name, caller.pkg) }
             ?: throw IllegalArgumentException("Tag name canonicalizes to nothing: '$name'")
-        logAccess(PathlineContract.Tags.PATH, now, now, 1, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = PathlineContract.Tags.PATH,
+                startMs = now,
+                endMs = now,
+                rowCount = 1,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         notifyChanged(uri)
         return uri.buildUpon().appendPath(name).build()
     }
 
     /** `insert`/`update` on `…/<id>/notes`: replace the whole note (blank text clears it). */
-    private fun upsertNote(uri: Uri, target: AnnotationTarget, values: ContentValues?, now: Long) {
+    private fun upsertNote(
+        caller: Caller,
+        uri: Uri,
+        target: AnnotationTarget,
+        values: ContentValues?,
+        now: Long,
+    ) {
         val id = targetIdFrom(uri)
         val content = values?.getAsString(PathlineContract.Annotations.Notes.CONTENT)
             ?: throw IllegalArgumentException("Missing '${PathlineContract.Annotations.Notes.CONTENT}' value")
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
             DATA_TYPE_NOTES, now,
         )
-        runBlocking { entryPoint.annotationStore().setNote(target, id, content, callingPackage) }
-        logAccess(DATA_TYPE_NOTES, now, now, 1, now, groupId, null, null, isWrite = true)
+        runBlocking { entryPoint.annotationStore().setNote(target, id, content, caller.pkg) }
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_NOTES,
+                startMs = now,
+                endMs = now,
+                rowCount = 1,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         notifyChanged(uri)
     }
 
     /** `insert`/`update` on `…/<id>/memories`: put one key→value entry (value must be a string;
      *  confidence optional, a float in [0,1] defaulting to 1). */
     private fun upsertMemory(
+        caller: Caller,
         uri: Uri,
         target: AnnotationTarget,
         values: ContentValues?,
-        now: Long
+        now: Long,
     ): Uri {
         val id = targetIdFrom(uri)
         val key = values?.get(PathlineContract.Annotations.Memories.KEY) as? String
@@ -1715,47 +1274,59 @@ class PathlineProvider : ContentProvider() {
                     "$MAX_MEMORY_SOURCE_LENGTH characters"
         }
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
         runBlocking {
             entryPoint.annotationStore()
-                .putMemory(target, id, key, value, confidence, source, callingPackage)
+                .putMemory(target, id, key, value, confidence, source, caller.pkg)
         }
-        logAccess(DATA_TYPE_MEMORIES, now, now, 1, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_MEMORIES,
+                startMs = now,
+                endMs = now,
+                rowCount = 1,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         notifyChanged(uri)
         return uri.buildUpon().appendPath(key).build()
     }
 
     /** `delete` on `…/<id>/tags/<name>`: unlink the tag (any spelling); the tag row survives. */
-    private fun deleteTag(uri: Uri, target: AnnotationTarget, now: Long): Int {
+    private fun deleteTag(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Int {
         val id = targetIdFrom(uri)
         val name = uri.lastPathSegment ?: ""
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             PathlineContract.Tags.PATH, now,
         )
         val removed = runBlocking { entryPoint.annotationStore().removeTag(target, id, name) }
-        logAccess(
-            PathlineContract.Tags.PATH,
-            now,
-            now,
-            removed,
-            now,
-            groupId,
-            null,
-            null,
-            isWrite = true
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = PathlineContract.Tags.PATH,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
         )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
 
     /** `delete` on `…/<id>/notes`: clear the note. */
-    private fun clearNote(uri: Uri, target: AnnotationTarget, now: Long): Int {
+    private fun clearNote(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Int {
         val id = targetIdFrom(uri)
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS_NOTES,
             DATA_TYPE_NOTES, now,
         )
         val removed = runBlocking {
@@ -1764,90 +1335,114 @@ class PathlineProvider : ContentProvider() {
             store.setNote(target, id, null)
             if (existed) 1 else 0
         }
-        logAccess(DATA_TYPE_NOTES, now, now, removed, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_NOTES,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
 
     /** `delete` on `…/<id>/memories/<key>`: remove one entry. */
-    private fun deleteMemory(uri: Uri, target: AnnotationTarget, now: Long): Int {
+    private fun deleteMemory(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Int {
         val id = targetIdFrom(uri)
         val key = uri.lastPathSegment ?: ""
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
         // The read-modify-write lives in the store, under its memory-write mutex — doing it here
         // would race other binder threads.
         val removed = runBlocking {
-            if (entryPoint.annotationStore().removeMemory(target, id, key, callingPackage)) 1 else 0
+            if (entryPoint.annotationStore().removeMemory(target, id, key, caller.pkg)) 1 else 0
         }
-        logAccess(DATA_TYPE_MEMORIES, now, now, removed, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_MEMORIES,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
 
     /** `delete` on `…/<id>/memories`: clear the whole map; returns the number of keys removed. */
-    private fun clearMemories(uri: Uri, target: AnnotationTarget, now: Long): Int {
+    private fun clearMemories(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Int {
         val id = targetIdFrom(uri)
         val groupId = checkWrite(
-            uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_MEMORIES, now,
         )
         val removed = runBlocking {
-            entryPoint.annotationStore().clearMemories(target, id, callingPackage)
+            entryPoint.annotationStore().clearMemories(target, id, caller.pkg)
         }
-        logAccess(DATA_TYPE_MEMORIES, now, now, removed, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_MEMORIES,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
 
     // ---- Concept writes ----------------------------------------------------------------------------
 
-    /** The access-switch + WRITE_ANNOTATIONS gate for concept writes that have no target row yet
-     *  (create). Mirrors [checkWrite]'s logging; returns the request's group id. */
-    private fun checkConceptCollectionWrite(uri: Uri, dataType: String, now: Long): Long? {
-        val groupId = parseGroup(uri, now)
-        if (!apiAccessEnabled()) {
-            logAccess(
-                dataType, now, now, 0, now, groupId, null,
-                deniedPermission = PathlineContract.Permissions.API, notify = false, isWrite = true,
-            )
-            throw SecurityException("Third-party access to Pathline data is turned off")
-        }
-        if (!holds(PathlineContract.Permissions.WRITE_ANNOTATIONS)) {
-            logAccess(
-                dataType, now, now, 0, now, groupId, null,
-                PathlineContract.Permissions.WRITE_ANNOTATIONS, isWrite = true,
-            )
-            throw SecurityException("Caller must hold ${PathlineContract.Permissions.WRITE_ANNOTATIONS}")
-        }
-        return groupId
-    }
-
     /** `insert` on `concepts`: create one (NAME required; KIND/DESCRIPTION optional). A canonical
      *  name collision is an error naming the existing id — never a silent reuse. */
-    private fun insertConcept(uri: Uri, values: ContentValues?, now: Long): Uri {
+    private fun insertConcept(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Uri {
         val name = values?.getAsString(PathlineContract.Concepts.NAME)?.trim()
         require(!name.isNullOrEmpty()) { "Missing '${PathlineContract.Concepts.NAME}' value" }
         val kind = values.getAsString(PathlineContract.Concepts.KIND)
         val description = values.getAsString(PathlineContract.Concepts.DESCRIPTION)
-        val groupId = checkConceptCollectionWrite(uri, DATA_TYPE_CONCEPTS, now)
+        val groupId = parseGroup(uri, now)
+        gate.checkConceptCollectionWrite(caller, DATA_TYPE_CONCEPTS, now, groupId)
         val concept = runBlocking {
-            entryPoint.conceptStore().create(name, kind, description, callingPackage)
+            entryPoint.conceptStore().create(name, kind, description, caller.pkg)
         }
-        logAccess(DATA_TYPE_CONCEPTS, now, now, 1, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = 1,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         notifyChanged(uri)
         return PathlineContract.Concepts.itemUri(concept.id)
     }
 
     /** `update` on `concepts/<id>`: partial intrinsic edit — only the keys present change; a key
      *  present with a null value clears that field (NAME cannot be cleared). */
-    private fun updateConcept(uri: Uri, values: ContentValues?, now: Long): Int {
+    private fun updateConcept(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Int {
         val id = targetIdFrom(uri)
         val groupId = checkWrite(
-            uri, AnnotationTarget.CONCEPT, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
-            DATA_TYPE_CONCEPTS, now,
+            caller, uri, AnnotationTarget.CONCEPT, id,
+            PathlineContract.Permissions.WRITE_ANNOTATIONS, DATA_TYPE_CONCEPTS, now,
         )
         val name = if (values?.containsKey(PathlineContract.Concepts.NAME) == true) {
             values.getAsString(PathlineContract.Concepts.NAME).also {
@@ -1865,32 +1460,54 @@ class PathlineProvider : ContentProvider() {
                 kind = values?.getAsString(PathlineContract.Concepts.KIND), setKind = setKind,
                 description = values?.getAsString(PathlineContract.Concepts.DESCRIPTION),
                 setDescription = setDescription,
-                writer = callingPackage,
+                writer = caller.pkg,
             )
         }
         val count = if (updated != null) 1 else 0
-        logAccess(DATA_TYPE_CONCEPTS, now, now, count, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = count,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         if (count > 0) notifyChanged(uri)
         return count
     }
 
     /** `delete` on `concepts/<id>`: the concept, its memberships and its own annotations. */
-    private fun deleteConcept(uri: Uri, now: Long): Int {
+    private fun deleteConcept(caller: Caller, uri: Uri, now: Long): Int {
         val id = targetIdFrom(uri)
         val groupId = checkWrite(
-            uri, AnnotationTarget.CONCEPT, id, PathlineContract.Permissions.WRITE_ANNOTATIONS,
-            DATA_TYPE_CONCEPTS, now,
+            caller, uri, AnnotationTarget.CONCEPT, id,
+            PathlineContract.Permissions.WRITE_ANNOTATIONS, DATA_TYPE_CONCEPTS, now,
         )
         val removed = runBlocking { if (entryPoint.conceptStore().delete(id)) 1 else 0 }
-        logAccess(DATA_TYPE_CONCEPTS, now, now, removed, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPTS,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         if (removed > 0) notifyChanged(uri)
         return removed
     }
 
     /** `insert` on `concepts/<id>/members`: attach one place/visit/trip. The member must be
-     *  visible/writable to the caller (its read tier + [targetVisible]) so ephemeral unconfirmed
-     *  ids never enter a concept. */
-    private fun insertConceptMember(uri: Uri, values: ContentValues?, now: Long): Uri {
+     *  visible/writable to the caller (its read tier + [ApiGate.targetVisible]) so ephemeral
+     *  unconfirmed ids never enter a concept. */
+    private fun insertConceptMember(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Uri {
         val conceptId = targetIdFrom(uri)
         val target = parseMemberType(
             values?.getAsString(PathlineContract.Concepts.Members.TARGET_TYPE),
@@ -1902,47 +1519,55 @@ class PathlineProvider : ContentProvider() {
         // Gate on the MEMBER target (its read tier + visibility); concept existence is checked in
         // the store. This is the same writability rule as annotating the target directly.
         val groupId = checkWrite(
-            uri, target, targetId, PathlineContract.Permissions.WRITE_ANNOTATIONS,
+            caller, uri, target, targetId, PathlineContract.Permissions.WRITE_ANNOTATIONS,
             DATA_TYPE_CONCEPT_MEMBERS, now,
         )
         val added = runBlocking {
-            entryPoint.conceptStore().addMember(conceptId, target, targetId, callingPackage)
+            entryPoint.conceptStore().addMember(conceptId, target, targetId, caller.pkg)
         }
         if (!added) throw IllegalArgumentException("No concept with id $conceptId")
-        logAccess(DATA_TYPE_CONCEPT_MEMBERS, now, now, 1, now, groupId, null, null, isWrite = true)
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPT_MEMBERS,
+                startMs = now,
+                endMs = now,
+                rowCount = 1,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
+        )
         notifyChanged(uri)
         return PathlineContract.Concepts.memberUri(conceptId, target.name.lowercase(), targetId)
     }
 
     /** `delete` on `concepts/<id>/members/<type>/<targetId>`: detach one member. Gated on the
      *  concept (not the member) so stale references stay removable. */
-    private fun deleteConceptMember(uri: Uri, now: Long): Int {
+    private fun deleteConceptMember(caller: Caller, uri: Uri, now: Long): Int {
         val conceptId = targetIdFrom(uri)
         val segments = uri.pathSegments
         val target = parseMemberType(segments.getOrNull(3))
         val targetId = segments.getOrNull(4)?.toLongOrNull()
             ?: throw IllegalArgumentException("Missing or invalid member id in URI: $uri")
         val groupId = checkWrite(
-            uri,
-            AnnotationTarget.CONCEPT,
-            conceptId,
-            PathlineContract.Permissions.WRITE_ANNOTATIONS,
-            DATA_TYPE_CONCEPT_MEMBERS,
-            now,
+            caller, uri, AnnotationTarget.CONCEPT, conceptId,
+            PathlineContract.Permissions.WRITE_ANNOTATIONS, DATA_TYPE_CONCEPT_MEMBERS, now,
         )
         val removed = runBlocking {
             entryPoint.conceptStore().removeMember(conceptId, target, targetId)
         }
-        logAccess(
-            DATA_TYPE_CONCEPT_MEMBERS,
-            now,
-            now,
-            removed,
-            now,
-            groupId,
-            null,
-            null,
-            isWrite = true
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = DATA_TYPE_CONCEPT_MEMBERS,
+                startMs = now,
+                endMs = now,
+                rowCount = removed,
+                nowMs = now,
+                groupId = groupId,
+                isWrite = true,
+            ),
         )
         if (removed > 0) notifyChanged(uri)
         return removed
@@ -2047,34 +1672,6 @@ class PathlineProvider : ContentProvider() {
 
         const val READ_ONLY_MESSAGE =
             "Pathline's data API is read-only except the annotation sub-collections (see PathlineContract.Annotations)"
-
-        /** Place search fields backed by the places FTS index — also its column names. */
-        val PLACE_DETAIL_FIELDS = listOf(
-            PathlineContract.SearchFields.NAME,
-            PathlineContract.SearchFields.ADDRESS,
-            PathlineContract.SearchFields.CATEGORY,
-            PathlineContract.SearchFields.TYPES,
-        )
-
-        /** Annotation-backed search fields (gated by READ_ANNOTATIONS). */
-        val ANNOTATION_FIELDS = listOf(
-            PathlineContract.SearchFields.TAGS,
-            PathlineContract.SearchFields.NOTES,
-            PathlineContract.SearchFields.MEMORIES,
-        )
-
-        /** The annotation fields applicable to visits/trips (no memories matching there — memories
-         *  are key→value data, not prose; a substring hit on them would be noise). */
-        val TIMELINE_ANNOTATION_FIELDS = listOf(
-            PathlineContract.SearchFields.TAGS,
-            PathlineContract.SearchFields.NOTES,
-        )
-
-        /** Server-side ceiling for the `limit=` row cap — larger asks clamp, they don't error. */
-        const val MAX_LIMIT = 5_000
-
-        /** Small tolerance for a `group` value slightly ahead of our clock (granularity), no more. */
-        const val GROUP_FUTURE_TOLERANCE_MS = 5_000L
 
         /** Upper bound for a memory entry's `source` provenance note (a pointer, not a document). */
         const val MAX_MEMORY_SOURCE_LENGTH = 500

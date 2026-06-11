@@ -66,24 +66,10 @@ class RecordingController @Inject constructor(
 
     @Volatile
     private var serviceState: DevicePhysicalState? = null
-    private val recentSpeeds = ArrayDeque<Float>()
-    private val speedLock = Any()
 
-    /** Recent fixes used to detect "became stationary" from the classifier when AR is silent. */
-    private data class Fix(
-        val t: Long,
-        val lat: Double,
-        val lon: Double,
-        val accuracyMeters: Float?,
-        val speedMps: Float?,
-        val stationary: Boolean,
-    )
-
-    private val recentFixes = ArrayDeque<Fix>()
-    private val fixLock = Any()
-
-    @Volatile
-    private var stationaryAnchor: Pair<Double, Double>? = null
+    /** The pure decision core: fix/speed buffers, drift guard, cluster detector, backoff curve.
+     *  See [RecordingHeuristics] — extracted so the rules are JVM-testable. */
+    private val heuristics = RecordingHeuristics()
 
     /** Long-lived scope for the significant-motion backoff re-arm (process-lifetime singleton). */
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -323,7 +309,7 @@ class RecordingController @Inject constructor(
             // STILL would otherwise undersample the whole leg. Trust STILL only when recent fixes
             // show we've settled; a genuine stop is still caught here once the fixes stop moving (and
             // by the stationary-cluster detector in handleLocations).
-            DetectedActivity.STILL -> if (recentlyMoving()) {
+            DetectedActivity.STILL -> if (heuristics.recentlyMoving()) {
                 AppLog.i(TAG, "AR STILL ignored — recent fixes still moving")
             } else {
                 becameStationary()
@@ -434,8 +420,8 @@ class RecordingController @Inject constructor(
 
         for (location in locations.sortedBy { it.time }) {
             val speed = if (location.hasSpeed()) location.speed else null
-            speed?.let { pushSpeed(it) }
-            val (mean, max, variance) = speedStats()
+            speed?.let { heuristics.pushSpeed(it) }
+            val (mean, max, variance) = heuristics.speedStats()
 
             val classification = classifier.classifyState(
                 StateFeatureInput(
@@ -468,7 +454,16 @@ class RecordingController @Inject constructor(
                     currentState = classification.state
                 }
             }
-            pushFix(location, classification.state == DevicePhysicalState.STATIONARY)
+            heuristics.pushFix(
+                RecentFix(
+                    t = location.time,
+                    lat = location.latitude,
+                    lon = location.longitude,
+                    accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                    speedMps = if (location.hasSpeed()) location.speed else null,
+                    stationary = classification.state == DevicePhysicalState.STATIONARY,
+                ),
+            )
             val sample =
                 buildSample(location, context, classification.state, classification.confidence)
             locationRepository.record(sample)
@@ -481,7 +476,7 @@ class RecordingController @Inject constructor(
 
         // AR can be silent — if recent fixes have settled into one spot, switch the recorder to
         // stationary cadence and ask maintenance to rebuild the derived timeline.
-        val stationaryCandidate = stationaryClusterCandidate()
+        val stationaryCandidate = heuristics.stationaryClusterCandidate()
         if (stationaryCandidate != null && currentState != DevicePhysicalState.STATIONARY) {
             AppLog.i(TAG, "stationary detected from fixes (AR silent)")
             becameStationary(stationaryCandidate, forceOpen = true)
@@ -497,103 +492,25 @@ class RecordingController @Inject constructor(
         recorderService.start(currentState, settingsRepository.settings.first().powerProfile)
     }
 
-    private fun pushFix(location: Location, stationary: Boolean) = synchronized(fixLock) {
-        recentFixes.addLast(
-            Fix(
-                t = location.time,
-                lat = location.latitude,
-                lon = location.longitude,
-                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
-                speedMps = if (location.hasSpeed()) location.speed else null,
-                stationary = stationary,
-            ),
-        )
-        val cutoff = location.time - FIX_WINDOW_MS
-        while (recentFixes.isNotEmpty() && recentFixes.first().t < cutoff) recentFixes.removeFirst()
-    }
-
-    /**
-     * True when fixes in the last [RECENT_MOTION_WINDOW_MS] show real movement (GPS speed or a spread
-     * beyond the stay radius) — used to reject a premature AR STILL while travelling, e.g. a light-rail
-     * ride that AR keeps mislabelling as STILL. Looks at a short recent window (not the full fix buffer)
-     * so a genuine stop still flips this false within ~the window once the device settles.
-     */
-    private fun recentlyMoving(): Boolean = synchronized(fixLock) {
-        if (recentFixes.isEmpty()) return false
-        val cutoff = recentFixes.last().t - RECENT_MOTION_WINDOW_MS
-        val recent = recentFixes.filter { it.t >= cutoff }
-        if (recent.size < 2) return false
-        val maxSpeed = recent.mapNotNull { it.speedMps }.maxOrNull() ?: 0f
-        if (maxSpeed >= 1.5f) return true
-        val spread = recent.maxOf { a ->
-            recent.maxOf { b ->
-                net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-                    a.lat,
-                    a.lon,
-                    b.lat,
-                    b.lon
-                )
-            }
-        }
-        spread > net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
-    }
-
-    /** Returns a visit candidate when recent fixes have settled in one spot long enough, even if
-     *  Activity Recognition never reported STILL. */
-    private fun stationaryClusterCandidate(): VisitCandidate? = synchronized(fixLock) {
-        if (recentFixes.size < 3) return null
-        val minVisitMs = net.extrawdw.apps.locationhistory.core.Constants.MIN_VISIT_DURATION_MS
-        val now = recentFixes.last().t
-        val window = recentFixes.filter { now - it.t <= minVisitMs }
-        if (window.size < 3) return null
-        if (now - window.first().t < minVisitMs * 0.8) return null
-        val goodAccuracy = window.count {
-            (it.accuracyMeters ?: 30f) <=
-                    net.extrawdw.apps.locationhistory.core.Constants.SAMPLE_ACCURACY_GATE_METERS
-        }
-        if (goodAccuracy < window.size * 0.7) return null
-        val meanSpeed =
-            window.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
-        if (meanSpeed > 0.6) return null
-        val cLat = window.sumOf { it.lat } / window.size
-        val cLon = window.sumOf { it.lon } / window.size
-        val withinRadius = window.all {
-            net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <=
-                    net.extrawdw.apps.locationhistory.core.Constants.STATIONARY_RADIUS_METERS
-        }
-        val mostlyStationary = window.count { it.stationary } >= window.size * 0.8
-        if (!withinRadius || !mostlyStationary) return null
-        VisitCandidate(
-            startMs = window.first().t,
-            endMs = now,
-            centroidLatitude = cLat,
-            centroidLongitude = cLon,
-            sampleCount = window.size,
-        )
-    }
-
     /** Repair a process-restart case where recent stored fixes already show a stationary cluster. */
     private suspend fun repairStationaryFromStoredSamples() {
         val recent = locationRepository.latest(12)
             .filter { it.includedInComputation }
             .sortedBy { it.timestampMs }
         if (recent.size < 3 || recent.last().devicePhysicalState != DevicePhysicalState.STATIONARY) return
-        synchronized(fixLock) {
-            recentFixes.clear()
-            recent.forEach {
-                recentFixes.addLast(
-                    Fix(
-                        t = it.timestampMs,
-                        lat = it.latitude,
-                        lon = it.longitude,
-                        accuracyMeters = it.accuracy,
-                        speedMps = it.speed,
-                        stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
-                    ),
+        heuristics.replaceFixes(
+            recent.map {
+                RecentFix(
+                    t = it.timestampMs,
+                    lat = it.latitude,
+                    lon = it.longitude,
+                    accuracyMeters = it.accuracy,
+                    speedMps = it.speed,
+                    stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
                 )
-            }
-        }
-        stationaryClusterCandidate()?.let {
+            },
+        )
+        heuristics.stationaryClusterCandidate()?.let {
             AppLog.i(TAG, "resume repair: restoring stationary recorder state from stored fixes")
             becameStationary(it, forceOpen = true)
         }
@@ -642,7 +559,7 @@ class RecordingController @Inject constructor(
             cancelSigMotionRearm()
             resetSigMotionBackoff()
             significantMotionManager.arm { handleSignificantMotion() }
-            stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
+            heuristics.stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
             workScheduler.enqueueTimelineMaintenanceNow(
                 TimeBuckets.dayEpoch(anchor.timestampMs),
                 "became_stationary"
@@ -678,7 +595,7 @@ class RecordingController @Inject constructor(
         val maintenanceDay =
             locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
                 ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
-        stationaryAnchor = null
+        heuristics.stationaryAnchor = null
         cancelSigMotionRearm()
         resetSigMotionBackoff()
         geofenceManager.clearAll()
@@ -711,9 +628,7 @@ class RecordingController @Inject constructor(
      */
     private fun rearmSignificantMotionWithBackoff() {
         val streak = sigMotionFalseStreak
-        val delayMs =
-            (SIG_MOTION_BASE_BACKOFF_MS shl streak.coerceAtMost(SIG_MOTION_MAX_BACKOFF_SHIFTS))
-                .coerceAtMost(SIG_MOTION_MAX_BACKOFF_MS)
+        val delayMs = RecordingHeuristics.sigMotionBackoffMs(streak)
         sigMotionFalseStreak = streak + 1
         cancelSigMotionRearm()
         sigMotionRearmJob = controllerScope.launch {
@@ -728,74 +643,22 @@ class RecordingController @Inject constructor(
         }
     }
 
-    /**
-     * GPS drift = a near-anchor fix while the phone is **physically still**; a real departure either
-     * displaces beyond the (noise-widened) stay radius, carries GPS speed, or shakes the phone. This
-     * is the gate on leaving the low-power stationary cadence, so a false positive keeps us
-     * undersampling — hence physical movement ([motionVariance]) is weighted heavily: any real walk
-     * shakes the device and is never suppressed, even at a noisy-GPS place with no GPS speed.
-     */
-    private fun isDriftAt(
-        lat: Double,
-        lon: Double,
-        speedMps: Float,
-        motionVariance: Float
-    ): Boolean {
-        if (currentState != DevicePhysicalState.STATIONARY) return false
-        val anchor = stationaryAnchor ?: return true
-        if (speedMps >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOVING_SPEED_MPS) return false
-        if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
-        val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-            anchor.first,
-            anchor.second,
-            lat,
-            lon
-        )
-        return d < stationaryNoiseRadius()
-    }
-
     /** Drift check against the last *stored* fix (may be stale on the low-power cadence). */
     private suspend fun isLikelyDrift(motionVariance: Float): Boolean {
         if (currentState != DevicePhysicalState.STATIONARY) return false
-        if (stationaryAnchor == null) return true
+        if (heuristics.stationaryAnchor == null) return true
         val last = locationRepository.mostRecent() ?: return false
-        return isDriftAt(last.latitude, last.longitude, last.speed ?: 0f, motionVariance)
+        return heuristics.isDriftAt(
+            currentState, last.latitude, last.longitude, last.speed ?: 0f, motionVariance,
+        )
     }
 
     /** Drift check against a specific (fresh) fix. */
     private fun isLikelyDrift(location: Location, motionVariance: Float): Boolean =
-        isDriftAt(
-            location.latitude, location.longitude,
+        heuristics.isDriftAt(
+            currentState, location.latitude, location.longitude,
             if (location.hasSpeed()) location.speed else 0f, motionVariance,
         )
-
-    /**
-     * Radius (m) within which a near-anchor fix counts as jitter, widened to the GPS noise actually
-     * observed here (RMS spread of recent stationary fixes) so a noisy place tolerates more wobble —
-     * floored at [Constants.DRIFT_DISPLACEMENT_METERS] and capped at [Constants.PLACE_MAX_RADIUS_METERS]
-     * so a pathological place can't open a huge dead zone. Only stationary-flagged fixes are used, so a
-     * departure trajectory never inflates it.
-     */
-    private fun stationaryNoiseRadius(): Double = synchronized(fixLock) {
-        val base = net.extrawdw.apps.locationhistory.core.Constants.DRIFT_DISPLACEMENT_METERS
-        val cap = net.extrawdw.apps.locationhistory.core.Constants.PLACE_MAX_RADIUS_METERS
-        val stat = recentFixes.filter { it.stationary }
-        if (stat.size < 3) return base
-        val cLat = stat.sumOf { it.lat } / stat.size
-        val cLon = stat.sumOf { it.lon } / stat.size
-        val rms = kotlin.math.sqrt(
-            stat.sumOf {
-                val d = net.extrawdw.apps.locationhistory.core.Geo.distanceMeters(
-                    cLat,
-                    cLon,
-                    it.lat,
-                    it.lon
-                )
-                d * d
-            } / stat.size,
-        )
-        (rms * NOISE_RMS_FACTOR).coerceIn(base, cap)
-    }
 
     // --- helpers ------------------------------------------------------------------------------
 
@@ -835,19 +698,6 @@ class RecordingController @Inject constructor(
         devicePhysicalStateConfidence = confidence,
     )
 
-    private fun pushSpeed(speed: Float) = synchronized(speedLock) {
-        recentSpeeds.addLast(speed)
-        while (recentSpeeds.size > SPEED_WINDOW) recentSpeeds.removeFirst()
-    }
-
-    private fun speedStats(): Triple<Float, Float, Float> = synchronized(speedLock) {
-        if (recentSpeeds.isEmpty()) return Triple(0f, 0f, 0f)
-        val mean = recentSpeeds.average().toFloat()
-        val max = recentSpeeds.max()
-        val variance = recentSpeeds.map { (it - mean) * (it - mean) }.average().toFloat()
-        Triple(mean, max, variance)
-    }
-
     private fun arName(activityType: Int): String = when (activityType) {
         DetectedActivity.STILL -> "STILL"
         DetectedActivity.WALKING -> "WALKING"
@@ -860,15 +710,6 @@ class RecordingController @Inject constructor(
     }
 
     private companion object {
-        const val SPEED_WINDOW = 10
         const val TAG = "Recorder"
-        const val FIX_WINDOW_MS = 6 * 60_000L
-        const val RECENT_MOTION_WINDOW_MS = 90_000L
-        const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius
-
-        // Significant-motion re-arm backoff: base << streak, capped. 30s,1m,2m,4m,8m,16m,30m(cap).
-        const val SIG_MOTION_BASE_BACKOFF_MS = 30_000L
-        const val SIG_MOTION_MAX_BACKOFF_SHIFTS = 6
-        const val SIG_MOTION_MAX_BACKOFF_MS = 30 * 60_000L
     }
 }

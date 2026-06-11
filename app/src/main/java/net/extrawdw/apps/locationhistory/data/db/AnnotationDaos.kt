@@ -116,6 +116,9 @@ interface AnnotationDao {
     suspend fun deleteForTarget(type: AnnotationTarget, id: Long)
 }
 
+/** conceptId -> member count projection for [ConceptDao.memberCounts]. */
+data class ConceptMemberCount(val conceptId: Long, val members: Int)
+
 /**
  * Concepts + the polymorphic concept<->member join. Same integrity model as [TagDao]: no FK across
  * the polymorphic edge; delete/merge integrity is kept in code (see `AnnotationStore` and
@@ -156,6 +159,11 @@ interface ConceptDao {
 
     @Query("SELECT * FROM concept_members WHERE conceptId = :conceptId ORDER BY createdAtMs, targetType, targetId")
     suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity>
+
+    /** conceptId -> member count, one GROUP BY — the data API's `member_count` column. Concepts
+     *  with no members simply have no row (callers default to 0). */
+    @Query("SELECT conceptId AS conceptId, COUNT(*) AS members FROM concept_members GROUP BY conceptId")
+    suspend fun memberCounts(): List<ConceptMemberCount>
 
     /** Membership rows of one target — the reverse edge, with per-row attached-at/by intact. */
     @Query("SELECT * FROM concept_members WHERE targetType = :type AND targetId = :id")

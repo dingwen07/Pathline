@@ -60,6 +60,16 @@ import android.net.Uri
  * - Annotation **writes** (`insert` / `update` / `delete` on the annotation URIs — every other URI
  *   stays read-only) require [Permissions.WRITE_ANNOTATIONS] for tags and memories, or
  *   [Permissions.WRITE_ANNOTATIONS_NOTES] for notes. See [Annotations].
+ * - [Concepts] (semantic groups) read with [Permissions.READ_ANNOTATIONS] **alone** — they are
+ *   curation, not recorded data; member references are id pointers resolved through the
+ *   normally-gated collections. Concept writes (create/edit/delete, add/remove members) require
+ *   [Permissions.WRITE_ANNOTATIONS]; **adding** a member is additionally gated on the member
+ *   target's own read tier + visibility (an unconfirmed visit/trip is rejected), while removing
+ *   one is gated on the concept only, so stale references stay removable.
+ * - The `near=` proximity mode on `places` ([QueryParams.NEAR]) adds no permission of its own and
+ *   never widens scope — it filters and orders what the caller's place scope already allows.
+ *   Likewise `limit=` ([QueryParams.LIMIT]) only caps row counts, on any collection that
+ *   documents it.
  * - Reading anything **older than 30 days** (a window whose `start` predates `now - 30 days`)
  *   additionally requires [Permissions.READ_EXTENDED_HISTORY]. For a call with an **explicit**
  *   `start` that far back, the query throws a [SecurityException] without it — an explicitly
@@ -84,7 +94,7 @@ object PathlineContract {
      * + samples + places; 2 = places types / visit-history / search / annotations; 3 = memory
      * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts + [PlaceStats] +
      * relevance-ordered search (see [QueryParams.Q]) + proximity mode ([QueryParams.NEAR]) +
-     * [QueryParams.LIMIT].
+     * [QueryParams.LIMIT] + [Concepts.MEMBER_COUNT] on concept rows.
      */
     const val API_VERSION: Int = 3
 
@@ -965,10 +975,20 @@ object PathlineContract {
          *  the per-target `…/<id>/concepts` listings; null elsewhere. */
         const val ATTACHED_BY_ME: String = "attached_by_me"
 
+        /**
+         * Number of members ([Members]) the concept currently has, on every concept row shape —
+         * the listing, the single item, and the per-target `…/<id>/concepts` reverse listings —
+         * so an agent can see group sizes without a `members` query per concept. Membership is
+         * not permission-scoped (members are id pointers; see the class doc), so neither is the
+         * count. Part of the version-3 batch; absent on older providers.
+         */
+        const val MEMBER_COUNT: String = "member_count"
+
         @JvmField
         val COLUMNS: Array<String> = arrayOf(
             ID, NAME, CANONICAL_NAME, KIND, DESCRIPTION,
             CREATED_AT_MS, UPDATED_AT_MS, CREATED_BY_ME, UPDATED_BY_ME, ATTACHED_BY_ME,
+            MEMBER_COUNT,
         )
 
         /** `concepts/<id>` — one concept (query / update / delete). */
