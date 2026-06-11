@@ -17,7 +17,7 @@ class PathlinePermissions(
 ) {
     /**
      * The permissions actually required to record: precise location + activity recognition.
-     * Notifications and phone state are optional, so they don't gate this.
+     * Notifications are optional, so they don't gate this.
      */
     @OptIn(ExperimentalPermissionsApi::class)
     val granted: Boolean
@@ -64,7 +64,6 @@ class PathlinePermissions(
         /** Foreground permissions the app can run without. */
         val OPTIONAL_FOREGROUND = setOf(
             Manifest.permission.POST_NOTIFICATIONS,
-            Manifest.permission.READ_PHONE_STATE,
         )
     }
 }
@@ -78,7 +77,6 @@ fun rememberPathlinePermissions(): PathlinePermissions {
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.POST_NOTIFICATIONS,
-            Manifest.permission.READ_PHONE_STATE,
         ),
     )
     val background = rememberMultiplePermissionsState(

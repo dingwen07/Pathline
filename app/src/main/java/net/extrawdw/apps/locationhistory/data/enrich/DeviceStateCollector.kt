@@ -88,7 +88,6 @@ class DeviceStateCollector @Inject constructor(
 
     /** @return strongest cell signal dBm to whether the device has any cellular service. */
     private fun readCellular(): Pair<Int?, Boolean?> = runCatching {
-        if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) return null to null
         val tm = context.getSystemService(TelephonyManager::class.java) ?: return null to null
         val signal =
             tm.signalStrength ?: return null to (tm.simState == TelephonyManager.SIM_STATE_READY)

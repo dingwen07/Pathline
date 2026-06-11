@@ -18,7 +18,6 @@
     <!-- Network / device-state enrichment -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- Re-arm recording after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
