@@ -276,6 +276,11 @@ class PathlineProvider : ContentProvider() {
         ) {
             return timelineSearchQuery(caller, uri, code, now)
         }
+        if ((code == CODE_VISITS || code == CODE_TRIPS) &&
+            uri.getQueryParameter(PathlineContract.QueryParams.IDS) != null
+        ) {
+            return timelineByIdsQuery(caller, uri, code, now)
+        }
 
         val (start, end) = gate.requireWindow(
             uri.getQueryParameter(PathlineContract.QueryParams.START),
@@ -972,6 +977,65 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
+    /**
+     * Batch id resolve on the `visits` / `trips` collections (`ids` present, no `q`): the multi-id
+     * form of [timelineItemQuery], one read instead of N — mirroring the `places` `ids` filter.
+     * Same gating as a plain read (READ_TIMELINE); the window is **optional** like search mode —
+     * when omitted it clamps per READ_EXTENDED_HISTORY, an explicit window is enforced exactly like
+     * a plain read. Ids outside the window/horizon or nonexistent are silently omitted, never an
+     * error — indistinguishable on purpose, so ids can't be probed. Rows come back chronological
+     * (ascending) like every timeline read; `limit` keeps the newest. Visits record place grants;
+     * trips carry the route column only for route holders.
+     */
+    private fun timelineByIdsQuery(caller: Caller, uri: Uri, code: Int, now: Long): Cursor {
+        val isVisits = code == CODE_VISITS
+        val dataType = if (isVisits) PathlineContract.Visits.PATH else PathlineContract.Trips.PATH
+        val groupId = parseGroup(uri, now)
+        if (!caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
+            gate.deny(
+                caller, PathlineContract.Permissions.READ_TIMELINE,
+                dataType, now, now, now, groupId,
+            )
+        }
+        val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)!!
+            .split(',').mapNotNull { it.trim().toLongOrNull() }.distinct()
+        val (start, end) = gate.searchWindow(
+            caller,
+            uri.getQueryParameter(PathlineContract.QueryParams.START),
+            uri.getQueryParameter(PathlineContract.QueryParams.END),
+            dataType, now, groupId,
+        )
+        val routeWithheld: Boolean? = if (!isVisits) !caller.routeUnlocked() else null
+        val limit = parseLimit(uri)
+        val cursor = runBlocking {
+            if (isVisits) {
+                val visits =
+                    if (requested.isEmpty()) emptyList()
+                    else entryPoint.visitDao().byIdsOverlapping(requested, start, end)
+                visitsCursorFor(caller, visits.takeNewest(limit))
+            } else {
+                val trips =
+                    if (requested.isEmpty()) emptyList()
+                    else entryPoint.tripDao().byIdsOverlapping(requested, start, end)
+                ApiCursors.trips(trips.takeNewest(limit), includeRoute = routeWithheld == false)
+            }
+        }
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = dataType,
+                startMs = start,
+                endMs = end,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+                routeWithheld = routeWithheld,
+            ),
+        )
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
     // ---- Search over visits / trips ------------------------------------------------------------
 
     /**
@@ -1007,17 +1071,25 @@ class PathlineProvider : ContentProvider() {
             dataType, now, groupId,
         )
 
+        // An `ids` filter is intersected with the matches, like on `places` — never an error.
+        val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
+            ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.toSet()
+        fun <T> List<T>.onlyRequested(id: (T) -> Long): List<T> =
+            if (requested == null) this else filter { id(it) in requested }
+
         val routeWithheld: Boolean? = if (code == CODE_TRIPS) !caller.routeUnlocked() else null
         val limit = parseLimit(uri)
         val cursor = runBlocking {
             if (code == CODE_VISITS) {
                 visitsCursorFor(
                     caller,
-                    searchEngine.searchVisits(q, fields, start, end).takeNewest(limit),
+                    searchEngine.searchVisits(q, fields, start, end)
+                        .onlyRequested { it.id }.takeNewest(limit),
                 )
             } else {
                 ApiCursors.trips(
-                    searchEngine.searchTrips(q, fields, start, end).takeNewest(limit),
+                    searchEngine.searchTrips(q, fields, start, end)
+                        .onlyRequested { it.id }.takeNewest(limit),
                     includeRoute = routeWithheld == false,
                 )
             }

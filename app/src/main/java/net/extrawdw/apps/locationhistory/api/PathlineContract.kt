@@ -126,11 +126,16 @@ object PathlineContract {
         const val GROUP: String = "group"
 
         /**
-         * Optional comma-separated list of place ids to fetch from the [Places] collection (e.g.
-         * `ids=12,40,7`). When omitted, [Places] returns every place the caller is allowed to see.
-         * Either way the result is intersected with the caller's allowed set — ids the caller has not
-         * encountered through a [Visits] read are silently omitted, never an error. Ignored by the
-         * other collections.
+         * Optional comma-separated list of row ids (e.g. `ids=12,40,7`). On [Places] it selects
+         * specific saved places (when omitted, [Places] returns every place the caller is allowed
+         * to see). On [Visits] and [Trips] it switches the collection into **batch id resolve** —
+         * the multi-id form of [Visits.itemUri] / [Trips.itemUri], one read instead of N — and
+         * [START] / [END] become optional exactly like search mode (omitted -> the window clamps
+         * per [Permissions.READ_EXTENDED_HISTORY]; explicit -> enforced like a plain read), with
+         * rows returned chronological as always. Everywhere the result is intersected with what
+         * the caller may see — ids out of scope, outside the window, or nonexistent are silently
+         * omitted, never an error. Composable with [Q] (the search result is narrowed to the ids).
+         * Ignored by the remaining collections.
          */
         const val IDS: String = "ids"
 
@@ -308,7 +313,9 @@ object PathlineContract {
     }
 
     /**
-     * Stays at a place. Returned for any visit overlapping the requested window.
+     * Stays at a place. Returned for any visit overlapping the requested window. With
+     * [QueryParams.IDS] the collection batch-resolves specific visits by id instead (window
+     * optional — see there).
      * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.visit`.
      */
     object Visits {
@@ -324,8 +331,9 @@ object PathlineContract {
         /**
          * `content://…/visits/<id>` — ONE visit by its stable id (0 or 1 row, same columns), the
          * resolver for stored id references such as a memory source `visit:675 note`. Requires
-         * [Permissions.READ_TIMELINE]; visible only when **confirmed** and within the last 30 days
-         * (any age with [Permissions.READ_EXTENDED_HISTORY]). An invisible or nonexistent id
+         * [Permissions.READ_TIMELINE]; visible within the last 30 days (any age with
+         * [Permissions.READ_EXTENDED_HISTORY]), confirmed and unconfirmed alike — if a collection
+         * or search read returned the id, this resolves it. An invisible or nonexistent id
          * returns no rows, indistinguishable on purpose.
          */
         @JvmStatic
@@ -373,6 +381,8 @@ object PathlineContract {
 
     /**
      * Single-mode movements between stays. Returned for any trip overlapping the requested window.
+     * With [QueryParams.IDS] the collection batch-resolves specific trips by id instead (window
+     * optional — see there).
      * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.trip`.
      */
     object Trips {
