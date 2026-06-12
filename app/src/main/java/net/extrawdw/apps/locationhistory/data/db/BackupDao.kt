@@ -77,12 +77,6 @@ interface BackupDao {
     @Query("SELECT * FROM geofences")
     suspend fun allGeofences(): List<GeofenceEntity>
 
-    @Query("SELECT * FROM state_training_examples ORDER BY id ASC")
-    suspend fun allStateExamples(): List<StateTrainingExampleEntity>
-
-    @Query("SELECT * FROM transport_training_examples ORDER BY id ASC")
-    suspend fun allTransportExamples(): List<TransportTrainingExampleEntity>
-
     @Query("SELECT * FROM tags ORDER BY id ASC")
     suspend fun allTags(): List<TagEntity>
 
@@ -116,12 +110,6 @@ interface BackupDao {
     suspend fun restoreGeofences(rows: List<GeofenceEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun restoreStateExamples(rows: List<StateTrainingExampleEntity>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun restoreTransportExamples(rows: List<TransportTrainingExampleEntity>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restoreTags(rows: List<TagEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -140,7 +128,7 @@ interface BackupDao {
     @Transaction
     suspend fun wipeForRestore() {
         clearTrips(); clearVisits(); clearSamples()
-        clearGeofences(); clearPlaces(); clearStateExamples(); clearTransportExamples()
+        clearGeofences(); clearPlaces()
         clearAnnotations(); clearEntityTags(); clearTags()
         clearConceptMembers(); clearConcepts()
         clearAllDirty()
@@ -218,12 +206,6 @@ interface BackupDao {
 
     @Query("DELETE FROM places")
     suspend fun clearPlaces()
-
-    @Query("DELETE FROM state_training_examples")
-    suspend fun clearStateExamples()
-
-    @Query("DELETE FROM transport_training_examples")
-    suspend fun clearTransportExamples()
 
     @Query("DELETE FROM tags")
     suspend fun clearTags()

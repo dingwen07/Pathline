@@ -131,16 +131,6 @@ object Constants {
     /** Max time gap (ms) between two same-type items for the auto-merger to combine them. */
     const val MERGE_GAP_MS = 90_000L
 
-    // --- Training -----------------------------------------------------------------------------
-    /** Accumulated user-confirmed examples that trigger a (charging-gated) retrain. */
-    const val RETRAIN_EXAMPLE_THRESHOLD = 20
-
-    // --- Files / assets -----------------------------------------------------------------------
-    const val STATE_MODEL_ASSET = "models/state_model.tflite"
-    const val TRANSPORT_MODEL_ASSET = "models/transport_model.tflite"
-    const val STATE_CHECKPOINT_FILE = "state_model.ckpt"
-    const val TRANSPORT_CHECKPOINT_FILE = "transport_model.ckpt"
-
     // --- Backup -------------------------------------------------------------------------------
     /** Subdirectory created inside the chosen SAF tree that holds the structured backup. */
     const val BACKUP_DIR = "pathline-backup"

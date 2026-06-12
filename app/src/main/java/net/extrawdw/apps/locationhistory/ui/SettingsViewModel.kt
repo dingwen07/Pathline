@@ -11,19 +11,15 @@ import net.extrawdw.apps.locationhistory.data.repo.AppSettings
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
-import net.extrawdw.apps.locationhistory.ml.LiteRtModelStore
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
-
-data class ModelStatus(val stateModelReady: Boolean, val transportModelReady: Boolean)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val recordingController: RecordingController,
     private val workScheduler: WorkScheduler,
-    private val modelStore: LiteRtModelStore,
     locationRepository: LocationRepository,
 ) : ViewModel() {
 
@@ -35,12 +31,6 @@ class SettingsViewModel @Inject constructor(
 
     val sampleCount: StateFlow<Long> = locationRepository.observeCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
-
-    val modelStatus: ModelStatus
-        get() = ModelStatus(
-            stateModelReady = modelStore.stateModel() != null,
-            transportModelReady = modelStore.transportModel() != null,
-        )
 
     /** Toggle background recording. Assumes the required permissions were already granted. */
     fun setTracking(enabled: Boolean) = viewModelScope.launch {
@@ -71,6 +61,4 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.setApiAccessEnabled(enabled)
         if (!enabled) settingsRepository.setApiAccessConsentNeverAsk(false)
     }
-
-    fun trainNow() = workScheduler.scheduleTrainingNow()
 }

@@ -4,10 +4,10 @@ import androidx.annotation.StringRes
 import net.extrawdw.apps.locationhistory.R
 
 /**
- * The physical state of the device, fused from Activity Recognition, motion sensors, speed and
- * network signals by the device-state classifier. Stored on every [LocationSample].
- *
- * The ordinal order is the model's output label order — do not reorder without migrating models.
+ * The recorder's deterministic movement estimate at the moment a sample was recorded, fused from
+ * Activity Recognition, motion sensors, speed and network signals. Stored on every [LocationSample]
+ * as *evidence* (it explains the sampling cadence in effect), never as timeline truth — the
+ * timeline rebuild re-derives stays/movement from the sample sequence.
  *
  * [labelRes] resolves to a localized display name; pass a [android.content.Context] (e.g.
  * `context.getString(state.labelRes)`) or use `stringResource(state.labelRes)` in Compose.
@@ -18,23 +18,12 @@ enum class DevicePhysicalState(@param:StringRes val labelRes: Int) {
     RUNNING(R.string.state_running),
     CYCLING(R.string.state_cycling),
     IN_VEHICLE(R.string.state_in_vehicle),
-    UNKNOWN(R.string.state_unknown);
-
-    companion object {
-        /** Classes the model predicts over (UNKNOWN is reserved for low-confidence fallbacks). */
-        val MODEL_CLASSES: List<DevicePhysicalState> =
-            listOf(STATIONARY, WALKING, RUNNING, CYCLING, IN_VEHICLE)
-
-        fun fromModelIndex(index: Int): DevicePhysicalState =
-            MODEL_CLASSES.getOrElse(index) { UNKNOWN }
-    }
+    UNKNOWN(R.string.state_unknown),
 }
 
 /**
- * The mode of transportation inferred for a [TripSegment]. A single trip between two places may
- * be split into multiple segments, each with its own mode (e.g. walk -> light rail -> walk).
- *
- * The ordinal order is the transport model's output label order.
+ * The mode of transportation inferred for a trip. A single journey between two places may be
+ * split into multiple trips, each with its own mode (e.g. walk -> light rail -> walk).
  */
 enum class TransportMode(@param:StringRes val labelRes: Int) {
     WALKING(R.string.transport_walking),
@@ -48,11 +37,9 @@ enum class TransportMode(@param:StringRes val labelRes: Int) {
     UNKNOWN(R.string.transport_unknown);
 
     companion object {
-        val MODEL_CLASSES: List<TransportMode> =
+        /** Modes the user can pick in the editor/confirm UI (UNKNOWN is classifier-internal). */
+        val SELECTABLE: List<TransportMode> =
             listOf(WALKING, RUNNING, CYCLING, CAR, BUS, RAIL, FERRY, FLIGHT)
-
-        fun fromModelIndex(index: Int): TransportMode =
-            MODEL_CLASSES.getOrElse(index) { UNKNOWN }
     }
 }
 

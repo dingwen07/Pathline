@@ -173,13 +173,7 @@
     <string name="power_accurate">Accurate</string>
     <string name="settings_stop_on_close_title">Pause recording when app is closed</string>
     <string name="settings_stop_on_close_desc">Turn off to keep recording after closing Pathline (i.e, remove from Recents).</string>
-    <string name="settings_data_model_title">Data &amp; model</string>
-    <string name="settings_state_model">State model: %1$s</string>
-    <string name="settings_transport_model">Transport model: %1$s</string>
-    <string name="model_litert">LiteRT</string>
-    <string name="model_heuristic">heuristic fallback</string>
-    <string name="settings_train_model">Train model</string>
-    <string name="settings_train_desc">Training runs only while charging to save battery.</string>
+    <string name="settings_data_model_title">Recorded data</string>
     <string name="settings_diagnostics_title">Diagnostics</string>
     <string name="settings_diagnostics_desc">Inspect and share internal data and session logs.</string>
     <string name="settings_open_diagnostics">Open diagnostics</string>
@@ -229,7 +223,7 @@
 
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">Backup</string>
-    <string name="backup_intro">Back up your full timeline, places and trained models to a folder you choose (Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.</string>
+    <string name="backup_intro">Back up your full timeline and places to a folder you choose (Google Drive, Dropbox, local storage). Only the latest week is re-uploaded each time.</string>
     <string name="dest_internal_storage">Internal Storage</string>
     <string name="dest_external_storage">External Storage</string>
     <string name="dest_unknown">Backup folder</string>

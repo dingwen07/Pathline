@@ -60,8 +60,6 @@ import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
-import net.extrawdw.apps.locationhistory.data.repo.TrainingRepository
-import net.extrawdw.apps.locationhistory.ml.LiteRtModelStore
 import net.extrawdw.apps.locationhistory.service.RecorderServiceController
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import java.io.File
@@ -87,7 +85,6 @@ data class WorkerDebugRow(
 data class DiagnosticsState(
     val db: DbStats = DbStats(),
     val recorderRows: List<Pair<String, String>> = emptyList(),
-    val modelRows: List<Pair<String, String>> = emptyList(),
     val workerRows: List<WorkerDebugRow> = emptyList(),
 )
 
@@ -99,8 +96,6 @@ class DiagnosticsViewModel @Inject constructor(
     private val tripDao: TripDao,
     private val placeDao: PlaceDao,
     private val settingsRepository: SettingsRepository,
-    private val trainingRepository: TrainingRepository,
-    private val modelStore: LiteRtModelStore,
     private val recorderService: RecorderServiceController,
     private val workManager: WorkManager,
 ) : ViewModel() {
@@ -115,17 +110,7 @@ class DiagnosticsViewModel @Inject constructor(
         val settings = settingsRepository.settings.first()
         val recorder = recorderService.debugState.value
         val today = TimeBuckets.dayEpoch(System.currentTimeMillis())
-        val stateCheckpoint = modelStore.stateCheckpoint
-        val transportCheckpoint = modelStore.transportCheckpoint
         val workers = workRows(today)
-        val modelWorker = workers.firstOrNull { it.name == WorkScheduler.WORK_MODEL_TRAINING }
-        val pendingStateExamples = trainingRepository.unconsumedStateCount()
-        val pendingTransportExamples = trainingRepository.unconsumedTransportCount()
-        val totalStateExamples = trainingRepository.allStateExamples().size
-        val totalTransportExamples = trainingRepository.allTransportExamples().size
-        val noTrainingDataNote = totalStateExamples + totalTransportExamples == 0 &&
-                !stateCheckpoint.exists() &&
-                !transportCheckpoint.exists()
         val dbStats = DbStats(
             samples = sampleDao.count(),
             excluded = sampleDao.excludedCount(),
@@ -150,18 +135,6 @@ class DiagnosticsViewModel @Inject constructor(
                 "Recorder updated" to (recorder.updatedAtMs?.let { Format.time(it) } ?: "—"),
                 "Last service start error" to (recorder.lastStartError ?: "—"),
             ),
-            modelRows = listOf(
-                "State model loaded" to (modelStore.stateModel() != null).toString(),
-                "Transport model loaded" to (modelStore.transportModel() != null).toString(),
-                "State checkpoint" to modelStore.stateCheckpoint.exists().toString(),
-                "Transport checkpoint" to modelStore.transportCheckpoint.exists().toString(),
-                "State checkpoint updated" to checkpointTime(stateCheckpoint),
-                "Transport checkpoint updated" to checkpointTime(transportCheckpoint),
-                "Training worker" to (modelWorker?.let { workSummary(it) } ?: "NONE"),
-                "State examples" to "$pendingStateExamples pending / $totalStateExamples total",
-                "Transport examples" to "$pendingTransportExamples pending / $totalTransportExamples total",
-                "Training note" to if (noTrainingDataNote) "needs confirmed visits" else "ready",
-            ),
             workerRows = workers,
         )
     }
@@ -179,7 +152,6 @@ class DiagnosticsViewModel @Inject constructor(
             "Timeline delayed" to WorkScheduler.timelineMaintenanceWorkName(today),
             "Timeline now" to WorkScheduler.timelineMaintenanceNowWorkName(today),
             "Timeline periodic" to WorkScheduler.WORK_TIMELINE_PERIODIC,
-            "Model training" to WorkScheduler.WORK_MODEL_TRAINING,
             "Backup" to WorkScheduler.WORK_BACKUP,
         )
         names.map { (label, name) ->
@@ -196,14 +168,9 @@ class DiagnosticsViewModel @Inject constructor(
         }
     }
 
-    private fun checkpointTime(file: File): String =
-        if (!file.exists()) "—" else "${file.length() / 1024} KB · ${fileTime(file)}"
-
-    private fun workSummary(row: WorkerDebugRow): String =
-        "${row.state} · attempts ${row.attempts} · ${row.id}"
 }
 
-/** On-device diagnostics: live DB/recorder/model/worker stats and a shareable session-log browser. */
+/** On-device diagnostics: live DB/recorder/worker stats and a shareable session-log browser. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = hiltViewModel()) {
@@ -277,16 +244,6 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                         StatRow("Trips", stats.trips.toString())
                         StatRow("Places", stats.places.toString())
                         StatRow("Last fix", stats.lastFix)
-                    }
-                }
-                item {
-                    DebugCard("Models") {
-                        diagnostics.modelRows.forEach { (label, value) ->
-                            StatRow(
-                                label,
-                                value
-                            )
-                        }
                     }
                 }
                 item {

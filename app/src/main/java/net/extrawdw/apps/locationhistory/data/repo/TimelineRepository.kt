@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
@@ -18,7 +17,6 @@ import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
-import net.extrawdw.apps.locationhistory.ml.Features
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,7 +42,6 @@ class TimelineRepository @Inject constructor(
     private val placeDao: PlaceDao,
     private val sampleDao: LocationSampleDao,
     private val placeRepository: PlaceRepository,
-    private val trainingRepository: TrainingRepository,
     private val placesGateway: net.extrawdw.apps.locationhistory.data.places.PlacesGateway,
     private val locationRepository: LocationRepository,
     private val db: AppDatabase,
@@ -94,8 +91,7 @@ class TimelineRepository @Inject constructor(
     /**
      * Confirm which place a visit happened at. The user's [choice] is authoritative: it links an
      * existing place, saves a Google suggestion, or creates a new one. Confirming feeds the place
-     * model ([PlaceRepository.recordVisitToPlace] updates its center/radius unless fixed) and adds a
-     * stationary training example so the device-state model learns from the correction.
+     * model ([PlaceRepository.recordVisitToPlace] updates its center/radius unless fixed).
      *
      * Serialized against the maintenance rebuild via [TimelineWriteLock] and run inside one Room
      * transaction: the visit is re-read inside it, so if the (still unconfirmed) row was deleted by
@@ -161,22 +157,12 @@ class TimelineRepository @Inject constructor(
                     p.radiusMeters
                 )
             }
-            // Re-fetch the now-filtered samples so the training example reflects only good fixes.
-            val included = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)
-            if (included.size >= 2) {
-                trainingRepository.addStateExample(
-                    features = Features.stationaryFeatures(included),
-                    label = DevicePhysicalState.MODEL_CLASSES.indexOf(DevicePhysicalState.STATIONARY),
-                    fromUserConfirmation = true,
-                )
-            }
         }
     }
 
     /**
-     * Confirm a trip's transport mode. Treated as ground truth: the trip is marked confirmed (so
-     * maintenance leaves it alone) and a user-confirmed training example is recorded so the
-     * transport model improves on the next (charging-gated) retrain.
+     * Confirm a trip's transport mode. Treated as ground truth: the trip is marked confirmed, so
+     * maintenance leaves it alone.
      *
      * Serialized + transactional like [confirmVisitPlace]: the trip is re-read inside the
      * transaction, so a row deleted by a concurrent rebuild makes this a clean no-op instead of a
@@ -202,14 +188,6 @@ class TimelineRepository @Inject constructor(
                     relabeled
                 },
             )
-
-            if (samples.size >= 2 && mode in TransportMode.MODEL_CLASSES) {
-                trainingRepository.addTransportExample(
-                    features = Features.transportFeatures(samples),
-                    label = TransportMode.MODEL_CLASSES.indexOf(mode),
-                    fromUserConfirmation = true,
-                )
-            }
         }
     }
 }

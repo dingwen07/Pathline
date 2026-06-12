@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "040d57a20bfea04f6e122e3f6bf4c35c",
+    "identityHash": "f38396360f3aca391121adcc1c83e0a0",
     "entities": [
       {
         "tableName": "location_samples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitude` REAL, `accuracy` REAL, `verticalAccuracyMeters` REAL, `bearing` REAL, `bearingAccuracyDegrees` REAL, `speed` REAL, `speedAccuracyMetersPerSecond` REAL, `provider` TEXT, `isMock` INTEGER NOT NULL, `elapsedRealtimeNanos` INTEGER NOT NULL, `satelliteCount` INTEGER, `batteryPct` INTEGER, `isCharging` INTEGER, `networkTransport` TEXT, `networkTypeName` TEXT, `cellSignalDbm` INTEGER, `hasCellService` INTEGER, `wifiSsid` TEXT, `wifiBssid` TEXT, `screenOn` INTEGER, `arActivity` TEXT, `arConfidence` INTEGER, `devicePhysicalState` TEXT NOT NULL, `devicePhysicalStateConfidence` REAL NOT NULL, `includedInComputation` INTEGER NOT NULL, `exclusionReason` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitude` REAL, `accuracy` REAL, `verticalAccuracyMeters` REAL, `bearing` REAL, `bearingAccuracyDegrees` REAL, `speed` REAL, `speedAccuracyMetersPerSecond` REAL, `provider` TEXT, `isMock` INTEGER NOT NULL, `elapsedRealtimeNanos` INTEGER NOT NULL, `satelliteCount` INTEGER, `batteryPct` INTEGER, `isCharging` INTEGER, `networkTransport` TEXT, `networkTypeName` TEXT, `cellSignalDbm` INTEGER, `hasCellService` INTEGER, `wifiSsid` TEXT, `wifiBssid` TEXT, `screenOn` INTEGER, `arActivity` TEXT, `arConfidence` INTEGER, `devicePhysicalState` TEXT NOT NULL, `devicePhysicalStateConfidence` REAL NOT NULL, `motionVariance` REAL, `stepCadenceHz` REAL, `gravityAngleDeltaDeg` REAL, `pressureHpa` REAL, `includedInComputation` INTEGER NOT NULL, `exclusionReason` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -161,6 +161,26 @@
             "columnName": "devicePhysicalStateConfidence",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "motionVariance",
+            "columnName": "motionVariance",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "stepCadenceHz",
+            "columnName": "stepCadenceHz",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gravityAngleDeltaDeg",
+            "columnName": "gravityAngleDeltaDeg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL"
           },
           {
             "fieldPath": "includedInComputation",
@@ -599,114 +619,6 @@
         }
       },
       {
-        "tableName": "state_training_examples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL, `featureSchemaVersion` INTEGER NOT NULL)",
-        "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "features",
-            "columnName": "features",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "label",
-            "columnName": "label",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "fromUserConfirmation",
-            "columnName": "fromUserConfirmation",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "createdAtMs",
-            "columnName": "createdAtMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "consumed",
-            "columnName": "consumed",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "featureSchemaVersion",
-            "columnName": "featureSchemaVersion",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": true,
-          "columnNames": [
-            "id"
-          ]
-        }
-      },
-      {
-        "tableName": "transport_training_examples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `features` TEXT NOT NULL, `label` INTEGER NOT NULL, `fromUserConfirmation` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `consumed` INTEGER NOT NULL, `featureSchemaVersion` INTEGER NOT NULL)",
-        "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "features",
-            "columnName": "features",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "label",
-            "columnName": "label",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "fromUserConfirmation",
-            "columnName": "fromUserConfirmation",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "createdAtMs",
-            "columnName": "createdAtMs",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "consumed",
-            "columnName": "consumed",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "featureSchemaVersion",
-            "columnName": "featureSchemaVersion",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": true,
-          "columnNames": [
-            "id"
-          ]
-        }
-      },
-      {
         "tableName": "backup_dirty_partitions",
         "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`stream` TEXT NOT NULL, `weekStart` INTEGER NOT NULL, PRIMARY KEY(`stream`, `weekStart`))",
         "fields": [
@@ -1062,7 +974,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '040d57a20bfea04f6e122e3f6bf4c35c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f38396360f3aca391121adcc1c83e0a0')"
     ]
   }
 }

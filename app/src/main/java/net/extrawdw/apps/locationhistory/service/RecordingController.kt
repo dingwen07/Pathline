@@ -33,7 +33,7 @@ import net.extrawdw.apps.locationhistory.data.enrich.MotionSensorReader
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.domain.VisitCandidate
-import net.extrawdw.apps.locationhistory.ml.Classifier
+import net.extrawdw.apps.locationhistory.ml.HeuristicClassifier
 import net.extrawdw.apps.locationhistory.ml.StateFeatureInput
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
@@ -57,7 +57,7 @@ class RecordingController @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val deviceStateCollector: DeviceStateCollector,
     private val motionSensorReader: MotionSensorReader,
-    private val classifier: Classifier,
+    private val classifier: HeuristicClassifier,
     private val recorderService: RecorderServiceController,
     private val recognitionManager: RecognitionManager,
     private val geofenceManager: GeofenceManager,
@@ -489,7 +489,10 @@ class RecordingController @Inject constructor(
         }
         AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=$currentState)")
         val context = deviceStateCollector.snapshot()
-        val motionVariance = motionSensorReader.motionVariance()
+        // One IMU+barometer burst per delivered batch; its summary is stamped on every sample in
+        // the batch as evidence for the span-level timeline classifier.
+        val burst = motionSensorReader.burstSummary()
+        val motionVariance = burst.accelVariance
         val affectedDays = linkedSetOf<Long>()
 
         for (location in locations.sortedBy { it.time }) {
@@ -538,8 +541,9 @@ class RecordingController @Inject constructor(
                     stationary = classification.state == DevicePhysicalState.STATIONARY,
                 ),
             )
-            val sample =
-                buildSample(location, context, classification.state, classification.confidence)
+            val sample = buildSample(
+                location, context, burst, classification.state, classification.confidence,
+            )
             locationRepository.record(sample)
             affectedDays.add(sample.dayEpoch)
         }
@@ -752,6 +756,7 @@ class RecordingController @Inject constructor(
     private fun buildSample(
         location: Location,
         context: net.extrawdw.apps.locationhistory.data.enrich.DeviceContext,
+        burst: net.extrawdw.apps.locationhistory.data.enrich.MotionBurst,
         state: DevicePhysicalState,
         confidence: Float,
     ): LocationSampleEntity = LocationSampleEntity(
@@ -783,6 +788,10 @@ class RecordingController @Inject constructor(
         arConfidence = lastArConfidence,
         devicePhysicalState = state,
         devicePhysicalStateConfidence = confidence,
+        motionVariance = burst.accelVariance,
+        stepCadenceHz = burst.stepCadenceHz,
+        gravityAngleDeltaDeg = burst.gravityAngleDeltaDeg,
+        pressureHpa = burst.pressureHpa,
     )
 
     private fun arName(activityType: Int): String = when (activityType) {

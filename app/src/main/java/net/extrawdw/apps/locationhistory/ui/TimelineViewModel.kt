@@ -165,12 +165,10 @@ class TimelineViewModel @Inject constructor(
 
     fun confirmVisit(visitId: Long, choice: PlaceChoice) = viewModelScope.launch {
         timelineRepository.confirmVisitPlace(visitId, choice)
-        workScheduler.maybeScheduleTraining()
     }
 
     fun confirmTripMode(tripId: Long, mode: TransportMode) = viewModelScope.launch {
         timelineRepository.confirmTripMode(tripId, mode)
-        workScheduler.maybeScheduleTraining()
     }
 
     suspend fun nearbySuggestions(lat: Double, lon: Double): List<PlaceCandidate> =
@@ -187,12 +185,10 @@ class TimelineViewModel @Inject constructor(
     fun splitItem(item: TimelineItem, index: Int, left: SegmentType, right: SegmentType) =
         viewModelScope.launch {
             timelineEditor.splitItem(item, index, left, right)
-            workScheduler.maybeScheduleTraining()
         }
 
     fun convertItem(item: TimelineItem, type: SegmentType) = viewModelScope.launch {
         timelineEditor.convertItemType(item, type)
-        workScheduler.maybeScheduleTraining()
     }
 
     // --- annotations (notes / tags / view-only memories) ---------------------------------------

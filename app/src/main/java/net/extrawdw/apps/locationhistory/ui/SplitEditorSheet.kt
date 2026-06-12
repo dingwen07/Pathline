@@ -41,7 +41,7 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.domain.SegmentType
 
 private val TYPE_OPTIONS: List<SegmentType> =
-    listOf(SegmentType.Stationary) + TransportMode.MODEL_CLASSES.map { SegmentType.Moving(it) }
+    listOf(SegmentType.Stationary) + TransportMode.SELECTABLE.map { SegmentType.Moving(it) }
 
 private fun SegmentType.label(context: Context): String = when (this) {
     SegmentType.Stationary -> context.getString(R.string.state_stationary)

@@ -986,7 +986,7 @@ private fun TripRow(
                         text = { Text(stringResource(R.string.menu_stationary_place)) },
                         onClick = { menuOpen = false; onMarkStationary() })
                     HorizontalDivider()
-                    TransportMode.MODEL_CLASSES.forEach { mode ->
+                    TransportMode.SELECTABLE.forEach { mode ->
                         DropdownMenuItem(
                             text = { Text(stringResource(mode.labelRes)) },
                             onClick = { menuOpen = false; onConfirmTripMode(trip.id, mode) })

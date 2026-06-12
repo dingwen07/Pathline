@@ -162,13 +162,7 @@
     <string name="power_accurate">精确</string>
     <string name="settings_stop_on_close_title">关闭应用时暂停</string>
     <string name="settings_stop_on_close_desc">关闭此项可在退出应用（比如从最近任务划走）后继续记录。</string>
-    <string name="settings_data_model_title">数据与模型</string>
-    <string name="settings_state_model">状态模型：%1$s</string>
-    <string name="settings_transport_model">交通模型：%1$s</string>
-    <string name="model_litert">LiteRT</string>
-    <string name="model_heuristic">启发式回退</string>
-    <string name="settings_train_model">训练模型</string>
-    <string name="settings_train_desc">仅在充电时训练以节省电量。</string>
+    <string name="settings_data_model_title">已记录的数据</string>
     <string name="settings_diagnostics_title">诊断</string>
     <string name="settings_diagnostics_desc">查看并分享内部数据和会话日志。</string>
     <string name="settings_open_diagnostics">打开诊断</string>
@@ -217,7 +211,7 @@
 
     <!-- ============================ Backup ============================ -->
     <string name="backup_title">备份</string>
-    <string name="backup_intro">将完整的时间线、地点和已训练的模型备份到您选择的文件夹（Google Drive、Dropbox、本地存储）。每次仅重新上传最近一周的数据。</string>
+    <string name="backup_intro">将完整的时间线和地点备份到您选择的文件夹（Google Drive、Dropbox、本地存储）。每次仅重新上传最近一周的数据。</string>
     <string name="dest_internal_storage">内部存储</string>
     <string name="dest_external_storage">外部存储</string>
     <string name="dest_unknown">备份文件夹</string>

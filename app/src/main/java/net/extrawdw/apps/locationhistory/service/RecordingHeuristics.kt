@@ -71,6 +71,13 @@ internal class RecordingHeuristics {
      * beyond the stay radius) — used to reject a premature AR STILL while travelling, e.g. a light-rail
      * ride that AR keeps mislabelling as STILL. Looks at a short recent window (not the full fix buffer)
      * so a genuine stop still flips this false within ~the window once the device settles.
+     *
+     * Spread is *positional* evidence, so only positionally-trustworthy fixes may contribute:
+     * indoors, 100-200 m-accuracy fixes scatter far beyond the stay radius while the phone sits
+     * still, and counting them kept this true forever — every AR STILL was rejected, the recorder
+     * never dropped to the stationary cadence, and idle days recorded at a moving cadence (the
+     * June 2026 sample-volume explosion). The threshold is the noise-widened stay radius for the
+     * same reason. GPS speed (Doppler) is not position-derived and keeps using every fix.
      */
     fun recentlyMoving(): Boolean = synchronized(fixLock) {
         if (recentFixes.isEmpty()) return false
@@ -79,14 +86,28 @@ internal class RecordingHeuristics {
         if (recent.size < 2) return false
         val maxSpeed = recent.mapNotNull { it.speedMps }.maxOrNull() ?: 0f
         if (maxSpeed >= 1.5f) return true
-        val spread = recent.maxOf { a ->
-            recent.maxOf { b -> Geo.distanceMeters(a.lat, a.lon, b.lat, b.lon) }
+        val trusted = recent.filter {
+            (it.accuracyMeters ?: 30f) <= Constants.SAMPLE_ACCURACY_GATE_METERS
         }
-        spread > Constants.STATIONARY_RADIUS_METERS
+        if (trusted.size < 2) return false
+        val spread = trusted.maxOf { a ->
+            trusted.maxOf { b -> Geo.distanceMeters(a.lat, a.lon, b.lat, b.lon) }
+        }
+        spread > stationaryNoiseRadius()
     }
 
-    /** Returns a visit candidate when recent fixes have settled in one spot long enough, even if
-     *  Activity Recognition never reported STILL. */
+    /**
+     * Returns a visit candidate when recent fixes have settled in one spot long enough, even if
+     * Activity Recognition never reported STILL (AR also stays silent when a session *starts*
+     * already-still — the Transition API only reports changes — so this detector is the only
+     * stationary entry on a cold start at home).
+     *
+     * The verdict is judged over the positionally-trustworthy subset of the window: indoors most
+     * fixes can be 100-200 m coarse, and letting one such outlier veto the whole window (or
+     * demanding that 70% of all fixes be accurate) kept the recorder out of the stationary cadence
+     * for entire idle days. Coarse fixes neither qualify nor veto; each trusted fix may wobble up
+     * to its own reported accuracy beyond the stay radius before it breaks the cluster.
+     */
     fun stationaryClusterCandidate(): VisitCandidate? = synchronized(fixLock) {
         if (recentFixes.size < 3) return null
         val minVisitMs = Constants.MIN_VISIT_DURATION_MS
@@ -94,25 +115,29 @@ internal class RecordingHeuristics {
         val window = recentFixes.filter { now - it.t <= minVisitMs }
         if (window.size < 3) return null
         if (now - window.first().t < minVisitMs * 0.8) return null
-        val goodAccuracy = window.count {
+        val good = window.filter {
             (it.accuracyMeters ?: 30f) <= Constants.SAMPLE_ACCURACY_GATE_METERS
         }
-        if (goodAccuracy < window.size * 0.7) return null
-        val meanSpeed = window.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        // The trusted subset must be dense enough to anchor the verdict on its own: at least 3
+        // fixes spanning most of the window (not 3 clumped at one end).
+        if (good.size < 3) return null
+        if (good.last().t - good.first().t < minVisitMs * 0.6) return null
+        val meanSpeed = good.mapNotNull { it.speedMps }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
         if (meanSpeed > 0.6) return null
-        val cLat = window.sumOf { it.lat } / window.size
-        val cLon = window.sumOf { it.lon } / window.size
-        val withinRadius = window.all {
-            Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <= Constants.STATIONARY_RADIUS_METERS
+        val cLat = good.sumOf { it.lat } / good.size
+        val cLon = good.sumOf { it.lon } / good.size
+        val withinRadius = good.all {
+            Geo.distanceMeters(cLat, cLon, it.lat, it.lon) <=
+                    maxOf(Constants.STATIONARY_RADIUS_METERS, (it.accuracyMeters ?: 30f).toDouble())
         }
-        val mostlyStationary = window.count { it.stationary } >= window.size * 0.8
+        val mostlyStationary = good.count { it.stationary } >= good.size * 0.8
         if (!withinRadius || !mostlyStationary) return null
         VisitCandidate(
-            startMs = window.first().t,
+            startMs = good.first().t,
             endMs = now,
             centroidLatitude = cLat,
             centroidLongitude = cLon,
-            sampleCount = window.size,
+            sampleCount = good.size,
         )
     }
 

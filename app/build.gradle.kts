@@ -109,9 +109,6 @@ dependencies {
     implementation(libs.maps.compose.utils)
     implementation(libs.places)
 
-    // On-device ML (LiteRT / TensorFlow Lite)
-    implementation(libs.litert)
-
     // Serialization & coroutines
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

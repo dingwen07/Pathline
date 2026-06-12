@@ -12,9 +12,32 @@ import kotlin.math.exp
 import kotlin.math.sqrt
 
 /**
- * Transparent, rule-of-thumb classifier used as the bootstrap before any LiteRT model exists and
- * as a fallback when the model is unavailable or low-confidence. It deliberately reports modest
- * confidence so its outputs surface as "unconfirmed" and never masquerade as ground truth.
+ * Input to the device-state estimate for a single moment, assembled by the recorder from the
+ * current fix, a short window of recent speeds, motion-sensor energy and network state.
+ */
+data class StateFeatureInput(
+    val speedMps: Float?,
+    val speedMeanMps: Float,
+    val speedMaxMps: Float,
+    val speedVariance: Float,
+    val motionVariance: Float,
+    val horizontalAccuracyMeters: Float?,
+    val arActivity: String?,
+    val arConfidence: Int?,
+    val networkTransport: NetworkTransport?,
+    val hasCellService: Boolean?,
+    val cellSignalDbm: Int?,
+)
+
+/**
+ * Transparent, rule-of-thumb classifier — the app's only on-device classifier.
+ *
+ * [classifyState] is the recorder's deterministic movement estimate: it tunes sampling cadence and
+ * is stored on each sample as *evidence* of what the recorder believed, never as timeline truth
+ * (the timeline rebuild re-derives stays/movement from the sample sequence). [classifyTransport]
+ * is the bootstrap mode scorer until the offline-trained span model ships (see
+ * docs/recorder-timeline-refactor-plan.md); it deliberately reports modest confidence so its
+ * outputs surface as "unconfirmed" and never masquerade as ground truth.
  */
 @Singleton
 class HeuristicClassifier @Inject constructor() {
@@ -93,11 +116,13 @@ class HeuristicClassifier @Inject constructor() {
             p85 < 2.5f -> TransportClassification(TransportMode.WALKING, 0.6f)
             p85 < 6.0f && accelStd > 1.0f -> TransportClassification(TransportMode.RUNNING, 0.45f)
             p85 < 8.5f && vehicleAr < 0.3f -> TransportClassification(TransportMode.CYCLING, 0.45f)
+            // FLIGHT must be checked before RAIL: a flight is also fast, smooth at sparse cruise
+            // sampling, and (in airplane mode) cell-free, so the rail arm would capture it.
+            p85 > 80f -> TransportClassification(TransportMode.FLIGHT, 0.6f)
             // Fast, smooth, frequently losing cell service -> likely rail/subway.
             p85 > 14f && accelStd < 1.2f && noCellFraction > 0.3f ->
                 TransportClassification(TransportMode.RAIL, 0.5f)
 
-            p85 > 80f -> TransportClassification(TransportMode.FLIGHT, 0.6f)
             // Road-speed average that didn't match a more specific mode above: a road vehicle,
             // defaulting to car (bus is indistinguishable from speed alone).
             mean > 2f -> TransportClassification(TransportMode.CAR, 0.45f)

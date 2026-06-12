@@ -67,6 +67,26 @@ class RecordingHeuristicsTest {
         assertFalse(h.recentlyMoving().also { /* single fix - no verdict */ })
     }
 
+    @Test
+    fun recentlyMoving_ignoresSpreadFromCoarseFixes() {
+        // Indoor reality: 150 m-accuracy fixes scatter ~150 m apart while the phone sits still.
+        // Position spread from untrustworthy fixes must not read as movement — this is what kept
+        // the recorder out of the stationary cadence for whole idle days (June 2026).
+        h.pushFix(fix(atSec = 0, lat = 40.0, accuracy = 150f, speed = null))
+        h.pushFix(fix(atSec = 30, lat = 40.0014, accuracy = 150f, speed = null))
+        h.pushFix(fix(atSec = 60, lat = 40.0, accuracy = 150f, speed = 0f))
+        assertFalse(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_spreadComparedToNoiseWidenedRadius() {
+        // ~77 m apart with good accuracy: beyond the 60 m stay radius but inside the 80 m
+        // drift-displacement floor the spread check now uses — still settled.
+        h.pushFix(fix(atSec = 0, lat = 40.0, speed = null))
+        h.pushFix(fix(atSec = 30, lat = 40.0007, speed = null))
+        assertFalse(h.recentlyMoving())
+    }
+
     // ---- stationary cluster detector --------------------------------------------------------------
 
     private fun settle(seconds: LongRange, stepSec: Long = 30) {
@@ -114,6 +134,37 @@ class RecordingHeuristicsTest {
     fun cluster_nullWhenFixesNotMostlyStationary() {
         for ((i, sec) in (0L..240L step 30).withIndex()) {
             h.pushFix(fix(atSec = sec, speed = 0.1f, stationary = i % 2 == 0))
+        }
+        assertNull(h.stationaryClusterCandidate())
+    }
+
+    @Test
+    fun cluster_emergesDespiteCoarseOutliers() {
+        // The indoor cold-start case: good ~50 m-accuracy fixes settled at home, interleaved with
+        // 200 m-accuracy fixes scattering ~300 m away. The coarse outliers must neither veto the
+        // cluster (old all-fixes radius check) nor starve it (old 70%-of-all-fixes accuracy gate).
+        for ((i, sec) in (0L..240L step 30).withIndex()) {
+            if (i % 3 == 2) {
+                h.pushFix(fix(atSec = sec, lat = 40.003, accuracy = 200f, speed = null))
+            } else {
+                h.pushFix(fix(atSec = sec, lat = 40.0, accuracy = 50f, speed = 0.1f))
+            }
+        }
+        val c = h.stationaryClusterCandidate()
+        assertNotNull(c)
+        // Centroid anchored by the trusted fixes, not dragged toward the outliers.
+        assertEquals(40.0, c!!.centroidLatitude, 1e-4)
+    }
+
+    @Test
+    fun cluster_nullWhenTrustedFixesClumpAtOneEnd() {
+        // Coarse fixes for most of the window, 3 good fixes only in the last 45 s: the trusted
+        // subset can't anchor a 3-minute stationarity verdict on its own.
+        for (sec in 0L..180L step 30) {
+            h.pushFix(fix(atSec = sec, accuracy = 200f, speed = null))
+        }
+        for (sec in 195L..240L step 15) {
+            h.pushFix(fix(atSec = sec, accuracy = 10f, speed = 0.1f))
         }
         assertNull(h.stationaryClusterCandidate())
     }

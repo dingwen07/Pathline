@@ -58,7 +58,6 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val sampleCount by viewModel.sampleCount.collectAsStateWithLifecycle()
-    val modelStatus = viewModel.modelStatus
 
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) }) { padding ->
         Column(
@@ -140,7 +139,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Data + model status
+            // Recorded-data status
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
@@ -154,29 +153,6 @@ fun SettingsScreen(
                             sampleCount
                         ),
                         style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        stringResource(
-                            R.string.settings_state_model,
-                            stringResource(if (modelStatus.stateModelReady) R.string.model_litert else R.string.model_heuristic),
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        stringResource(
-                            R.string.settings_transport_model,
-                            stringResource(if (modelStatus.transportModelReady) R.string.model_litert else R.string.model_heuristic),
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Button(
-                        onClick = viewModel::trainNow,
-                        modifier = Modifier.padding(top = 8.dp),
-                    ) { Text(stringResource(R.string.settings_train_model)) }
-                    Text(
-                        stringResource(R.string.settings_train_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Normal,
                     )
                 }
             }

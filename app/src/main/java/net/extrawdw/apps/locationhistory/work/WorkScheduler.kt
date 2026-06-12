@@ -10,9 +10,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
-import net.extrawdw.apps.locationhistory.data.repo.TrainingRepository
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -22,7 +20,6 @@ import javax.inject.Singleton
 @Singleton
 class WorkScheduler @Inject constructor(
     private val workManager: WorkManager,
-    private val trainingRepository: TrainingRepository,
 ) {
 
     fun enqueueTimelineMaintenance(dayEpoch: Long, reason: String): UUID {
@@ -106,30 +103,6 @@ class WorkScheduler @Inject constructor(
     }
 
     /**
-     * Retrain the models — only ever while charging and battery-not-low. Enqueue this after
-     * enough new user-confirmed examples have accumulated.
-     */
-    suspend fun maybeScheduleTraining() {
-        val pending = trainingRepository.unconsumedStateCount() +
-                trainingRepository.unconsumedTransportCount()
-        if (pending >= Constants.RETRAIN_EXAMPLE_THRESHOLD) scheduleTrainingNow()
-    }
-
-    fun scheduleTrainingNow() {
-        // Charging + battery-not-low only (no device-idle) so it actually runs soon after the user
-        // plugs in, while still being battery-friendly.
-        val constraints = Constraints.Builder()
-            .setRequiresCharging(true)
-            .setRequiresBatteryNotLow(true)
-            .build()
-        val request = OneTimeWorkRequestBuilder<ModelTrainingWorker>()
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.MINUTES)
-            .build()
-        workManager.enqueueUniqueWork(WORK_MODEL_TRAINING, ExistingWorkPolicy.KEEP, request)
-    }
-
-    /**
      * Periodic, charging-gated sync to the user's SAF destinations — runs the incremental backup and
      * the GPX auto-export, each a no-op when its own destination isn't configured. Safe to enqueue
      * whenever either is turned on. Requires a network connection because the backup destination is
@@ -207,7 +180,6 @@ class WorkScheduler @Inject constructor(
     companion object {
         const val WORK_TIMELINE_PERIODIC = "timeline-maintenance-periodic"
         const val WORK_RECORDING_WATCHDOG = "recording-watchdog"
-        const val WORK_MODEL_TRAINING = "model-training"
         const val WORK_BACKUP = "saf-backup"
         const val WORK_BACKUP_NOW = "saf-backup-now"
         const val WORK_API_ACCESS = "api-access-check"

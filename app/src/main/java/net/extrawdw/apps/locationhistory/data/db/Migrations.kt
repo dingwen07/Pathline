@@ -27,6 +27,11 @@ object AppMigrations {
      *  - FTS5 virtual tables + sync triggers over places, tags and concepts, backfilled from
      *    existing rows.
      *
+     * Also part of the v2 bump (recorder/timeline refactor, June 2026): the on-device ML training
+     * pipeline was deleted, so the v1 `state_training_examples` / `transport_training_examples`
+     * tables are dropped — they are no longer Room entities, and leaving them would orphan stale
+     * personal data in the encrypted DB forever.
+     *
      * Pre-release, v2 is **edited in place** rather than bumped (production devices are all v1; the
      * only v2 installs are dev devices, refreshed via clear-data + backup restore). Table/index DDL
      * mirrors what Room generates for the v2 entities (see `app/schemas/2.json`) so the
@@ -35,6 +40,15 @@ object AppMigrations {
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE `places` ADD COLUMN `types` TEXT")
+
+            db.execSQL("DROP TABLE IF EXISTS `state_training_examples`")
+            db.execSQL("DROP TABLE IF EXISTS `transport_training_examples`")
+
+            // IMU/barometer evidence channels (recorder/timeline refactor, June 2026).
+            db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `motionVariance` REAL")
+            db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `stepCadenceHz` REAL")
+            db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `gravityAngleDeltaDeg` REAL")
+            db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `pressureHpa` REAL")
 
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `tags` (" +

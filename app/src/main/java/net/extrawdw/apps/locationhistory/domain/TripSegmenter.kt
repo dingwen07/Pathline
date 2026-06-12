@@ -5,7 +5,7 @@ import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TransportClassification
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
-import net.extrawdw.apps.locationhistory.ml.Classifier
+import net.extrawdw.apps.locationhistory.ml.HeuristicClassifier
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,11 +27,11 @@ data class SegmentResult(
  * such as walk -> light rail -> walk.
  *
  * The pipeline itself lives in [segmentSamples], parameterized on the classify function so its
- * invariants are JVM-testable without the LiteRT/Android-bound [Classifier].
+ * invariants are JVM-testable without the injected classifier.
  */
 @Singleton
 class TripSegmenter @Inject constructor(
-    private val classifier: Classifier,
+    private val classifier: HeuristicClassifier,
 ) {
     fun segment(samples: List<LocationSampleEntity>): List<SegmentResult> =
         segmentSamples(samples, classifier::classifyTransport)

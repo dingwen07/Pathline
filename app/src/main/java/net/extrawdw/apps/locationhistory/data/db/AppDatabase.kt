@@ -11,8 +11,6 @@ import androidx.room.TypeConverters
         VisitEntity::class,
         TripEntity::class,
         GeofenceEntity::class,
-        StateTrainingExampleEntity::class,
-        TransportTrainingExampleEntity::class,
         BackupDirtyPartitionEntity::class,
         TagEntity::class,
         EntityTagEntity::class,
@@ -29,7 +27,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun placeDao(): PlaceDao
     abstract fun visitDao(): VisitDao
     abstract fun tripDao(): TripDao
-    abstract fun trainingDao(): TrainingDao
     abstract fun geofenceDao(): GeofenceDao
     abstract fun backupDao(): BackupDao
     abstract fun tagDao(): TagDao

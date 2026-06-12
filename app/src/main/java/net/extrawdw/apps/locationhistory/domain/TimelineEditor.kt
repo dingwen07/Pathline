@@ -1,7 +1,6 @@
 package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
-import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -12,8 +11,6 @@ import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
-import net.extrawdw.apps.locationhistory.data.repo.TrainingRepository
-import net.extrawdw.apps.locationhistory.ml.Features
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,8 +24,8 @@ sealed interface SegmentType {
 /**
  * Hand-editing of the timeline for GPS-drift correction. Operates at the **sample** level: a span
  * of samples is reclassified as a stationary stay or a moving segment, materializing the right
- * entity from the raw fixes. Every edit is treated as user ground truth, so it also records a
- * training example, and it kicks off an auto-merge of the affected day.
+ * entity from the raw fixes. Every edit is treated as user ground truth, and it kicks off an
+ * auto-merge of the affected day.
  */
 @Singleton
 class TimelineEditor @Inject constructor(
@@ -37,7 +34,6 @@ class TimelineEditor @Inject constructor(
     private val sampleDao: LocationSampleDao,
     private val placeMatcher: PlaceMatcher,
     private val placeRepository: PlaceRepository,
-    private val trainingRepository: TrainingRepository,
     private val annotationStore: AnnotationStore,
     private val workScheduler: WorkScheduler,
     private val writeLock: TimelineWriteLock,
@@ -108,7 +104,7 @@ class TimelineEditor @Inject constructor(
         }
     }
 
-    /** Turn a span of samples into the persisted entity for [type] and record a training example. */
+    /** Turn a span of samples into the persisted entity for [type]. */
     private suspend fun materialize(span: List<LocationSampleEntity>, type: SegmentType) {
         if (span.isEmpty()) return
         val usable = span.filter { it.includedInComputation }.ifEmpty { span }
@@ -175,11 +171,6 @@ class TimelineEditor @Inject constructor(
                 )
                 val id = visitDao.insert(visit)
                 visit.placeId?.let { placeRepository.recordVisitToPlace(it) }
-                trainingRepository.addStateExample(
-                    features = Features.stationaryFeatures(cleanUsable),
-                    label = DevicePhysicalState.MODEL_CLASSES.indexOf(DevicePhysicalState.STATIONARY),
-                    fromUserConfirmation = true,
-                )
                 id
             }
 
@@ -200,13 +191,6 @@ class TimelineEditor @Inject constructor(
                         confirmed = true,
                     ),
                 )
-                if (movementSamples.size >= 2 && type.mode in TransportMode.MODEL_CLASSES) {
-                    trainingRepository.addTransportExample(
-                        features = Features.transportFeatures(movementSamples),
-                        label = TransportMode.MODEL_CLASSES.indexOf(type.mode),
-                        fromUserConfirmation = true,
-                    )
-                }
             }
         }
     }

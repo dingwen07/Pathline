@@ -22,7 +22,6 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.SearchDao
 import net.extrawdw.apps.locationhistory.data.db.TagDao
-import net.extrawdw.apps.locationhistory.data.db.TrainingDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.security.DatabaseKeyStore
@@ -76,9 +75,6 @@ object DatabaseModule {
 
     @Provides
     fun provideTripDao(db: AppDatabase): TripDao = db.tripDao()
-
-    @Provides
-    fun provideTrainingDao(db: AppDatabase): TrainingDao = db.trainingDao()
 
     @Provides
     fun provideGeofenceDao(db: AppDatabase): GeofenceDao = db.geofenceDao()

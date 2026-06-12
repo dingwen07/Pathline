@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
@@ -27,6 +29,41 @@ import javax.inject.Singleton
 class DeviceStateCollector @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
+
+    /**
+     * Latest Wi-Fi info delivered by the location-aware network callback. The synchronous
+     * `getNetworkCapabilities().transportInfo` read is *always* location-redacted on API 31+
+     * (BSSID becomes the [REDACTED_BSSID] sentinel, SSID becomes unknown) — the only way to get
+     * the real values is a callback registered with [ConnectivityManager.FLAG_INCLUDE_LOCATION_INFO]
+     * while holding fine location. Registered lazily on the first snapshot so a missing permission
+     * at startup never breaks recording; cleared when the Wi-Fi network is lost.
+     */
+    @Volatile
+    private var callbackWifiInfo: WifiInfo? = null
+
+    @Volatile
+    private var wifiCallbackRegistered = false
+
+    private fun ensureWifiCallbackRegistered() {
+        if (wifiCallbackRegistered) return
+        if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        val callback = object :
+            ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                callbackWifiInfo = caps.transportInfo as? WifiInfo
+            }
+
+            override fun onLost(network: Network) {
+                callbackWifiInfo = null
+            }
+        }
+        runCatching { cm.registerNetworkCallback(request, callback) }
+            .onSuccess { wifiCallbackRegistered = true }
+    }
 
     fun snapshot(): DeviceContext {
         val battery = readBattery()
@@ -75,15 +112,20 @@ class DeviceStateCollector @Inject constructor(
         transport to transport.name.lowercase()
     }.getOrDefault(null to null)
 
-    /** @return SSID to BSSID, best-effort. Requires location permission on modern Android. */
+    /**
+     * @return SSID to BSSID, best-effort, from the location-aware callback (see
+     * [callbackWifiInfo]). The first snapshot after registration can race the callback delivery
+     * and miss — the next location batch then carries it. The redaction sentinel is filtered so a
+     * still-redacted value is stored as null, never as `02:00:...`.
+     */
     private fun readWifi(): Pair<String?, String?> = runCatching {
         if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return null to null
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null to null
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return null to null)
-        val info = caps?.transportInfo as? WifiInfo ?: return null to null
+        ensureWifiCallbackRegistered()
+        val info = callbackWifiInfo ?: return null to null
         val ssid =
             info.ssid?.trim('"')?.takeIf { it.isNotEmpty() && it != WifiManager.UNKNOWN_SSID }
-        ssid to info.bssid
+        val bssid = info.bssid?.takeIf { it != REDACTED_BSSID }
+        ssid to bssid
     }.getOrDefault(null to null)
 
     /** @return strongest cell signal dBm to whether the device has any cellular service. */
@@ -104,4 +146,9 @@ class DeviceStateCollector @Inject constructor(
 
     private fun hasPermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    companion object {
+        /** The BSSID placeholder Android substitutes when Wi-Fi info is location-redacted. */
+        const val REDACTED_BSSID = "02:00:00:00:00:00"
+    }
 }

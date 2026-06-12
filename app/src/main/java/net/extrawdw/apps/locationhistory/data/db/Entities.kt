@@ -62,6 +62,14 @@ data class LocationSampleEntity(
     val devicePhysicalState: DevicePhysicalState,
     val devicePhysicalStateConfidence: Float,
 
+    // IMU + barometer burst summary, batch-granular: one burst is collected per delivered
+    // location batch and stamped on every sample in it (see MotionSensorReader.burstSummary).
+    // Nullable + defaulted so rows from older recordings/backups decode unchanged.
+    val motionVariance: Float? = null,
+    val stepCadenceHz: Float? = null,
+    val gravityAngleDeltaDeg: Float? = null,
+    val pressureHpa: Float? = null,
+
     /** All samples are stored; this flag (with [exclusionReason]) excludes a sample from
      *  computation — e.g. mock locations or implausibly large accuracy — without deleting it. */
     val includedInComputation: Boolean = true,
@@ -288,41 +296,6 @@ data class GeofenceEntity(
     val longitude: Double,
     val radiusMeters: Float,
     val createdAtMs: Long,
-)
-
-/**
- * A training example for the device-state model. The feature vector is stored as a comma-separated
- * float string; [fromUserConfirmation] examples are ground truth and weighted accordingly.
- * [featureSchemaVersion] records the [Features.STATE_FEATURE_SCHEMA_VERSION] the vector was produced
- * under — the bare CSV has no feature names, so this is the only way to tell that a stored example
- * still matches the current feature layout. Examples from a different version are dropped before
- * training (a reorder/repurpose keeps the same length, so the dimension check alone can't catch it).
- * Defaults to 0 (legacy/unknown) so any example restored from a backup predating this field is
- * treated as mismatched and purged rather than silently mis-trained.
- */
-@Serializable
-@Entity(tableName = "state_training_examples")
-data class StateTrainingExampleEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val features: String,
-    val label: Int,
-    val fromUserConfirmation: Boolean,
-    val createdAtMs: Long,
-    val consumed: Boolean = false,
-    val featureSchemaVersion: Int = 0,
-)
-
-/** A training example for the transport-mode model. See [StateTrainingExampleEntity] for [featureSchemaVersion]. */
-@Serializable
-@Entity(tableName = "transport_training_examples")
-data class TransportTrainingExampleEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val features: String,
-    val label: Int,
-    val fromUserConfirmation: Boolean,
-    val createdAtMs: Long,
-    val consumed: Boolean = false,
-    val featureSchemaVersion: Int = 0,
 )
 
 /**

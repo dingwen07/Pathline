@@ -13,9 +13,9 @@ import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.BackupDao
 import net.extrawdw.apps.locationhistory.data.db.BackupDirtyPartitionEntity
+import net.extrawdw.apps.locationhistory.data.enrich.DeviceStateCollector
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
-import net.extrawdw.apps.locationhistory.ml.LiteRtModelStore
 import net.extrawdw.apps.locationhistory.security.BackupCrypto
 import net.extrawdw.apps.locationhistory.security.CryptoHeader
 import java.io.ByteArrayOutputStream
@@ -70,7 +70,6 @@ class BackupEngine @Inject constructor(
     private val db: AppDatabase,
     private val backupDao: BackupDao,
     private val settingsRepository: SettingsRepository,
-    private val modelStore: LiteRtModelStore,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -370,7 +369,7 @@ class BackupEngine @Inject constructor(
             // re-upload the whole history we just pulled down.
             backupDao.clearAllDirty()
         }
-        restoreSettingsAndModels(root, inventory.snapshots, cipher)
+        restoreSettings(root, inventory.snapshots, cipher)
         reporter.progress(1f)
         AppLog.i(TAG, "restore complete: partitions=${inventory.partitions.size} rows=$rows")
         return RestoreReport(inventory.partitions.size, rows)
@@ -426,6 +425,16 @@ class BackupEngine @Inject constructor(
                 bytes,
                 net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity.serializer()
             )
+                // Older recordings stored Android's location-redaction placeholder as a real BSSID
+                // (the collector read a redacted WifiInfo). It carries zero information, so
+                // normalize it to null on the way in — keeps Wi-Fi-presence stats clean.
+                .map { sample ->
+                    if (sample.wifiBssid == DeviceStateCollector.REDACTED_BSSID) {
+                        sample.copy(wifiBssid = null)
+                    } else {
+                        sample
+                    }
+                }
                 .also { backupDao.restoreSamples(it) }.size
 
             STREAM_VISITS -> decodeLines(
@@ -466,21 +475,6 @@ class BackupEngine @Inject constructor(
             backupDao.allGeofences(),
             previous[SNAP_GEOFENCES]
         )
-        out += snapshotLines(
-            dir,
-            material,
-            SNAP_STATE_EXAMPLES,
-            backupDao.allStateExamples(),
-            previous[SNAP_STATE_EXAMPLES]
-        )
-        out += snapshotLines(
-            dir,
-            material,
-            SNAP_TRANSPORT_EXAMPLES,
-            backupDao.allTransportExamples(),
-            previous[SNAP_TRANSPORT_EXAMPLES]
-        )
-
         // Tags, the polymorphic tag<->target join, annotations (notes + memories), and concepts
         // with their member edge. Whole-table snapshots like places — small and not time-bucketed.
         out += snapshotLines(dir, material, SNAP_TAGS, backupDao.allTags(), previous[SNAP_TAGS])
@@ -526,28 +520,6 @@ class BackupEngine @Inject constructor(
             rowCount = 1,
             previous[SNAP_SETTINGS]
         )
-
-        // ML checkpoints (raw bytes)
-        modelStore.stateCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(
-                dir,
-                material,
-                SNAP_STATE_CKPT,
-                it.readBytes(),
-                rowCount = 1,
-                previous[SNAP_STATE_CKPT]
-            )
-        }
-        modelStore.transportCheckpoint.takeIf { it.exists() }?.let {
-            out += snapshotBlob(
-                dir,
-                material,
-                SNAP_TRANSPORT_CKPT,
-                it.readBytes(),
-                rowCount = 1,
-                previous[SNAP_TRANSPORT_CKPT]
-            )
-        }
         return out
     }
 
@@ -579,22 +551,9 @@ class BackupEngine @Inject constructor(
                 )
             )
         }
-        bytesOf(SNAP_STATE_EXAMPLES)?.let {
-            backupDao.restoreStateExamples(
-                decodeLines(
-                    it,
-                    net.extrawdw.apps.locationhistory.data.db.StateTrainingExampleEntity.serializer()
-                )
-            )
-        }
-        bytesOf(SNAP_TRANSPORT_EXAMPLES)?.let {
-            backupDao.restoreTransportExamples(
-                decodeLines(
-                    it,
-                    net.extrawdw.apps.locationhistory.data.db.TransportTrainingExampleEntity.serializer()
-                )
-            )
-        }
+        // Training-example and model-checkpoint snapshots in older backups are deliberately not
+        // restored: the on-device training pipeline was removed, so those entries are simply left
+        // unread (and pruned from the inventory by the next backup run).
         // Tags / entity_tags / annotations are absent from pre-v2 backups -> bytesOf returns null and
         // these tables simply stay empty (forward-compat). Restore tags before their links.
         bytesOf(SNAP_TAGS)?.let {
@@ -637,7 +596,7 @@ class BackupEngine @Inject constructor(
         }
     }
 
-    private suspend fun restoreSettingsAndModels(
+    private suspend fun restoreSettings(
         root: SafDir, snapshots: List<SnapshotEntry>, cipher: BackupCrypto.PartitionCipher,
     ) {
         val dir = root.childDir(SNAPSHOT_DIR)
@@ -659,9 +618,6 @@ class BackupEngine @Inject constructor(
                     ?.let { settingsRepository.setPowerProfile(it) }
             }
         }
-        bytesOf(SNAP_STATE_CKPT)?.let { modelStore.stateCheckpoint.writeBytes(it) }
-        bytesOf(SNAP_TRANSPORT_CKPT)?.let { modelStore.transportCheckpoint.writeBytes(it) }
-        modelStore.reload()
     }
 
     private inline fun <reified T> snapshotLines(
@@ -849,16 +805,12 @@ class BackupEngine @Inject constructor(
         private const val SNAPSHOT_DIR = "snapshot"
         private const val SNAP_PLACES = "places"
         private const val SNAP_GEOFENCES = "geofences"
-        private const val SNAP_STATE_EXAMPLES = "state_examples"
-        private const val SNAP_TRANSPORT_EXAMPLES = "transport_examples"
         private const val SNAP_TAGS = "tags"
         private const val SNAP_ENTITY_TAGS = "entity_tags"
         private const val SNAP_ANNOTATIONS = "annotations"
         private const val SNAP_CONCEPTS = "concepts"
         private const val SNAP_CONCEPT_MEMBERS = "concept_members"
         private const val SNAP_SETTINGS = "settings"
-        private const val SNAP_STATE_CKPT = "state_model_ckpt"
-        private const val SNAP_TRANSPORT_CKPT = "transport_model_ckpt"
         private const val TAG = "BackupEngine"
     }
 }
