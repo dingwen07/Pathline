@@ -187,6 +187,8 @@ internal object ApiCursors {
                     caller.byMe(c.createdBy), caller.byMe(c.updatedBy),
                     attachedBy?.let { caller.byMe(it[c.id]) },
                     memberCounts[c.id] ?: 0,
+                    c.archivedAtMs,
+                    c.archivedAtMs?.let { caller.byMe(c.archivedBy) },
                 ),
             )
         }

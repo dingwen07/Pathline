@@ -149,11 +149,16 @@ data class Concept(
     /** Number of members, on every concept row. Null when the installed provider predates the
      *  column (pre-v3-batch). */
     val memberCount: Int? = null,
+    /** When the concept was archived, or null = active (or pre-v3 provider). Archived concepts
+     *  are omitted from listings unless asked for — see [PathlineClient.concepts]. */
+    val archivedAtMs: Long? = null,
+    /** Whether THIS app archived it (null = active, archived by Pathline, or pre-v3 provider). */
+    val archivedByMe: Boolean? = null,
 )
 
-/** One membership row of a concept: a typed pointer at a place/visit/trip. */
+/** One membership row of a concept: a typed pointer at a place/visit/trip/concept. */
 data class ConceptMember(
-    /** `place`, `visit` or `trip`. */
+    /** `place`, `visit`, `trip` or `concept` (nested concepts are pointers too — never expanded). */
     val targetType: String,
     val targetId: Long,
     val attachedAtMs: Long,
@@ -523,21 +528,27 @@ class PathlineClient(private val resolver: ContentResolver) {
     // ---- Concepts (reads need READ_ANNOTATIONS only; writes need WRITE_ANNOTATIONS) -------------
 
     /** Every concept; [kind] filters exactly (canonicalized), [q] searches name/kind/description
-     *  (most-relevant first). */
+     *  (most-relevant first). Archived concepts are omitted unless [archived] says otherwise —
+     *  one of [PathlineContract.QueryParams.ARCHIVED_INCLUDE] / [ARCHIVED_ONLY][PathlineContract.QueryParams.ARCHIVED_ONLY]. */
     suspend fun concepts(
         kind: String? = null,
         q: String? = null,
         limit: Int? = null,
         group: Long? = null,
+        archived: String? = null,
     ): List<Concept> = withContext(Dispatchers.IO) {
         val base =
             if (q == null) PathlineContract.Concepts.CONTENT_URI.buildUpon()
                 .apply { appendLimitAndGroup(limit, group) }.build()
             else searchUri(PathlineContract.Concepts.CONTENT_URI, q, fields = null, group = group, limit = limit)
-        val uri =
+        var uri =
             if (kind == null) base
             else base.buildUpon()
                 .appendQueryParameter(PathlineContract.QueryParams.KIND, kind).build()
+        if (archived != null) {
+            uri = uri.buildUpon()
+                .appendQueryParameter(PathlineContract.QueryParams.ARCHIVED, archived).build()
+        }
         query(uri) { c -> concept(c) }
     }
 
@@ -559,12 +570,22 @@ class PathlineClient(private val resolver: ContentResolver) {
             }
         }
 
-    /** The concepts a place/visit/trip belongs to (with [Concept.attachedByMe] populated). */
-    suspend fun conceptsFor(target: AnnotationTarget, id: Long, group: Long? = null): List<Concept> =
+    /** The concepts a place/visit/trip — or, for nesting, a concept — belongs to (with
+     *  [Concept.attachedByMe] populated). Archived containers are omitted unless [archived]
+     *  overrides, like [concepts]. */
+    suspend fun conceptsFor(
+        target: AnnotationTarget,
+        id: Long,
+        group: Long? = null,
+        archived: String? = null,
+    ): List<Concept> =
         withContext(Dispatchers.IO) {
-            query(
-                PathlineContract.Concepts.forTargetUri(target.collection, id).withGroup(group),
-            ) { c -> concept(c) }
+            var uri = PathlineContract.Concepts.forTargetUri(target.collection, id).withGroup(group)
+            if (archived != null) {
+                uri = uri.buildUpon()
+                    .appendQueryParameter(PathlineContract.QueryParams.ARCHIVED, archived).build()
+            }
+            query(uri) { c -> concept(c) }
         }
 
     /** Create a concept; returns its id. A canonical-name collision throws with the existing id. */
@@ -601,15 +622,26 @@ class PathlineClient(private val resolver: ContentResolver) {
         resolver.update(PathlineContract.Concepts.itemUri(id), values, null, null) > 0
     }
 
-    /** Delete a concept (members survive, its annotations don't); true when it existed. */
+    /** Delete a concept (members survive, its annotations don't); true when it existed. Prefer
+     *  [setConceptArchived] when the user may want it back. */
     suspend fun deleteConcept(id: Long): Boolean = withContext(Dispatchers.IO) {
         resolver.delete(PathlineContract.Concepts.itemUri(id), null, null) > 0
     }
 
-    /** Attach a place/visit/trip to a concept (re-adding is a no-op). */
+    /** Archive ([archived] = true) or unarchive a concept — a visibility flag, not a delete (see
+     *  [Concept.archivedAtMs]). Already-in-state is a no-op. True when the row existed. */
+    suspend fun setConceptArchived(id: Long, archived: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            val values = ContentValues().apply {
+                put(PathlineContract.Concepts.ARCHIVED, archived)
+            }
+            resolver.update(PathlineContract.Concepts.itemUri(id), values, null, null) > 0
+        }
+
+    /** Attach a place/visit/trip — or, nesting, another concept — to a concept (re-adding is a
+     *  no-op). A concept member that would close a membership cycle throws. */
     suspend fun addConceptMember(conceptId: Long, target: AnnotationTarget, targetId: Long) =
         withContext(Dispatchers.IO) {
-            require(target != AnnotationTarget.CONCEPT) { "concepts cannot nest" }
             resolver.insert(
                 PathlineContract.Concepts.membersUri(conceptId),
                 ContentValues().apply {
@@ -757,6 +789,9 @@ class PathlineClient(private val resolver: ContentResolver) {
         attachedByMe = c.optBool(PathlineContract.Concepts.ATTACHED_BY_ME),
         // Lenient: absent on providers older than the v3 batch.
         memberCount = c.lenientInt(PathlineContract.Concepts.MEMBER_COUNT),
+        // Lenient: absent on providers older than the v3 batch.
+        archivedAtMs = c.lenientLong(PathlineContract.Concepts.ARCHIVED_AT_MS),
+        archivedByMe = c.lenientBool(PathlineContract.Concepts.ARCHIVED_BY_ME),
     )
 
     // -- small cursor helpers, by column name --
@@ -785,6 +820,12 @@ class PathlineClient(private val resolver: ContentResolver) {
     /** Like the opt* readers but tolerant of the column not existing at all (older provider). */
     private fun Cursor.lenientInt(col: String) =
         getColumnIndex(col).let { if (it >= 0 && !isNull(it)) getInt(it) else null }
+
+    private fun Cursor.lenientLong(col: String) =
+        getColumnIndex(col).let { if (it >= 0 && !isNull(it)) getLong(it) else null }
+
+    private fun Cursor.lenientBool(col: String) =
+        getColumnIndex(col).let { if (it >= 0 && !isNull(it)) getInt(it) != 0 else null }
 
     private fun Cursor.lenientDouble(col: String) =
         getColumnIndex(col).let { if (it >= 0 && !isNull(it)) getDouble(it) else null }

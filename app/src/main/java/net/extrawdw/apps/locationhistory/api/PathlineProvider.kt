@@ -140,6 +140,7 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, "$places/#/$concepts", CODE_PLACE_CONCEPTS)
         addURI(PathlineContract.AUTHORITY, "$visits/#/$concepts", CODE_VISIT_CONCEPTS)
         addURI(PathlineContract.AUTHORITY, "$trips/#/$concepts", CODE_TRIP_CONCEPTS)
+        addURI(PathlineContract.AUTHORITY, "$concepts/#/$concepts", CODE_CONCEPT_CONCEPTS)
     }
 
     private val entryPoint: DaoEntryPoint by lazy {
@@ -764,7 +765,8 @@ class PathlineProvider : ContentProvider() {
     /**
      * `concepts` collection: every concept (they're visible to any annotation reader — see the
      * contract). With `q` a name/kind/description search (SEARCH_DATA); with `kind` an exact
-     * canonicalized filter; with `ids` an id filter. Windowless.
+     * canonicalized filter; with `ids` an id filter. Windowless. Archived concepts are filtered
+     * per the `archived` param (default: excluded) — after the other filters, before the limit.
      */
     private fun conceptsQuery(caller: Caller, uri: Uri, now: Long): Cursor {
         val groupId = parseGroup(uri, now)
@@ -786,6 +788,7 @@ class PathlineProvider : ContentProvider() {
         }
         val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
             ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.distinct()
+        val archivedMode = parseArchivedMode(uri)
 
         val (concepts, memberCounts) = runBlocking {
             val dao = entryPoint.conceptDao()
@@ -804,6 +807,7 @@ class PathlineProvider : ContentProvider() {
             }
             if (q != null && kind != null) list = list.filter { it.kind == kind }
             if (requested != null) list = list.filter { it.id in requested.toSet() }
+            list = list.filterArchived(archivedMode)
             parseLimit(uri)?.let { list = list.take(it) }
             list to memberCountsFor(list)
         }
@@ -889,15 +893,18 @@ class PathlineProvider : ContentProvider() {
         return cursor
     }
 
-    /** `…/<target>/<id>/concepts`: the concepts a visible target belongs to, with ATTACHED_BY_ME. */
+    /** `…/<target>/<id>/concepts`: the concepts a visible target belongs to, with ATTACHED_BY_ME.
+     *  Serves places/visits/trips and — for nesting's "which concepts contain this one" — concepts.
+     *  Archived containers are filtered per the `archived` param (default: excluded). */
     private fun targetConceptsQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
+        val archivedMode = parseArchivedMode(uri)
         gate.requireAnnotationRead(caller, target, DATA_TYPE_CONCEPTS, now, groupId)
         val (concepts, attachedBy, memberCounts) = runBlocking {
             if (gate.targetVisible(caller, target, id, now)) {
                 val dao = entryPoint.conceptDao()
-                val list = dao.conceptsFor(target, id)
+                val list = dao.conceptsFor(target, id).filterArchived(archivedMode)
                 Triple(
                     list,
                     dao.membershipsFor(target, id).associate { it.conceptId to it.createdBy },
@@ -1149,7 +1156,7 @@ class PathlineProvider : ContentProvider() {
         CODE_VISIT_MEMORIES, CODE_VISIT_MEMORY_KEY, CODE_VISIT_CONCEPTS -> AnnotationTarget.VISIT
 
         CODE_CONCEPT_TAGS, CODE_CONCEPT_TAG_NAME, CODE_CONCEPT_NOTES,
-        CODE_CONCEPT_MEMORIES, CODE_CONCEPT_MEMORY_KEY -> AnnotationTarget.CONCEPT
+        CODE_CONCEPT_MEMORIES, CODE_CONCEPT_MEMORY_KEY, CODE_CONCEPT_CONCEPTS -> AnnotationTarget.CONCEPT
 
         else -> AnnotationTarget.TRIP
     }
@@ -1512,7 +1519,8 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** `update` on `concepts/<id>`: partial intrinsic edit — only the keys present change; a key
-     *  present with a null value clears that field (NAME cannot be cleared). */
+     *  present with a null value clears that field (NAME cannot be cleared). The ARCHIVED key
+     *  (boolean) archives/unarchives, combinable with intrinsic edits in the same call. */
     private fun updateConcept(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Int {
         val id = targetIdFrom(uri)
         val groupId = checkWrite(
@@ -1528,8 +1536,17 @@ class PathlineProvider : ContentProvider() {
         }
         val setKind = values?.containsKey(PathlineContract.Concepts.KIND) == true
         val setDescription = values?.containsKey(PathlineContract.Concepts.DESCRIPTION) == true
+        val archived = if (values?.containsKey(PathlineContract.Concepts.ARCHIVED) == true) {
+            values.getAsBoolean(PathlineContract.Concepts.ARCHIVED)
+                ?: throw IllegalArgumentException(
+                    "'${PathlineContract.Concepts.ARCHIVED}' must be a boolean",
+                )
+        } else {
+            null
+        }
         val updated = runBlocking {
-            entryPoint.conceptStore().update(
+            val store = entryPoint.conceptStore()
+            val intrinsic = store.update(
                 id,
                 displayName = name,
                 kind = values?.getAsString(PathlineContract.Concepts.KIND), setKind = setKind,
@@ -1537,6 +1554,11 @@ class PathlineProvider : ContentProvider() {
                 setDescription = setDescription,
                 writer = caller.pkg,
             )
+            if (archived != null && intrinsic != null) {
+                store.setArchived(id, archived, caller.pkg)
+            } else {
+                intrinsic
+            }
         }
         val count = if (updated != null) 1 else 0
         logger.log(
@@ -1579,9 +1601,10 @@ class PathlineProvider : ContentProvider() {
         return removed
     }
 
-    /** `insert` on `concepts/<id>/members`: attach one place/visit/trip. The member must be
-     *  visible/writable to the caller (its read tier + [ApiGate.targetVisible]) so ephemeral
-     *  unconfirmed ids never enter a concept. */
+    /** `insert` on `concepts/<id>/members`: attach one place/visit/trip/concept. The member must
+     *  be visible/writable to the caller (its read tier + [ApiGate.targetVisible]) so ephemeral
+     *  unconfirmed ids never enter a concept; a `concept` member that would close a membership
+     *  cycle is rejected in the store. */
     private fun insertConceptMember(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Uri {
         val conceptId = targetIdFrom(uri)
         val target = parseMemberType(
@@ -1648,16 +1671,40 @@ class PathlineProvider : ContentProvider() {
         return removed
     }
 
-    /** Parse a [PathlineContract.Concepts.Members.TARGET_TYPE] value; `concept` is rejected (no
-     *  nesting), anything unknown is an error. */
+    /** Parse a [PathlineContract.Concepts.Members.TARGET_TYPE] value; `concept` nests one concept
+     *  under another (cycles rejected in the store), anything unknown is an error. */
     private fun parseMemberType(raw: String?): AnnotationTarget = when (raw?.trim()?.lowercase()) {
         "place" -> AnnotationTarget.PLACE
         "visit" -> AnnotationTarget.VISIT
         "trip" -> AnnotationTarget.TRIP
+        "concept" -> AnnotationTarget.CONCEPT
         else -> throw IllegalArgumentException(
-            "'${PathlineContract.Concepts.Members.TARGET_TYPE}' must be place, visit or trip (got '$raw')",
+            "'${PathlineContract.Concepts.Members.TARGET_TYPE}' must be place, visit, trip or concept (got '$raw')",
         )
     }
+
+    /** Parse [PathlineContract.QueryParams.ARCHIVED] (absent -> EXCLUDE); unknown values error. */
+    private fun parseArchivedMode(uri: Uri): ArchivedMode =
+        when (val raw = uri.getQueryParameter(PathlineContract.QueryParams.ARCHIVED)) {
+            null, PathlineContract.QueryParams.ARCHIVED_EXCLUDE -> ArchivedMode.EXCLUDE
+            PathlineContract.QueryParams.ARCHIVED_INCLUDE -> ArchivedMode.INCLUDE
+            PathlineContract.QueryParams.ARCHIVED_ONLY -> ArchivedMode.ONLY
+            else -> throw IllegalArgumentException(
+                "'${PathlineContract.QueryParams.ARCHIVED}' must be " +
+                        "${PathlineContract.QueryParams.ARCHIVED_EXCLUDE}, " +
+                        "${PathlineContract.QueryParams.ARCHIVED_INCLUDE} or " +
+                        "${PathlineContract.QueryParams.ARCHIVED_ONLY} (got '$raw')",
+            )
+        }
+
+    private enum class ArchivedMode { EXCLUDE, INCLUDE, ONLY }
+
+    private fun List<ConceptEntity>.filterArchived(mode: ArchivedMode): List<ConceptEntity> =
+        when (mode) {
+            ArchivedMode.EXCLUDE -> filter { it.archivedAtMs == null }
+            ArchivedMode.INCLUDE -> this
+            ArchivedMode.ONLY -> filter { it.archivedAtMs != null }
+        }
 
     /** Wake any consumer cursor watching this URI (reads register it via setNotificationUri). */
     private fun notifyChanged(uri: Uri) {
@@ -1704,6 +1751,7 @@ class PathlineProvider : ContentProvider() {
         const val CODE_PLACE_CONCEPTS = 36
         const val CODE_VISIT_CONCEPTS = 37
         const val CODE_TRIP_CONCEPTS = 38
+        const val CODE_CONCEPT_CONCEPTS = 40
 
         // Concepts are full annotation targets: their tags/notes/memories routes ride the same
         // dispatch sets as places/visits/trips.
@@ -1729,7 +1777,7 @@ class PathlineProvider : ContentProvider() {
             CODE_CONCEPT_MEMORY_KEY,
         )
         val CONCEPTS_FOR_TARGET_CODES =
-            setOf(CODE_PLACE_CONCEPTS, CODE_VISIT_CONCEPTS, CODE_TRIP_CONCEPTS)
+            setOf(CODE_PLACE_CONCEPTS, CODE_VISIT_CONCEPTS, CODE_TRIP_CONCEPTS, CODE_CONCEPT_CONCEPTS)
 
         /** Audit-log `dataType` tokens for the two annotation payload kinds (tags use [PathlineContract.Tags.PATH]). */
         const val DATA_TYPE_NOTES = PathlineContract.Annotations.NOTES_PATH

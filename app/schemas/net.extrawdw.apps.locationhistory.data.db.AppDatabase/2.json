@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "f38396360f3aca391121adcc1c83e0a0",
+    "identityHash": "bce0845061f0c9fcd9349996e05d7b7b",
     "entities": [
       {
         "tableName": "location_samples",
@@ -827,7 +827,7 @@
       },
       {
         "tableName": "concepts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, `kind` TEXT, `description` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `createdBy` TEXT, `updatedBy` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, `kind` TEXT, `description` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `createdBy` TEXT, `updatedBy` TEXT, `archivedAtMs` INTEGER, `archivedBy` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -877,6 +877,16 @@
           {
             "fieldPath": "updatedBy",
             "columnName": "updatedBy",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "archivedBy",
+            "columnName": "archivedBy",
             "affinity": "TEXT"
           }
         ],
@@ -974,7 +984,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f38396360f3aca391121adcc1c83e0a0')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bce0845061f0c9fcd9349996e05d7b7b')"
     ]
   }
 }

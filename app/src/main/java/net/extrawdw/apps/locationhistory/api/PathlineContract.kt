@@ -92,9 +92,13 @@ object PathlineContract {
      * (degrade gracefully — don't query what it can't know); a **higher** value is fine (the API
      * only grows; existing columns keep their meaning once a version ships). History: 1 = timeline
      * + samples + places; 2 = places types / visit-history / search / annotations; 3 = memory
-     * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts + [PlaceStats] +
-     * relevance-ordered search (see [QueryParams.Q]) + proximity mode ([QueryParams.NEAR]) +
-     * [QueryParams.LIMIT] + [Concepts.MEMBER_COUNT] on concept rows.
+     * entry metadata (per-entry stamps + `*_by_me` attribution) + concepts (incl. archive —
+     * [Concepts.ARCHIVED_AT_MS] / [Concepts.ARCHIVED_BY_ME] + [QueryParams.ARCHIVED] — and
+     * nesting: `concept` as a [Concepts.Members.TARGET_TYPE] + the `concepts/<id>/concepts`
+     * reverse listing) + [PlaceStats] + relevance-ordered search (see [QueryParams.Q]) +
+     * proximity mode ([QueryParams.NEAR]) + [QueryParams.LIMIT] + [Concepts.MEMBER_COUNT] on
+     * concept rows. Nothing past version 2 has shipped in a release yet, so additions keep
+     * folding into 3 until one does.
      */
     const val API_VERSION: Int = 3
 
@@ -178,6 +182,28 @@ object PathlineContract {
          * every other collection.
          */
         const val KIND: String = "kind"
+
+        /**
+         * Archived-concept visibility on the [Concepts] collection and the per-target
+         * `…/<id>/concepts` reverse listings: one of [ARCHIVED_EXCLUDE] (the default — archived
+         * concepts are omitted), [ARCHIVED_INCLUDE] (everything; tell them apart via
+         * [Concepts.ARCHIVED_AT_MS]) or [ARCHIVED_ONLY] (archived concepts only — the review /
+         * unarchive listing). Any other value is an error. Composable with [Q] / [KIND] / [IDS]
+         * (the filter applies to their result). The single-item `concepts/<id>` read is **not**
+         * affected — a direct get always returns the row, archived or not (the columns say which).
+         * Ignored by every other collection. Part of the version-3 batch; older providers ignore
+         * it (listings then include archived rows — none can exist on a pre-archive provider).
+         */
+        const val ARCHIVED: String = "archived"
+
+        /** [ARCHIVED] value: omit archived concepts (the default when the param is absent). */
+        const val ARCHIVED_EXCLUDE: String = "exclude"
+
+        /** [ARCHIVED] value: include archived concepts alongside active ones. */
+        const val ARCHIVED_INCLUDE: String = "include"
+
+        /** [ARCHIVED] value: archived concepts only. */
+        const val ARCHIVED_ONLY: String = "only"
 
         /**
          * Proximity filter on the [Places] collection: a `lat,lng` point (decimal degrees, e.g.
@@ -903,7 +929,19 @@ object PathlineContract {
      * canonical folding as tags (two names differing only in case/separators are the same name —
      * creating a duplicate is an error, not a reuse); [KIND] is a free-form but canonicalized
      * discriminator ("trip", "project", "people") for exact filtering via [QueryParams.KIND].
-     * Concepts never nest — a concept cannot be a member of another concept.
+     *
+     * Concepts may **nest**: a concept can be a member of another concept ([Members.TARGET_TYPE]
+     * `concept`). Nesting is structural only — membership is stored and listed
+     * one level at a time, and **nothing auto-expands it** (a search matching a parent does not
+     * match its members; a member listing returns the child's id, not its contents). A membership
+     * that would make a concept contain itself, directly or transitively, is rejected with an
+     * error. The reverse listing `concepts/<id>/concepts` ([forTargetUri]) answers "which concepts
+     * contain this one".
+     *
+     * Concepts can be **archived** ([ARCHIVED]): a visibility flag, not a delete.
+     * An archived concept keeps its members and annotations and stays fully readable by id, but
+     * listings, search and the per-target reverse listings omit it unless the caller passes
+     * [QueryParams.ARCHIVED]; [ARCHIVED_AT_MS] / [ARCHIVED_BY_ME] say when / who.
      *
      * ## Reading
      * Everything here requires only [Permissions.READ_ANNOTATIONS] — concepts are user/agent
@@ -913,11 +951,14 @@ object PathlineContract {
      * - `concepts` — every concept; with [QueryParams.Q] a search over name/kind/description and
      *   the concept's own tags/notes/memories (requires [Permissions.SEARCH_DATA]); with
      *   [QueryParams.KIND] an exact kind filter;
-     *   with [QueryParams.IDS] an id filter. Windowless.
-     * - `concepts/<id>` — one concept row.
-     * - `concepts/<id>/members` — the members, as [Members] rows (see [membersUri]).
-     * - `…/{places|visits|trips}/<id>/concepts` — the concepts a visible target belongs to, as
-     *   rows of this shape (see [forTargetUri]; target visibility follows [Annotations] reads).
+     *   with [QueryParams.IDS] an id filter. Windowless. Archived concepts are omitted unless
+     *   [QueryParams.ARCHIVED] says otherwise.
+     * - `concepts/<id>` — one concept row, archived or not (a direct get never filters).
+     * - `concepts/<id>/members` — the members, as [Members] rows (see [membersUri]), archived
+     *   parent or not.
+     * - `…/{places|visits|trips|concepts}/<id>/concepts` — the concepts a visible target belongs
+     *   to, as rows of this shape (see [forTargetUri]; target visibility follows [Annotations]
+     *   reads). Archived containers are omitted unless [QueryParams.ARCHIVED] says otherwise.
      *
      * ## Writing (requires [Permissions.WRITE_ANNOTATIONS])
      * - **Create:** `insert` on `concepts` with [NAME] (plus optional [KIND], [DESCRIPTION]).
@@ -926,17 +967,21 @@ object PathlineContract {
      * - **Edit:** `update` on `concepts/<id>` with any subset of [NAME] / [KIND] / [DESCRIPTION]
      *   (a key present with a null value clears that field; absent keys are untouched). Rename
      *   collisions error like create.
-     * - **Delete:** `delete` on `concepts/<id>` — removes the concept, its memberships and its own
-     *   annotations; the members themselves are untouched.
+     * - **Archive / unarchive:** `update` on `concepts/<id>` with [ARCHIVED] = `true` / `false`
+     *   (combinable with intrinsic edits). Already-in-state is a no-op, not an error.
+     * - **Delete:** `delete` on `concepts/<id>` — removes the concept, its memberships (both
+     *   directions — also where it is a member of other concepts) and its own annotations; the
+     *   members themselves are untouched. Prefer [ARCHIVED] when the user may want it back.
      * - **Add a member:** `insert` on `concepts/<id>/members` with [Members.TARGET_TYPE] +
      *   [Members.TARGET_ID]. The member must be visible/writable to the caller under the
      *   [Annotations] write rules (in particular an unconfirmed visit/trip is rejected — its id is
-     *   ephemeral). Re-adding is a no-op keeping the original attached-at/by.
+     *   ephemeral). Re-adding is a no-op keeping the original attached-at/by. A `concept` member
+     *   that would close a membership cycle (including the concept itself) is an **error**.
      * - **Remove a member:** `delete` on `concepts/<id>/members/<type>/<targetId>` ([memberUri]).
      *
-     * Intrinsic edits (name/kind/description) refresh [UPDATED_AT_MS]/[UPDATED_BY_ME]; membership
-     * and annotation changes do **not** — they carry their own attribution. Every write is recorded
-     * in the user's access log and may notify, like all annotation writes.
+     * Intrinsic edits (name/kind/description) refresh [UPDATED_AT_MS]/[UPDATED_BY_ME]; membership,
+     * annotation and archive changes do **not** — they carry their own attribution. Every write is
+     * recorded in the user's access log and may notify, like all annotation writes.
      *
      * MIME type: `vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept`.
      */
@@ -989,6 +1034,24 @@ object PathlineContract {
         const val ATTACHED_BY_ME: String = "attached_by_me"
 
         /**
+         * When the concept was archived, epoch milliseconds; null = active. Archived concepts are
+         * omitted from listings/search/reverse listings by default — see [QueryParams.ARCHIVED];
+         * a direct `concepts/<id>` read always returns the row with this column populated. Also
+         * the [android.content.ContentValues] key (as boolean `true`/`false`) to archive /
+         * unarchive via `update` — see the class doc. Part of the version-3 batch; absent on
+         * older providers.
+         */
+        const val ARCHIVED_AT_MS: String = "archived_at_ms"
+
+        /** Whether the calling app archived this concept — nullable boolean like [CREATED_BY_ME];
+         *  null when active (or archived by Pathline itself). Version-3 batch. */
+        const val ARCHIVED_BY_ME: String = "archived_by_me"
+
+        /** The `update` ContentValues key for archive/unarchive: boolean `true` = archive,
+         *  `false` = unarchive. Combinable with intrinsic-edit keys in one call. */
+        const val ARCHIVED: String = "archived"
+
+        /**
          * Number of members ([Members]) the concept currently has, on every concept row shape —
          * the listing, the single item, and the per-target `…/<id>/concepts` reverse listings —
          * so an agent can see group sizes without a `members` query per concept. Membership is
@@ -1001,7 +1064,7 @@ object PathlineContract {
         val COLUMNS: Array<String> = arrayOf(
             ID, NAME, CANONICAL_NAME, KIND, DESCRIPTION,
             CREATED_AT_MS, UPDATED_AT_MS, CREATED_BY_ME, UPDATED_BY_ME, ATTACHED_BY_ME,
-            MEMBER_COUNT,
+            MEMBER_COUNT, ARCHIVED_AT_MS, ARCHIVED_BY_ME,
         )
 
         /** `concepts/<id>` — one concept (query / update / delete). */
@@ -1014,15 +1077,17 @@ object PathlineContract {
             itemUri(id).buildUpon().appendPath(MEMBERS_PATH).build()
 
         /** `concepts/<id>/members/<type>/<targetId>` — one membership, for `delete`. [targetType]
-         *  is a [Members.TARGET_TYPE] value (`place` / `visit` / `trip`). */
+         *  is a [Members.TARGET_TYPE] value (`place` / `visit` / `trip` / `concept`). */
         @JvmStatic
         fun memberUri(id: Long, targetType: String, targetId: Long): Uri =
             membersUri(id).buildUpon().appendPath(targetType).appendPath(targetId.toString())
                 .build()
 
-        /** `…/{places|visits|trips}/<id>/concepts` — the concepts [collection]'s row <id> belongs
-         *  to. [collection] is one of [Places.CONTENT_URI], [Visits.CONTENT_URI],
-         *  [Trips.CONTENT_URI]. */
+        /** `…/{places|visits|trips|concepts}/<id>/concepts` — the concepts [collection]'s row <id>
+         *  belongs to. [collection] is one of [Places.CONTENT_URI], [Visits.CONTENT_URI],
+         *  [Trips.CONTENT_URI] or — for "which concepts contain this concept" —
+         *  [Concepts.CONTENT_URI]. Archived containers are omitted by default
+         *  ([QueryParams.ARCHIVED] overrides). */
         @JvmStatic
         fun forTargetUri(collection: Uri, id: Long): Uri =
             collection.buildUpon().appendPath(id.toString()).appendPath(PATH).build()
@@ -1035,8 +1100,9 @@ object PathlineContract {
             const val CONTENT_TYPE: String =
                 "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.concept_member"
 
-            /** The member's collection: `place`, `visit` or `trip` (never `concept` — no nesting).
-             *  Also a [android.content.ContentValues] key for adding a member. */
+            /** The member's collection: `place`, `visit`, `trip` or `concept` (nesting — older
+             *  providers reject `concept`). Also a [android.content.ContentValues] key for
+             *  adding a member. */
             const val TARGET_TYPE: String = "target_type"
 
             /** The member's row id in its collection. Also a [android.content.ContentValues] key. */

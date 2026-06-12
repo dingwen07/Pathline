@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
@@ -156,6 +157,38 @@ interface ConceptDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addMember(member: ConceptMemberEntity)
+
+    /**
+     * Whether [candidateId] is [conceptId] itself or transitively **contains** it through CONCEPT
+     * members — i.e. whether adding [candidateId] as a member of [conceptId] would close a cycle.
+     * Walks the parent edge upward from [conceptId] (ancestor chains are shallow in practice;
+     * UNION dedups, so the walk terminates even over already-cyclic data).
+     */
+    @Query(
+        "WITH RECURSIVE ancestors(id) AS (" +
+                "SELECT :conceptId " +
+                "UNION " +
+                "SELECT m.conceptId FROM concept_members m " +
+                "JOIN ancestors a ON m.targetType = 'CONCEPT' AND m.targetId = a.id) " +
+                "SELECT EXISTS(SELECT 1 FROM ancestors WHERE id = :candidateId)",
+    )
+    suspend fun memberWouldCycle(conceptId: Long, candidateId: Long): Boolean
+
+    /**
+     * Check-then-insert for a CONCEPT member in one transaction, so two concurrent adds can't each
+     * pass [memberWouldCycle] and jointly close a cycle. False = rejected (would cycle); non-CONCEPT
+     * members skip the check and always insert (OR IGNORE keeps re-adds no-ops either way).
+     */
+    @Transaction
+    suspend fun addMemberIfAcyclic(member: ConceptMemberEntity): Boolean {
+        if (member.targetType == AnnotationTarget.CONCEPT &&
+            memberWouldCycle(member.conceptId, member.targetId)
+        ) {
+            return false
+        }
+        addMember(member)
+        return true
+    }
 
     @Query("SELECT * FROM concept_members WHERE conceptId = :conceptId ORDER BY createdAtMs, targetType, targetId")
     suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity>

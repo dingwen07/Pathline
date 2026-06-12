@@ -22,7 +22,9 @@ object AppMigrations {
      *  - `places.types` — the full comma-joined Google place-type list ([category] is primary).
      *  - `tags` + polymorphic `entity_tags` join.
      *  - `annotations` (notes + memories), one of each kind per target.
-     *  - `concepts` + polymorphic `concept_members` join (first-class semantic groups).
+     *  - `concepts` + polymorphic `concept_members` join (first-class semantic groups), including
+     *    the archive columns (`archivedAtMs`/`archivedBy`, null = active) and CONCEPT members
+     *    (nesting; cycles rejected in `ConceptStore`).
      *  - Writer attribution columns (`createdBy`/`updatedBy`, null = Pathline itself).
      *  - FTS5 virtual tables + sync triggers over places, tags and concepts, backfilled from
      *    existing rows.
@@ -89,7 +91,8 @@ object AppMigrations {
                         "`canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
                         "`kind` TEXT, `description` TEXT, " +
                         "`createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, " +
-                        "`createdBy` TEXT, `updatedBy` TEXT)",
+                        "`createdBy` TEXT, `updatedBy` TEXT, " +
+                        "`archivedAtMs` INTEGER, `archivedBy` TEXT)",
             )
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS `index_concepts_canonicalName` ON `concepts` (`canonicalName`)",

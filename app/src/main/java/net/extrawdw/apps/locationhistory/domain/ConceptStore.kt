@@ -12,12 +12,14 @@ import javax.inject.Singleton
  * (see [ConceptEntity]). Owns the rules the raw DAO doesn't: name/kind canonicalization (shared
  * with tags via [NameCanonicalizer]), the explicit create/rename/delete lifecycle with canonical
  * collision errors (unlike tags, a colliding concept name is rejected rather than silently reused —
- * the caller may have meant different kind/description), the no-nesting rule, and the cascade that
- * drops a deleted concept's memberships and annotations.
+ * the caller may have meant different kind/description), the membership **cycle rule** (concepts
+ * may nest, but a membership that would make a concept contain itself — directly or transitively —
+ * is rejected; nothing ever auto-expands nested membership), the archive flag, and the cascade
+ * that drops a deleted concept's memberships and annotations.
  *
- * Intrinsic edits (name/kind/description) bump the row's `updatedAtMs`/`updatedBy`; membership and
- * annotation changes don't — they carry their own attribution. `writer` follows the same
- * null-means-Pathline convention as [AnnotationStore].
+ * Intrinsic edits (name/kind/description) bump the row's `updatedAtMs`/`updatedBy`; membership,
+ * annotation and archive changes don't — they carry their own attribution. `writer` follows the
+ * same null-means-Pathline convention as [AnnotationStore].
  */
 @Singleton
 class ConceptStore @Inject constructor(
@@ -106,7 +108,9 @@ class ConceptStore @Inject constructor(
     /**
      * Attach [target]/[targetId] to concept [conceptId]. Re-adding is a no-op that keeps the
      * original attached-at/by (insert-ignore). Returns false when the concept doesn't exist.
-     * Throws on a CONCEPT member — concepts never nest.
+     * A CONCEPT member nests one concept under another; membership is never auto-expanded, and a
+     * membership that would close a cycle (including self-membership) throws
+     * [IllegalArgumentException] — checked and inserted in one transaction.
      */
     suspend fun addMember(
         conceptId: Long,
@@ -114,15 +118,34 @@ class ConceptStore @Inject constructor(
         targetId: Long,
         writer: String? = null,
     ): Boolean {
-        require(target != AnnotationTarget.CONCEPT) { "Concepts cannot contain concepts (no nesting)" }
         conceptDao.byId(conceptId) ?: return false
-        conceptDao.addMember(
+        val added = conceptDao.addMemberIfAcyclic(
             ConceptMemberEntity(
                 conceptId = conceptId, targetType = target, targetId = targetId,
                 createdAtMs = now(), createdBy = writer,
             ),
         )
+        require(added) {
+            "Adding concept $targetId to concept $conceptId would create a membership cycle"
+        }
         return true
+    }
+
+    /**
+     * Archive or unarchive a concept — a visibility flag, not a delete: members and annotations
+     * stay, and by-id reads keep working; only default listings/search exclude it. Stamps
+     * `archivedAtMs`/`archivedBy` (cleared on unarchive); `updatedAtMs` is untouched (it tracks
+     * intrinsic edits only). No-op when already in the requested state. Returns the row, or null
+     * when [id] doesn't exist.
+     */
+    suspend fun setArchived(id: Long, archived: Boolean, writer: String? = null): ConceptEntity? {
+        val current = conceptDao.byId(id) ?: return null
+        if (archived == (current.archivedAtMs != null)) return current
+        val next =
+            if (archived) current.copy(archivedAtMs = now(), archivedBy = writer)
+            else current.copy(archivedAtMs = null, archivedBy = null)
+        conceptDao.update(next)
+        return next
     }
 
     /** Detach one member; returns the number of rows removed (0 = wasn't a member). */

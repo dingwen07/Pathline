@@ -69,8 +69,9 @@ enum class NetworkTransport {
  * The kind of entity a tag or annotation is attached to. Stored by name as the polymorphic
  * discriminator on `entity_tags` / `annotations` / `concept_members` (no FK — visits/trips are
  * rebuilt, see the data-API design doc). Annotations only attach to PLACE rows, *confirmed*
- * VISIT / TRIP rows (whose ids survive a rebuild), and CONCEPT rows. CONCEPT is an annotation
- * target (concepts carry their own note/memories/tags) but never a concept **member** — no nesting.
+ * VISIT / TRIP rows (whose ids survive a rebuild), and CONCEPT rows. CONCEPT is also a valid
+ * concept **member** type — concepts nest one level at a time (stored and listed, never
+ * auto-expanded; cycles are rejected at write time in `ConceptStore`).
  */
 enum class AnnotationTarget {
     PLACE,

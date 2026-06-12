@@ -183,7 +183,11 @@ data class AnnotationEntity(
  * tags. [canonicalName] dedups names under the same folding as tags; [kind] is a free-form but
  * canonicalized discriminator ("trip", "project") for exact filtering. [updatedAtMs]/[updatedBy]
  * track **intrinsic** edits only (name/kind/description) — membership and annotation changes carry
- * their own attribution.
+ * their own attribution, and so does archiving ([archivedAtMs]/[archivedBy]).
+ *
+ * **Archive** is a soft visibility flag, not a soft delete: an archived concept keeps its members
+ * and annotations and stays readable by id, but listings/search/reverse-membership reads exclude it
+ * by default (the data API's `archived` query param overrides). [archivedAtMs] null = active.
  */
 @Serializable
 @Entity(
@@ -202,11 +206,17 @@ data class ConceptEntity(
     val createdBy: String? = null,
     /** Package that last edited name/kind/description via the data API; null = Pathline itself. */
     val updatedBy: String? = null,
+    /** When the concept was archived, or null = active. Defaults keep pre-archive backups decoding. */
+    val archivedAtMs: Long? = null,
+    /** Package that archived it via the data API; null = Pathline itself. Cleared on unarchive. */
+    val archivedBy: String? = null,
 )
 
 /**
  * Polymorphic concept<->member join — same shape and integrity rules as [EntityTagEntity] (no FK;
- * maintained in code on delete/merge). [targetType] is PLACE/VISIT/TRIP only — concepts never nest.
+ * maintained in code on delete/merge). [targetType] may be any [AnnotationTarget], including
+ * CONCEPT — concepts can nest one level at a time (membership is stored and listed, never
+ * auto-expanded; `ConceptStore.addMember` rejects cycles at write time).
  */
 @Serializable
 @Entity(

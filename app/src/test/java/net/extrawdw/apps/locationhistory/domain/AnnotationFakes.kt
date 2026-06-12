@@ -174,6 +174,18 @@ internal class FakeConceptDao : ConceptDao {
         if (!exists) members.add(member)
     }
 
+    // Mirrors the recursive CTE: walk the parent edge up from conceptId, visited-set semantics.
+    override suspend fun memberWouldCycle(conceptId: Long, candidateId: Long): Boolean {
+        val ancestors = mutableSetOf(conceptId)
+        val queue = ArrayDeque(listOf(conceptId))
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            members.filter { it.targetType == AnnotationTarget.CONCEPT && it.targetId == current }
+                .forEach { if (ancestors.add(it.conceptId)) queue.add(it.conceptId) }
+        }
+        return candidateId in ancestors
+    }
+
     override suspend fun membersOf(conceptId: Long): List<ConceptMemberEntity> =
         members.filter { it.conceptId == conceptId }
             .sortedWith(compareBy({ it.createdAtMs }, { it.targetType }, { it.targetId }))

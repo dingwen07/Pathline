@@ -12,8 +12,8 @@ import org.junit.Test
 
 /**
  * Domain tests for [ConceptStore] against the in-memory fakes: the explicit lifecycle (create with
- * canonical-collision errors, partial update, delete cascade), kind canonicalization, the
- * no-nesting rule, and membership semantics.
+ * canonical-collision errors, partial update, delete cascade), kind canonicalization, nesting with
+ * the membership cycle rule, the archive flag, and membership semantics.
  */
 class ConceptStoreTest {
 
@@ -98,13 +98,8 @@ class ConceptStoreTest {
     }
 
     @Test
-    fun addMember_rejectsNestingAndUnknownConcepts_reAddKeepsOriginalAttribution() = runBlocking {
+    fun addMember_rejectsUnknownConcepts_reAddKeepsOriginalAttribution() = runBlocking {
         val c = store.create("Trips North", writer = "com.app.a")
-        try {
-            store.addMember(c.id, AnnotationTarget.CONCEPT, 99)
-            fail("expected the no-nesting rule")
-        } catch (expected: IllegalArgumentException) {
-        }
         assertFalse(store.addMember(999, AnnotationTarget.VISIT, 1))
 
         assertTrue(store.addMember(c.id, AnnotationTarget.VISIT, 1, writer = "com.app.a"))
@@ -114,6 +109,63 @@ class ConceptStoreTest {
 
         assertEquals(1, store.removeMember(c.id, AnnotationTarget.VISIT, 1))
         assertEquals(0, store.removeMember(c.id, AnnotationTarget.VISIT, 1))
+    }
+
+    @Test
+    fun addMember_nestsConceptsButRejectsCycles() = runBlocking {
+        val travel = store.create("Travel")
+        val japan = store.create("Japan Trip 2026")
+        val tokyo = store.create("Tokyo Days")
+
+        // A chain nests fine: travel > japan > tokyo.
+        assertTrue(store.addMember(travel.id, AnnotationTarget.CONCEPT, japan.id))
+        assertTrue(store.addMember(japan.id, AnnotationTarget.CONCEPT, tokyo.id))
+
+        // Self-membership and both direct and transitive cycles are rejected.
+        for ((parent, child) in listOf(
+            travel.id to travel.id, // self
+            japan.id to travel.id, // direct: travel already contains japan
+            tokyo.id to travel.id, // transitive: travel > japan > tokyo
+        )) {
+            try {
+                store.addMember(parent, AnnotationTarget.CONCEPT, child)
+                fail("expected a cycle error for $child into $parent")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(expected.message!!.contains("cycle"))
+            }
+        }
+
+        // A diamond is not a cycle: a second parent of tokyo is fine.
+        val highlights = store.create("Highlights")
+        assertTrue(store.addMember(highlights.id, AnnotationTarget.CONCEPT, tokyo.id))
+
+        // Deleting a nested concept detaches it from its parents (cascade goes both directions).
+        assertTrue(store.delete(tokyo.id))
+        assertTrue(conceptDao.membersOf(japan.id).none { it.targetType == AnnotationTarget.CONCEPT })
+        assertTrue(conceptDao.membersOf(highlights.id).isEmpty())
+    }
+
+    @Test
+    fun setArchived_isAVisibilityFlagNotADelete() = runBlocking {
+        val c = store.create("Old Gyms", writer = "com.app.a")
+        store.addMember(c.id, AnnotationTarget.PLACE, 7)
+
+        val archived = store.setArchived(c.id, true, writer = "com.app.b")!!
+        assertNotNull(archived.archivedAtMs)
+        assertEquals("com.app.b", archived.archivedBy)
+        assertEquals(c.updatedAtMs, archived.updatedAtMs) // not an intrinsic edit
+        assertEquals(1, conceptDao.membersOf(c.id).size) // members untouched
+
+        // Already-in-state is a no-op keeping the original stamp.
+        val again = store.setArchived(c.id, true, writer = "com.app.c")!!
+        assertEquals(archived.archivedAtMs, again.archivedAtMs)
+        assertEquals("com.app.b", again.archivedBy)
+
+        // Unarchive clears both stamps; a missing id is null.
+        val active = store.setArchived(c.id, false)!!
+        assertNull(active.archivedAtMs)
+        assertNull(active.archivedBy)
+        assertNull(store.setArchived(999, true))
     }
 
     @Test

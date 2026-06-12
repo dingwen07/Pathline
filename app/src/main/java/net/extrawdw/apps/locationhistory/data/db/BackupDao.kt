@@ -182,13 +182,14 @@ interface BackupDao {
     )
     suspend fun purgeDanglingAnnotations()
 
-    /** Members must point at an imported target AND an imported concept (no nesting: CONCEPT is
-     *  never a member type, so it has no leg here). */
+    /** Members must point at an imported target AND an imported concept — the CONCEPT leg keeps
+     *  nested memberships whose child concept was imported, like the other target types. */
     @Query(
         "DELETE FROM concept_members WHERE conceptId NOT IN (SELECT id FROM concepts) OR NOT (" +
                 "(targetType = 'PLACE' AND targetId IN (SELECT id FROM places)) OR " +
                 "(targetType = 'VISIT' AND targetId IN (SELECT id FROM visits)) OR " +
-                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)))",
+                "(targetType = 'TRIP'  AND targetId IN (SELECT id FROM trips)) OR " +
+                "(targetType = 'CONCEPT' AND targetId IN (SELECT id FROM concepts)))",
     )
     suspend fun purgeDanglingConceptMembers()
 
