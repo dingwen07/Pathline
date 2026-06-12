@@ -40,6 +40,7 @@ class TimelineEditor @Inject constructor(
     private val trainingRepository: TrainingRepository,
     private val annotationStore: AnnotationStore,
     private val workScheduler: WorkScheduler,
+    private val writeLock: TimelineWriteLock,
 ) {
 
     /** All samples covered by a timeline item, time-ordered (used to drive the split slider). */
@@ -49,15 +50,19 @@ class TimelineEditor @Inject constructor(
     /**
      * Split [item] at [splitIndex] (1..size-1) into a [leftType] span and a [rightType] span. The
      * original visit/trip is removed and replaced by the two materialized spans.
+     *
+     * Holds [TimelineWriteLock] (which is NOT reentrant — this is an outermost entry point, see its
+     * KDoc) so the delete-then-materialize cannot interleave with a maintenance rebuild; the
+     * enqueued maintenance pass runs later under its own lock acquisition.
      */
     suspend fun splitItem(
         item: TimelineItem,
         splitIndex: Int,
         leftType: SegmentType,
         rightType: SegmentType,
-    ) {
+    ): Unit = writeLock.withLock {
         val samples = samplesFor(item)
-        if (samples.size < 2) return
+        if (samples.size < 2) return@withLock
         val k = splitIndex.coerceIn(1, samples.size - 1)
         deleteItem(item)
         materialize(samples.subList(0, k), leftType)
@@ -68,10 +73,10 @@ class TimelineEditor @Inject constructor(
         )
     }
 
-    /** Reclassify a whole item to [type] without splitting. */
-    suspend fun convertItemType(item: TimelineItem, type: SegmentType) {
+    /** Reclassify a whole item to [type] without splitting. Locked like [splitItem]. */
+    suspend fun convertItemType(item: TimelineItem, type: SegmentType): Unit = writeLock.withLock {
         val samples = samplesFor(item)
-        if (samples.isEmpty()) return
+        if (samples.isEmpty()) return@withLock
         deleteItem(item)
         materialize(samples, type)
         workScheduler.enqueueTimelineMaintenanceNow(

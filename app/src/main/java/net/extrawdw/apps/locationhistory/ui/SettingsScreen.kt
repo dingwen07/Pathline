@@ -47,7 +47,11 @@ import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 @Composable
 fun SettingsScreen(
     permissionsGranted: Boolean,
+    // The system permission dialog is gone (permanently denied, or fine location downgraded to
+    // approximate) -> requesting again is a silent no-op; only the app's settings page can grant.
+    permissionsDeadEnded: Boolean,
     onRequestPermissions: () -> Unit,
+    onOpenAppSettings: () -> Unit,
     onOpenApiAccess: () -> Unit,
     onEnableApiAccess: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -73,15 +77,29 @@ fun SettingsScreen(
                         description = stringResource(R.string.settings_bg_recording_desc),
                         checked = settings.trackingEnabled,
                         onCheckedChange = { enabled ->
-                            if (enabled && !permissionsGranted) onRequestPermissions()
-                            else viewModel.setTracking(enabled)
+                            if (enabled && !permissionsGranted) {
+                                if (permissionsDeadEnded) onOpenAppSettings() else onRequestPermissions()
+                            } else viewModel.setTracking(enabled)
                         },
                     )
                     if (!permissionsGranted) {
-                        OutlinedButton(
-                            onClick = onRequestPermissions,
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) { Text(stringResource(R.string.settings_grant_permissions)) }
+                        if (permissionsDeadEnded) {
+                            Text(
+                                stringResource(R.string.permission_settings_needed_body),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                            OutlinedButton(
+                                onClick = onOpenAppSettings,
+                                modifier = Modifier.padding(top = 8.dp),
+                            ) { Text(stringResource(R.string.action_open_settings)) }
+                        } else {
+                            OutlinedButton(
+                                onClick = onRequestPermissions,
+                                modifier = Modifier.padding(top = 8.dp),
+                            ) { Text(stringResource(R.string.settings_grant_permissions)) }
+                        }
                     }
                 }
             }

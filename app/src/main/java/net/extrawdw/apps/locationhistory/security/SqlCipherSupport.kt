@@ -25,8 +25,10 @@ object SqlCipherSupport {
     /**
      * If [dbFile] exists and is an *unencrypted* SQLite database (left over from before encryption
      * was introduced), copy it into a new SQLCipher database keyed by [rawKey] and swap it into
-     * place. Best-effort: on any failure the plaintext file is removed so the app can start with a
-     * fresh encrypted DB (the raw history is recoverable from the user's backup).
+     * place. On failure the plaintext DB and its sidecars are kept intact and the error rethrown:
+     * the likely causes (disk-full during `sqlcipher_export`) are transient, and no backup is
+     * verified to exist, so the app crashes this launch and retries the migration on the next one
+     * rather than discarding the user's only copy of the data.
      */
     fun migratePlaintextIfNeeded(context: Context, dbFile: File, rawKey: ByteArray) {
         if (!dbFile.exists() || !looksLikePlaintextSqlite(dbFile)) return
@@ -44,17 +46,20 @@ object SqlCipherSupport {
             } finally {
                 src.close()
             }
-            // Swap the encrypted copy into place and drop the plaintext journal siblings.
+            // Drop the stale journal siblings (the open/close above already replayed and
+            // checkpointed them), then swap the encrypted copy into place. rename(2) replaces the
+            // destination atomically, so there is no window with neither database present.
             sidecars(dbFile).forEach { it.delete() }
-            if (!dbFile.delete() || !encryptedTmp.renameTo(dbFile)) {
+            if (!encryptedTmp.renameTo(dbFile)) {
                 error("could not swap encrypted database into place")
             }
             AppLog.i(TAG, "plaintext->encrypted migration complete")
         } catch (t: Throwable) {
-            AppLog.w(TAG, "plaintext migration failed (${t.message}); starting fresh encrypted DB")
+            // Delete only the partial encrypted copy; the plaintext DB stays untouched so the
+            // migration can retry next launch.
+            AppLog.w(TAG, "plaintext migration failed (${t.message}); keeping plaintext DB for retry")
             encryptedTmp.delete()
-            sidecars(dbFile).forEach { it.delete() }
-            dbFile.delete()
+            throw t
         }
     }
 

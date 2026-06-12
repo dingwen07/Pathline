@@ -91,12 +91,25 @@ class TimelineMergerTest {
 
     @Test
     fun samePlaceVisitsWithGapAndNoTripBetween_merge() {
+        // 30 min gap: within MAX_EVIDENCE_GAP_MS, so the no-trip bridge applies.
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour),
-            visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
+            visit(id = 2, start = t0 + hour + 30 * 60_000L, end = t0 + 3 * hour),
         )
         merge()
         assertEquals(listOf(1L), visitDao.visits.map { it.id })
+    }
+
+    @Test
+    fun samePlaceVisitsAcrossLongNoTripGap_stayApart() {
+        // No trip between them, but the 2h sample-free gap exceeds MAX_EVIDENCE_GAP_MS: presence
+        // across the gap is not assumed, so the two real stays must not be welded into one.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 3 * hour, end = t0 + 4 * hour),
+        )
+        merge()
+        assertEquals(2, visitDao.visits.size)
     }
 
     @Test
@@ -306,6 +319,63 @@ class TimelineMergerTest {
         assertTrue(tripDao.trips.isEmpty())
         assertEquals(listOf(1L), visitDao.visits.map { it.id })
         assertEquals(t0 to t0 + 3 * hour, visitDao.visits.single().let { it.startMs to it.endMs })
+    }
+
+    @Test
+    fun longLoopTripWithZeroDisplacement_isNotDrift() {
+        // A run / dog walk from home: kilometers of recorded path that starts and ends at the same
+        // place. Net displacement ~0, but path length and duration give it away as real movement.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
+        )
+        // Out-and-back: ~1.5 km each way, ending where it started.
+        tripDao.seed(
+            trip(
+                id = 1, start = t0 + hour, end = t0 + 2 * hour,
+                points = listOf(1.0 to 1.0, 1.0 to 1.014, 1.0 to 1.0),
+            ),
+        )
+        merge()
+        assertEquals(1, tripDao.trips.size)
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun shortLoopTrip_overDurationCap_isNotDrift() {
+        // Jitter-sized path but a long duration: still not drift (e.g. a slow stroll around the block).
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
+        )
+        tripDao.seed(
+            trip(
+                id = 1, start = t0 + hour, end = t0 + 2 * hour, // 1h >> DRIFT_TRIP_MAX_DURATION_MS
+                points = listOf(1.0 to 1.0, 1.0001 to 1.0003, 1.0 to 1.0003),
+            ),
+        )
+        merge()
+        assertEquals(1, tripDao.trips.size)
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun driftTrip_withFarAwayBoundingVisits_doesNotFuseThem() {
+        // The same-place visits are HOURS away from the jitter trip; deleting it must not weld a
+        // whole afternoon into one stay. Non-adjacent bounds leave trip and visits alone.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 5 * hour, end = t0 + 6 * hour),
+        )
+        tripDao.seed(
+            trip(
+                id = 1, start = t0 + 3 * hour, end = t0 + 3 * hour + 300_000,
+                points = listOf(1.0 to 1.0, 1.0001 to 1.0003, 1.0 to 1.0003),
+            ),
+        )
+        merge()
+        assertEquals(1, tripDao.trips.size)
+        assertEquals(2, visitDao.visits.size)
     }
 
     @Test

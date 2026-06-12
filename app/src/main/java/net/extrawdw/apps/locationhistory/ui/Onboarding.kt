@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -295,9 +296,23 @@ fun OnboardingScreen(
                 }
 
                 OnboardingStep.PERMISSIONS -> {
-                    PrimaryButton(stringResource(if (permissions.granted) R.string.action_continue else R.string.action_allow_access)) {
-                        if (permissions.granted) step = OnboardingStep.BACKGROUND
-                        else permissions.requestForeground()
+                    // Once Android stops showing the dialog (or the user picked "Approximate"),
+                    // re-requesting is a silent no-op — route to app settings instead.
+                    val deadEnded =
+                        permissions.approximateOnly || permissions.foregroundPermanentlyDenied
+                    if (deadEnded) {
+                        SettingsRedirectHint(
+                            if (permissions.approximateOnly) R.string.permission_approximate_only_body
+                            else R.string.permission_settings_needed_body
+                        )
+                        PrimaryButton(stringResource(R.string.action_open_settings)) {
+                            activity.startActivity(appSettingsIntent(activity))
+                        }
+                    } else {
+                        PrimaryButton(stringResource(if (permissions.granted) R.string.action_continue else R.string.action_allow_access)) {
+                            if (permissions.granted) step = OnboardingStep.BACKGROUND
+                            else permissions.requestForeground()
+                        }
                     }
                     TextButton(
                         onClick = { step = OnboardingStep.BACKGROUND },
@@ -306,9 +321,16 @@ fun OnboardingScreen(
                 }
 
                 OnboardingStep.BACKGROUND -> {
-                    PrimaryButton(stringResource(if (permissions.backgroundGranted) R.string.action_finish else R.string.action_allow_all_time)) {
-                        if (permissions.backgroundGranted) proceedFromBackground()
-                        else permissions.requestBackground()
+                    if (permissions.backgroundPermanentlyDenied) {
+                        SettingsRedirectHint(R.string.permission_settings_needed_body)
+                        PrimaryButton(stringResource(R.string.action_open_settings)) {
+                            activity.startActivity(appSettingsIntent(activity))
+                        }
+                    } else {
+                        PrimaryButton(stringResource(if (permissions.backgroundGranted) R.string.action_finish else R.string.action_allow_all_time)) {
+                            if (permissions.backgroundGranted) proceedFromBackground()
+                            else permissions.requestBackground()
+                        }
                     }
                     TextButton(
                         onClick = { proceedFromBackground() },
@@ -461,6 +483,20 @@ private fun PrimaryButton(label: String, onClick: () -> Unit) {
     ) {
         Text(label)
     }
+}
+
+/** Why the request button is gone: the only remaining path is the app's settings page. */
+@Composable
+private fun SettingsRedirectHint(@StringRes textRes: Int) {
+    Text(
+        stringResource(textRes),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+    )
 }
 
 @Composable

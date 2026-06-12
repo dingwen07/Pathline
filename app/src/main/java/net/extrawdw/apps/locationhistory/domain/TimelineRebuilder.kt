@@ -25,6 +25,11 @@ import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
  * plumbing and supplies the Android-bound seams: [matchPlace] (Google Places gateway),
  * [segmentTrips] (LiteRT classifier), [inTransaction] (Room), [now] and [log].
  *
+ * The rebuild runs in two phases: phase 1 (no transaction) does every read and resolves the place
+ * matches — the network calls; phase 2 wraps EVERY write (delete unconfirmed, materialize visits,
+ * rebuild trips, merge, dangling-ref sweep) in a single [inTransaction] block, so observers and a
+ * crash mid-rebuild see either the old derived timeline or the new one, never a half-deleted day.
+ *
  * User-confirmed rows are left in place and treated as ground truth throughout.
  */
 internal class TimelineRebuilder(
@@ -40,7 +45,9 @@ internal class TimelineRebuilder(
     private val matchPlace: suspend (lat: Double, lon: Double) -> PlaceMatch,
     /** Split moving samples into single-mode runs — [TripSegmenter.segment] in production. */
     private val segmentTrips: (List<LocationSampleEntity>) -> List<SegmentResult>,
-    /** Atomicity for the delete-before-rebuild — `db.withTransaction` in production. */
+    /** Atomicity for the whole write phase (delete -> materialize -> trips -> merge -> sweep) —
+     *  `db.withTransaction` in production. Place matches are resolved *before* it so no network
+     *  call ever runs inside the transaction. */
     private val inTransaction: suspend (block: suspend () -> Unit) -> Unit,
     private val now: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = {},
@@ -51,21 +58,48 @@ internal class TimelineRebuilder(
         val range = TimeBuckets.dayRangeMillis(day)
         val dayStart = range.first
         val dayEnd = range.last + 1
+
+        // --- Phase 1: reads + place resolution (network), no transaction held -----------------
+
         // Load a window *wider than the day* so the visit detector sees a stay's full extent instead
         // of clipping it at midnight — a stay that crosses the boundary is then a single spanning row
         // (shown on both days by the time-overlap display query), which is what stops an overnight
         // stay from splitting into two. Delete + rebuild stays scoped to rows overlapping the day, so
         // re-running any day reproduces the same rows.
-        val loadStart = dayStart - Constants.REBUILD_LOOKBACK_MS
-        val loadEnd = dayEnd + Constants.REBUILD_LOOKAHEAD_MS
+        //
+        // Invariant: the delete scope (rows overlapping the day) must never exceed the re-detection
+        // scope (this sample window). An unconfirmed stay/trip can extend further than the fixed
+        // lookback/lookahead (a multi-day stay rebuilt on its last day), so widen the window to the
+        // full extent of the unconfirmed rows about to be deleted, plus a margin — anything deleted
+        // is then guaranteed re-detectable instead of eroding at each midnight rebuild.
+        val earliestUnconfirmedStart = minOf(
+            visitDao.minUnconfirmedStartOverlapping(dayStart, dayEnd) ?: Long.MAX_VALUE,
+            tripDao.minUnconfirmedStartOverlapping(dayStart, dayEnd) ?: Long.MAX_VALUE,
+        )
+        val latestUnconfirmedEnd = maxOf(
+            visitDao.maxUnconfirmedEndOverlapping(dayStart, dayEnd) ?: Long.MIN_VALUE,
+            tripDao.maxUnconfirmedEndOverlapping(dayStart, dayEnd) ?: Long.MIN_VALUE,
+        )
+        // The MAX_VALUE/MIN_VALUE sentinels stay outside min/max after the margin shift, so a day
+        // with no unconfirmed rows keeps the default window.
+        val loadStart = minOf(
+            dayStart - Constants.REBUILD_LOOKBACK_MS,
+            earliestUnconfirmedStart - Constants.REBUILD_SCOPE_MARGIN_MS,
+        )
+        val loadEnd = maxOf(
+            dayEnd + Constants.REBUILD_LOOKAHEAD_MS,
+            latestUnconfirmedEnd + Constants.REBUILD_SCOPE_MARGIN_MS,
+        )
         val samples = sampleDao.range(loadStart, loadEnd)
 
-        inTransaction {
-            tripDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
-            visitDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
+        if (samples.isEmpty()) {
+            // No evidence in the window: still clear the day's unconfirmed rows.
+            inTransaction {
+                tripDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
+                visitDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
+            }
+            return 0
         }
-
-        if (samples.isEmpty()) return 0
 
         val confirmedVisits = visitDao.confirmedOverlapping(loadStart, loadEnd)
         // A confirmed trip hand-classifies a span as movement, so it must suppress stay re-detection
@@ -92,28 +126,38 @@ internal class TimelineRebuilder(
             if (!overlapsDetected && !overlapsConfirmed) candidates.add(ongoing)
         }
 
-        val insertedVisitIds = ArrayList<Long>(candidates.size)
-        for (candidate in candidates) {
-            val inserted = materializeVisit(candidate, samples, latest)
-            if (inserted != null) insertedVisitIds.add(inserted)
+        // Resolve every candidate's place match up front — these are the (potentially slow) Google
+        // Places lookups, and they must not run while the write transaction below is held.
+        val resolved = candidates.mapNotNull { resolveCandidate(it, samples) }
+
+        // --- Phase 2: one transaction over every write ------------------------------------------
+
+        var insertedCount = 0
+        inTransaction {
+            tripDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
+            visitDao.deleteUnconfirmedOverlapping(dayStart, dayEnd)
+
+            for (candidate in resolved) {
+                if (materializeVisit(candidate, latest) != null) insertedCount++
+            }
+
+            // Confirming a visit locks its *place*, not its *clock*: a confirmed visit that is still
+            // ongoing must keep extending while the user is there, and finalize once they move on.
+            // (Maintenance otherwise leaves confirmed visits untouched, which froze the end time.)
+            extendConfirmedOngoingVisits(confirmedVisits, latest, now())
+
+            rebuildTrips(loadStart, loadEnd, dayStart, dayEnd)
+            // Show the trip that is *currently in progress* (you've left a place but not arrived yet).
+            // rebuildTrips needs both endpoints, so the tail after the last visit is otherwise invisible
+            // until you become stationary.
+            buildOngoingTrip(loadStart, loadEnd, dayStart, dayEnd, latest)
+            merger.merge(loadStart, loadEnd)
+
+            // Deleting/rebuilding unconfirmed visits and merging can leave a surviving confirmed trip
+            // pointing at a visit id that no longer exists. Sweep the whole table (this also cleans
+            // orphans inherited from older data) so the trip graph stays reconstructable from a backup.
+            tripDao.detachDanglingVisits()
         }
-
-        // Confirming a visit locks its *place*, not its *clock*: a confirmed visit that is still
-        // ongoing must keep extending while the user is there, and finalize once they move on.
-        // (Maintenance otherwise leaves confirmed visits untouched, which froze the end time.)
-        extendConfirmedOngoingVisits(confirmedVisits, latest, now())
-
-        rebuildTrips(loadStart, loadEnd, dayStart, dayEnd)
-        // Show the trip that is *currently in progress* (you've left a place but not arrived yet).
-        // rebuildTrips needs both endpoints, so the tail after the last visit is otherwise invisible
-        // until you become stationary.
-        buildOngoingTrip(loadStart, loadEnd, dayStart, dayEnd, latest)
-        merger.merge(loadStart, loadEnd)
-
-        // Deleting/rebuilding unconfirmed visits and merging can leave a surviving confirmed trip
-        // pointing at a visit id that no longer exists. Sweep the whole table (this also cleans
-        // orphans inherited from older data) so the trip graph stays reconstructable from a backup.
-        tripDao.detachDanglingVisits()
 
         // Let matched places drift toward where the user actually goes. recordVisitToPlace weights
         // confirmed visits 4x and decays old ones, so auto-detected visits nudge the center/radius
@@ -121,14 +165,24 @@ internal class TimelineRebuilder(
         visitDao.overlapping(loadStart, loadEnd).mapNotNull { it.placeId }.distinct()
             .forEach { placeRepository.recordVisitToPlace(it) }
 
-        return insertedVisitIds.size
+        return insertedCount
     }
 
-    private suspend fun materializeVisit(
+    /** A candidate plus everything phase 2 needs to materialize it without further network I/O. */
+    private data class ResolvedCandidate(
+        val candidate: VisitCandidate,
+        val match: PlaceMatch?,
+        val initialGeom: StayGeometry,
+        val usable: List<LocationSampleEntity>,
+    )
+
+    /** Phase-1 half of materialization: derive the candidate's initial geometry from the in-memory
+     *  samples and resolve its place match (the network call). Returns null when the candidate has
+     *  no usable samples at all. */
+    private suspend fun resolveCandidate(
         candidate: VisitCandidate,
         samples: List<LocationSampleEntity>,
-        latest: LocationSampleEntity?,
-    ): Long? {
+    ): ResolvedCandidate? {
         val span = samples.inRange(candidate.startMs, candidate.endMs + 1)
         val usable = span.filter { it.includedInComputation }.ifEmpty { span }
         if (usable.isEmpty()) return null
@@ -143,6 +197,16 @@ internal class TimelineRebuilder(
         }.onFailure {
             log("place match failed; keeping visit unmatched")
         }.getOrNull()
+        return ResolvedCandidate(candidate, match, initialGeom, usable)
+    }
+
+    /** Phase-2 half of materialization: persist a resolved candidate using its pre-resolved match —
+     *  runs inside the write transaction, so only local DB work happens here. */
+    private suspend fun materializeVisit(
+        resolved: ResolvedCandidate,
+        latest: LocationSampleEntity?,
+    ): Long? {
+        val (candidate, match, initialGeom, usable) = resolved
 
         if (match is PlaceMatch.Local) {
             locationRepository.excludeDriftOutside(
@@ -215,7 +279,10 @@ internal class TimelineRebuilder(
         val stillThere = latest.timestampMs >= current.startMs && latest.includedInComputation &&
                 latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
                 (latest.speed ?: 0f) <= 0.8f && nearby
-        if (stillThere) {
+        // Evidence-gap policy: beyond MAX_EVIDENCE_GAP_MS without a sample, presence is no longer
+        // assumed — a recording outage must not keep inflating the stay to `now`.
+        val freshEvidence = now - latest.timestampMs <= Constants.MAX_EVIDENCE_GAP_MS
+        if (stillThere && freshEvidence) {
             // Recompute the visit's own center/radius from its (now longer) sample span so the
             // visit circle stays accurate as the stay grows — this also feeds the place's
             // recency-weighted radius/center.
@@ -234,6 +301,13 @@ internal class TimelineRebuilder(
                     sampleCount = if (geom != null) span.size else current.sampleCount,
                     reliability = geom?.reliability?.toFloat() ?: current.reliability,
                 ),
+            )
+        } else if (stillThere) {
+            // No departure evidence, but the trail is stale: close the stay at the last recorded
+            // sample instead of fabricating presence. Fresh post-gap samples form a new stay (the
+            // detector splits clusters across such a gap for the same reason).
+            visitDao.update(
+                current.copy(endMs = maxOf(current.endMs, latest.timestampMs), isOngoing = false),
             )
         } else if (latest.timestampMs > current.endMs) {
             visitDao.update(current.copy(isOngoing = false))
@@ -271,9 +345,18 @@ internal class TimelineRebuilder(
         if (tail.isEmpty()) tail.add(latest)
         val good = tail.toList()
         val geom = VisitGeometry.compute(good, latest.latitude, latest.longitude)
+        // Extend the ongoing stay to `now` only while the evidence is fresh; once the latest sample
+        // is older than the gap cap, presence is no longer assumed and the stay closes at it.
+        val nowMs = now()
+        val endMs =
+            if (nowMs - latest.timestampMs <= Constants.MAX_EVIDENCE_GAP_MS) {
+                maxOf(good.last().timestampMs, nowMs)
+            } else {
+                good.last().timestampMs
+            }
         return VisitCandidate(
             startMs = good.first().timestampMs,
-            endMs = maxOf(good.last().timestampMs, now()),
+            endMs = endMs,
             centroidLatitude = geom.latitude,
             centroidLongitude = geom.longitude,
             sampleCount = good.size,
@@ -294,6 +377,10 @@ internal class TimelineRebuilder(
         latest: LocationSampleEntity?,
     ) {
         if (latest == null || latest.devicePhysicalState == DevicePhysicalState.STATIONARY) return
+        // Like ongoingStationaryCandidate: the in-progress trip only belongs to the day the latest
+        // sample falls in. Rebuilding a *past* day while currently moving must not segment days of
+        // samples into a bogus trip spanning from that day's last visit to now.
+        if (latest.timestampMs < dayStart || latest.timestampMs >= dayEnd) return
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         val origin = visits.lastOrNull { it.endMs <= latest.timestampMs } ?: return
         val confirmedTrips =

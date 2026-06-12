@@ -61,6 +61,14 @@ class VisitDetector @Inject constructor() {
                 cluster.add(s); cLat = s.latitude; cLon = s.longitude
                 continue
             }
+            // Evidence-gap policy: beyond MAX_EVIDENCE_GAP_MS with no samples, presence is no longer
+            // assumed — even at the same spot, a recording gap closes the cluster, so a 10:00 fix and
+            // an 18:00 fix become two candidates, not one fabricated 8h visit.
+            if (s.timestampMs - cluster.last().timestampMs > Constants.MAX_EVIDENCE_GAP_MS) {
+                flush()
+                cluster.add(s); cLat = s.latitude; cLon = s.longitude
+                continue
+            }
             val d = Geo.distanceMeters(cLat, cLon, s.latitude, s.longitude)
             if (d <= Constants.STATIONARY_RADIUS_METERS) {
                 cluster.add(s)

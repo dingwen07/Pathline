@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <files-path name="logs" path="logs/" />
+    <!-- AppLog session files live in noBackupFilesDir (kept out of cloud auto-backup). There is no
+         dedicated FileProvider tag for it, so reach it relative to filesDir; FileProvider
+         canonicalizes the ".." at parse time. -->
+    <files-path name="session-logs" path="../no_backup/logs/" />
 </paths>

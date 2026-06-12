@@ -200,7 +200,8 @@ class WorkScheduler @Inject constructor(
             )
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
-        workManager.enqueueUniqueWork(WORK_BACKUP_NOW, ExistingWorkPolicy.REPLACE, request)
+        // KEEP, not REPLACE: a second "Back up now" tap must not cancel a backup already in flight.
+        workManager.enqueueUniqueWork(WORK_BACKUP_NOW, ExistingWorkPolicy.KEEP, request)
     }
 
     companion object {

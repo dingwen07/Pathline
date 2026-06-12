@@ -117,6 +117,16 @@ interface VisitDao {
         endMs: Long
     ): List<VisitEntity>
 
+    /** Earliest start of an UNCONFIRMED visit overlapping [startMs, endMs). The rebuilder widens its
+     *  sample window to cover the rows it is about to delete — the delete scope must never exceed
+     *  the re-detection scope (see [net.extrawdw.apps.locationhistory.core.Constants.REBUILD_SCOPE_MARGIN_MS]). */
+    @Query("SELECT MIN(startMs) FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long?
+
+    /** Latest end of an UNCONFIRMED visit overlapping [startMs, endMs) — see [minUnconfirmedStartOverlapping]. */
+    @Query("SELECT MAX(endMs) FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long?
+
     @Query("DELETE FROM visits WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)
 
@@ -191,6 +201,14 @@ interface TripDao {
         startMs: Long,
         endMs: Long
     ): List<TripEntity>
+
+    /** Earliest start of an UNCONFIRMED trip overlapping [startMs, endMs) — see the visit twin. */
+    @Query("SELECT MIN(startMs) FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long?
+
+    /** Latest end of an UNCONFIRMED trip overlapping [startMs, endMs) — see the visit twin. */
+    @Query("SELECT MAX(endMs) FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
+    suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long?
 
     @Query("DELETE FROM trips WHERE confirmed = 0 AND startMs < :endMs AND endMs > :startMs")
     suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long)

@@ -19,6 +19,7 @@ import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
 import net.extrawdw.apps.locationhistory.domain.PlaceMatcher
 import net.extrawdw.apps.locationhistory.domain.TimelineMerger
 import net.extrawdw.apps.locationhistory.domain.TimelineRebuilder
+import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import net.extrawdw.apps.locationhistory.domain.TripSegmenter
 import net.extrawdw.apps.locationhistory.domain.VisitDetector
 
@@ -44,6 +45,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private val placeMatcher: PlaceMatcher,
     private val tripSegmenter: TripSegmenter,
     private val merger: TimelineMerger,
+    private val timelineWriteLock: TimelineWriteLock,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -65,7 +67,9 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             inTransaction = { block -> db.withTransaction { block() } },
             log = { AppLog.w(TAG, it) },
         )
-        val visits = rebuilder.rebuildDay(day)
+        // The whole rebuild holds the timeline write lock, so a user confirmation or hand edit can
+        // never interleave with the delete-unconfirmed/reinsert sweep (which would silently drop it).
+        val visits = timelineWriteLock.withLock { rebuilder.rebuildDay(day) }
 
         AppLog.i(TAG, "maintenance complete day=$day visits=$visits")
         return Result.success()

@@ -42,6 +42,7 @@ import net.extrawdw.apps.locationhistory.ui.MapMemoryPressure
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
 import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
+import net.extrawdw.apps.locationhistory.ui.appSettingsIntent
 import net.extrawdw.apps.locationhistory.ui.rememberPathlinePermissions
 import net.extrawdw.apps.locationhistory.ui.theme.PathlineTheme
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
@@ -176,7 +177,12 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                     ) {
                         SettingsScreen(
                             permissionsGranted = permissions.granted,
+                            permissionsDeadEnded =
+                                permissions.approximateOnly || permissions.foregroundPermanentlyDenied,
                             onRequestPermissions = permissions::request,
+                            onOpenAppSettings = {
+                                context.startActivity(appSettingsIntent(context))
+                            },
                             // Row tap: the onboarding entry shows the first-run explainer when access
                             // is off and undecided, else goes straight to the access manager.
                             onOpenApiAccess = {

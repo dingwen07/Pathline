@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.backup
 import android.content.Context
 import androidx.room.withTransaction
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -39,9 +40,10 @@ data class RestoreReport(val partitionsRestored: Int, val rowsRestored: Int)
  * Reads/writes the structured backup described by [BackupManifest].
  *
  * Two write modes:
- *  - **incremental** ([runIncremental]) — claims the dirty-partition set the triggers maintain and
- *    re-emits only those (stream, week) files, merging into the existing inventory. The standard
- *    periodic path; only the latest week(s) change for an active recorder.
+ *  - **incremental** ([runIncremental]) — reads the dirty-partition set the triggers maintain and
+ *    re-emits only those (stream, week) files, merging into the existing inventory; the claimed
+ *    keys are cleared only after the manifest commit, so an interrupted run loses no markers. The
+ *    standard periodic path; only the latest week(s) change for an active recorder.
  *  - **full** ([runFull]) — re-emits every populated week. Used for the one-time database dump and
  *    for reclaim reconciliation when a SAF grant was lost.
  *
@@ -155,12 +157,18 @@ class BackupEngine @Inject constructor(
         val merged = LinkedHashMap<String, PartitionEntry>()
         previous.partitions.forEach { merged[it.stream + "/" + it.weekStart] = it }
 
-        val claimed = backupDao.claimDirty()
+        // Read the dirty set WITHOUT consuming it: the claimed keys are deleted only after the
+        // manifest commit below, so a run that dies anywhere before that point (emit error, SAF
+        // failure, process kill, WorkManager cancellation) leaves every marker in place for the
+        // next run. Markers added by the recorder after this read are new keys the post-commit
+        // delete never matches.
+        val claimed = backupDao.allDirty()
         val total = (claimed.size + 1).coerceAtLeast(1)
         reporter.log("Incremental backup: ${claimed.size} changed partition(s)")
         var written = 0
         var failed = 0
         var done = 0
+        val emitted = ArrayList<BackupDirtyPartitionEntity>(claimed.size)
         for (dirty in claimed) {
             val key = dirty.stream + "/" + dirty.weekStart
             val label = dirty.stream + "/" + TimeBuckets.weekKey(dirty.weekStart)
@@ -173,12 +181,14 @@ class BackupEngine @Inject constructor(
                     prevPartitions[key]
                 )
                 if (entry == null) merged.remove(key) else merged[key] = entry
+                emitted += dirty
                 written++
                 reporter.log("Backed up $label (${entry?.rowCount ?: 0} rows)")
+            } catch (e: CancellationException) {
+                throw e // cooperative cancellation must abort the run; markers are still intact
             } catch (t: Throwable) {
                 AppLog.w(TAG, "partition $label failed: ${t.message}")
-                backupDao.markDirty(listOf(dirty)) // retry next run; previous entry stays referenced
-                failed++
+                failed++ // marker was never deleted -> the partition is retried next run
                 reporter.log("FAILED $label: ${t.message}")
             }
             reporter.progress(++done / total.toFloat())
@@ -189,6 +199,9 @@ class BackupEngine @Inject constructor(
         val partitions = merged.values.toList()
         val invName =
             writeManifest(root, material, partitions, snapshots, nowMs, existing?.inventory)
+        // The manifest commit succeeded: only now retire the markers of partitions this run
+        // actually emitted (a failed emit keeps its marker by exclusion).
+        backupDao.clearDirtySet(emitted)
         pruneOrphans(root, partitions, snapshots, invName)
         reporter.progress(1f)
         AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${partitions.size}")
@@ -199,6 +212,10 @@ class BackupEngine @Inject constructor(
         root: SafDir, material: Material, nowMs: Long, clearDirtyAfter: Boolean,
         reporter: BackupReporter = BackupReporter.None,
     ): BackupReport {
+        // Snapshot the dirty set up front when this run is meant to clear it: every week populated
+        // at this point is re-read by the emits below, while markers added during the (potentially
+        // minutes-long) run are new keys the post-commit delete never matches.
+        val dirtyAtStart = if (clearDirtyAfter) backupDao.allDirty() else emptyList()
         // Best-effort previous inventory: a full backup re-emits every week regardless, so an
         // unreadable inventory just means "no reuse" (everything is rewritten), which is always safe.
         val existing = readManifest(root)
@@ -216,6 +233,7 @@ class BackupEngine @Inject constructor(
         val total = (weeksByStream.values.sumOf { it.size } + 1).coerceAtLeast(1)
         reporter.log("Full backup: $total partition group(s)")
         val entries = ArrayList<PartitionEntry>()
+        val failedKeys = HashSet<String>()
         var failed = 0
         var done = 0
         for ((stream, weeks) in weeksByStream) {
@@ -231,9 +249,12 @@ class BackupEngine @Inject constructor(
                         entries.add(it)
                         reporter.log("Backed up $stream/${it.weekKey} (${it.rowCount} rows)")
                     }
+                } catch (e: CancellationException) {
+                    throw e // cooperative cancellation must abort the run; markers are still intact
                 } catch (t: Throwable) {
                     val label = "$stream/${TimeBuckets.weekKey(week)}"
                     AppLog.w(TAG, "full: $label failed: ${t.message}")
+                    failedKeys += "$stream/$week"
                     failed++
                     reporter.log("FAILED $label: ${t.message}")
                 }
@@ -243,8 +264,12 @@ class BackupEngine @Inject constructor(
         reporter.log("Writing snapshots…")
         val snapshots = writeSnapshots(root, material, prevSnapshots)
         val invName = writeManifest(root, material, entries, snapshots, nowMs, existing?.inventory)
+        // The manifest commit succeeded: retire only markers present at run start whose week was
+        // emitted; a failed week keeps its marker so the next incremental retries it.
+        if (clearDirtyAfter) {
+            backupDao.clearDirtySet(dirtyAtStart.filterNot { it.stream + "/" + it.weekStart in failedKeys })
+        }
         pruneOrphans(root, entries, snapshots, invName)
-        if (clearDirtyAfter) backupDao.clearAllDirty()
         reporter.progress(1f)
         AppLog.i(TAG, "full backup: wrote=${entries.size} failed=$failed")
         return BackupReport(entries.size, failed, entries.size)

@@ -220,6 +220,74 @@ class TimelineRebuilderTest {
         assertEquals(1, visitDao.visits.size)
     }
 
+    @Test
+    fun multiDayUnconfirmedStay_survivesRebuildOfItsLastDay() {
+        // A 46h continuous stay (day-2 12:00 -> day 10:00, a fix every 30 min) whose spanning row a
+        // previous rebuild produced. Rebuilding its LAST day deletes the row (it overlaps the day),
+        // so the sample window must widen to the row's full extent — with only the fixed 18h
+        // lookback the stay would be re-detected from the lookback boundary, eroding ~a day.
+        stay(-36 * 60, 10 * 60, lat = 40.0, stepMin = 30)
+        nowMs = at(12 * 60)
+        visitDao.seed(
+            confirmedVisit(id = 50, startMin = -36 * 60, endMin = 10 * 60)
+                .copy(confirmed = false, confidence = 0.5f),
+        )
+
+        rebuild(day)
+
+        val v = visitDao.visits.single()
+        assertFalse(v.confirmed)
+        assertEquals(at(-36 * 60) to at(10 * 60), v.startMs to v.endMs)
+    }
+
+    // ---- evidence gaps ----------------------------------------------------------------------
+
+    @Test
+    fun recordingGap_splitsStayIntoTwoVisits() {
+        // Same spot at 10:00-10:30 and 18:00-18:30 with nothing recorded between: presence across
+        // the 7.5h gap must not be assumed, so two visits — not one fabricated 8h stay.
+        stay(600, 630, lat = 40.0)
+        stay(1080, 1110, lat = 40.0)
+        nowMs = at(1140)
+
+        rebuild()
+
+        val visits = visitDao.visits.sortedBy { it.startMs }
+        assertEquals(2, visits.size)
+        assertEquals(at(600) to at(630), visits[0].startMs to visits[0].endMs)
+        assertEquals(at(1080) to at(1110), visits[1].startMs to visits[1].endMs)
+    }
+
+    @Test
+    fun staleLatestSample_doesNotExtendOngoingCandidateToNow() {
+        // Too short to be a detected stay, so only the ongoing-candidate path materializes it. The
+        // latest sample is 70 min old — beyond the evidence cap — so the stay closes at the last
+        // fix instead of stretching to now.
+        stay(628, 630, lat = 40.0)
+        nowMs = at(700)
+
+        rebuild()
+
+        assertEquals(at(630), visitDao.visits.single().endMs)
+    }
+
+    @Test
+    fun staleConfirmedOngoingVisit_closesAtLastEvidence() {
+        // The ongoing confirmed stay has fresh samples up to 10:30, then recording stopped; at
+        // 13:20 maintenance must close it at the last fix, not fabricate presence to now.
+        stay(540, 630, lat = 40.0)
+        visitDao.seed(
+            confirmedVisit(id = 100, startMin = 540, endMin = 600, placeId = 7, ongoing = true),
+        )
+        nowMs = at(800)
+
+        rebuild()
+
+        val current = runBlocking { visitDao.byId(100) }!!
+        assertEquals(at(630), current.endMs)
+        assertFalse(current.isOngoing)
+    }
+
     // ---- confirmed rows are ground truth ---------------------------------------------------------
 
     @Test
@@ -311,6 +379,21 @@ class TimelineRebuilderTest {
         assertEquals(origin.id, trip.fromVisitId)
         assertNull(trip.toVisitId)
         assertEquals(TransportMode.WALKING, trip.mode)
+    }
+
+    @Test
+    fun rebuildingAPastDay_whileCurrentlyMoving_buildsNoOngoingTrip() {
+        // Yesterday had a normal stay; right now the user is walking (the latest sample is in
+        // TODAY). Rebuilding the PAST day must not segment the span from yesterday's last visit to
+        // now into a bogus ongoing trip — the latest sample doesn't belong to the maintained day.
+        stay(600, 630, lat = 40.0)
+        walk(24 * 60 + 600, 24 * 60 + 630, fromLat = 40.001)
+        nowMs = at(24 * 60 + 631)
+
+        rebuild(day)
+
+        assertEquals(at(600) to at(630), visitDao.visits.single().let { it.startMs to it.endMs })
+        assertTrue(tripDao.trips.isEmpty())
     }
 
     // ---- integrity sweep ---------------------------------------------------------------------------

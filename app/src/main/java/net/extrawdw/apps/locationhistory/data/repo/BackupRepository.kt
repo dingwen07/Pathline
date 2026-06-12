@@ -4,8 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import net.extrawdw.apps.locationhistory.backup.BackupEngine
 import net.extrawdw.apps.locationhistory.backup.BackupReporter
@@ -73,6 +76,17 @@ class BackupRepository @Inject constructor(
     private val backupDao: net.extrawdw.apps.locationhistory.data.db.BackupDao,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+    /**
+     * One backup/dump/restore at a time, process-wide. Two concurrent engine runs corrupt each
+     * other: pruneOrphans deletes every file outside its own keep-set (including one the other run
+     * just committed), and a worker backup can prune files a managed restore is mid-read on. All
+     * entry points — the periodic worker, the "back up now" worker, and every controller-managed
+     * operation — funnel through this repository, so a single Mutex here covers them. The Mutex is
+     * NOT reentrant: it is taken only in [performBackup], [oneTimeDump], and [restoreFrom], none of
+     * which call each other (the public backup wrappers all bottom out in [performBackup]).
+     */
+    private val opMutex = Mutex()
 
     val config: Flow<BackupConfig> get() = settings.backupConfig
 
@@ -171,7 +185,7 @@ class BackupRepository @Inject constructor(
     private suspend fun performBackup(
         full: Boolean,
         reporter: BackupReporter = BackupReporter.None
-    ): BackupResult {
+    ): BackupResult = opMutex.withLock {
         val cfg = settings.backupConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
         val tree = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
@@ -193,6 +207,8 @@ class BackupRepository @Inject constructor(
             }
             settings.setLastBackup(now)
             BackupResult.Backed(report)
+        } catch (e: CancellationException) {
+            throw e // cancellation is not a failure; let it abort the caller
         } catch (t: Throwable) {
             AppLog.w(TAG, "backup failed: ${t.message}")
             BackupResult.Error(t.message ?: "backup failed")
@@ -233,6 +249,8 @@ class BackupRepository @Inject constructor(
             val n = engine.exportGpx(dir, weeks, reporter)
             settings.setGpxLastExport(now)
             BackupResult.Exported(n)
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             AppLog.w(TAG, "gpx export failed: ${t.message}")
             BackupResult.Error(t.message ?: "gpx export failed")
@@ -260,6 +278,8 @@ class BackupRepository @Inject constructor(
             }
             reporter.log("Exporting GPX…")
             BackupResult.Exported(engine.exportGpx(dir, weeks, reporter))
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             BackupResult.Error(t.message ?: "gpx export failed")
         }
@@ -276,7 +296,7 @@ class BackupRepository @Inject constructor(
         subdir: String?,
         choice: EncryptionChoice,
         reporter: BackupReporter
-    ): BackupResult {
+    ): BackupResult = opMutex.withLock {
         persistPermission(treeUri, write = true)
         val tree = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
         val root = rootDir(tree, subdir)
@@ -302,6 +322,8 @@ class BackupRepository @Inject constructor(
                     reporter = reporter
                 )
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             BackupResult.Error(t.message ?: "dump failed")
         }
@@ -317,13 +339,15 @@ class BackupRepository @Inject constructor(
         password: CharArray?,
         prfSecret: ByteArray?,
         reporter: BackupReporter
-    ): BackupResult {
+    ): BackupResult = opMutex.withLock {
         persistPermission(treeUri, write = true)
         val tree =
             safStore.open(treeUri) ?: return BackupResult.Error("cannot read the selected folder")
         val pwd = password ?: keyVault.localPassword()
         return try {
             BackupResult.Restored(engine.restore(tree, pwd, prfSecret, reporter))
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             AppLog.w(TAG, "restore failed: ${t.message}")
             BackupResult.Error(t.message ?: "restore failed")

@@ -199,6 +199,9 @@
     <string name="action_allow_all_time">始终允许</string>
     <string name="action_maybe_later">以后再说</string>
     <string name="action_ok">确定</string>
+    <string name="action_open_settings">打开应用设置</string>
+    <string name="permission_approximate_only_body">精确位置已关闭。Pathline 需要精确位置才能识别到访和行程——请在应用设置中为 Pathline 开启。</string>
+    <string name="permission_settings_needed_body">Android 不再显示权限对话框。请改为在应用设置中为 Pathline 授予权限。</string>
 
     <!-- ============================ Map explorer ============================ -->
     <string name="range_today">今天</string>
@@ -366,6 +369,8 @@
     <!-- 当其他应用请求开启访问时，与该应用图标一同显示。%1$s = 应用名称。 -->
     <string name="api_consent_request_header">%1$s</string>
     <string name="api_consent_request_note">您可能仍需为 %1$s 批准这些权限</string>
+    <string name="api_consent_unverified_title">无法识别发出请求的应用</string>
+    <string name="api_consent_unverified_body">有应用请求访问您的 Pathline 数据，但未以 Android 可验证的方式表明身份，因此不会为其显示授权界面。您仍可以在 Pathline 的设置中自行开启数据访问。</string>
     <string name="api_consent_turn_on">开启访问</string>
     <string name="api_consent_not_now">暂不</string>
     <string name="api_consent_never_ask">不再询问</string>

@@ -23,6 +23,24 @@ object Constants {
     const val REBUILD_LOOKBACK_MS = 18 * 60 * 60_000L
     const val REBUILD_LOOKAHEAD_MS = 18 * 60 * 60_000L
 
+    /**
+     * Safety margin (ms) added when the rebuild widens its sample window to cover the full extent of
+     * the unconfirmed rows it is about to delete. Invariant: the delete scope must never exceed the
+     * re-detection scope — a stay longer than [REBUILD_LOOKBACK_MS] would otherwise be deleted whole
+     * but re-detected only from the lookback boundary, eroding ~a day of coverage at every midnight
+     * rebuild.
+     */
+    const val REBUILD_SCOPE_MARGIN_MS = 60 * 60_000L
+
+    /**
+     * Beyond this gap (ms) with no recorded samples, presence is no longer assumed. Applied in three
+     * places: the visit detector closes a cluster across a longer gap (a 10:00 and an 18:00 fix at
+     * the same spot are two stays, not one 8h visit), the merger refuses to bridge two same-place
+     * visits over a longer no-trip gap, and an ongoing visit stops extending to `now` once the
+     * latest sample is older than this. Prevents recording outages from fabricating presence.
+     */
+    const val MAX_EVIDENCE_GAP_MS = 45 * 60_000L
+
     /** Radius (m) used when matching a visit centroid against the local place database. */
     const val PLACE_MATCH_RADIUS_METERS = 80.0
 
@@ -68,6 +86,21 @@ object Constants {
 
     /** GPS speed (m/s) at or above which a near-anchor fix counts as real movement, not drift. */
     const val DRIFT_MOVING_SPEED_MPS = 1.2f
+
+    /** Cap (m) on the recorded path length of a trip classified as drift between two same-place
+     *  visits. Net displacement alone is not enough: a real loop trip (a run or dog walk from home)
+     *  also starts and ends at the same place with ~zero displacement, but records kilometers of
+     *  path — only a jitter-sized path may be deleted as drift. */
+    const val DRIFT_TRIP_MAX_PATH_METERS = 300.0
+
+    /** Duration twin (ms) of [DRIFT_TRIP_MAX_PATH_METERS]: GPS jitter is brief, while a long
+     *  out-and-back excursion is real movement even when displacement and path both read low. */
+    const val DRIFT_TRIP_MAX_DURATION_MS = 10 * 60_000L
+
+    /** Upper bound (ms) on a one-shot getCurrentLocation wait. A cold GPS fix indoors can take
+     *  20-30s — longer than a broadcast receiver's goAsync window, and the controller mutex is held
+     *  while waiting. Past this, the request is cancelled and callers fall back to no-fix paths. */
+    const val CURRENT_FIX_TIMEOUT_MS = 8_000L
 
     /**
      * Accelerometer motion-energy (variance) at or above which the phone is physically moving, so a

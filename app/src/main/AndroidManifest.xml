@@ -22,6 +22,9 @@
     <!-- Re-arm recording after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Hijacking defense on the API consent screens -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!--
@@ -195,8 +198,9 @@
             android:theme="@style/Theme.Pathline" />
 
         <!-- First-run onboarding for the data API. Exported so another app can fire
-             PathlineContract.Actions.REQUEST_API_ACCESS to ask the user to turn access on; it only
-             shows UI (the user decides) and returns no result. -->
+             PathlineContract.Actions.REQUEST_API_ACCESS to ask the user to turn access on; the user
+             decides, and RESULT_OK/RESULT_CANCELED (+ EXTRA_ACCESS_ENABLED) is returned to callers
+             that started it for a result. -->
         <activity
             android:name=".ui.ApiAccessOnboardingActivity"
             android:exported="true"

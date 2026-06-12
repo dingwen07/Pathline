@@ -122,6 +122,8 @@ internal class RecordingHeuristics {
      * is the gate on leaving the low-power stationary cadence, so a false positive keeps us
      * undersampling — hence physical movement ([motionVariance]) is weighted heavily: any real walk
      * shakes the device and is never suppressed, even at a noisy-GPS place with no GPS speed.
+     * Without a [stationaryAnchor] there is no displacement to measure, so nothing can be called
+     * drift — treating that as drift would suppress every departure until an anchor appears.
      */
     fun isDriftAt(
         state: DevicePhysicalState,
@@ -131,9 +133,9 @@ internal class RecordingHeuristics {
         motionVariance: Float,
     ): Boolean {
         if (state != DevicePhysicalState.STATIONARY) return false
-        val anchor = stationaryAnchor ?: return true
         if (speedMps >= Constants.DRIFT_MOVING_SPEED_MPS) return false
         if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
+        val anchor = stationaryAnchor ?: return false
         val d = Geo.distanceMeters(anchor.first, anchor.second, lat, lon)
         return d < stationaryNoiseRadius()
     }

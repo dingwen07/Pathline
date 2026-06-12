@@ -127,9 +127,21 @@ class RecordingHeuristicsTest {
     }
 
     @Test
-    fun drift_assumedWithoutAnchor() {
-        // Stationary but anchorless: nothing to measure against, suppress the exit.
-        assertTrue(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0, -74.0, 0f, 0f))
+    fun drift_neverWithoutAnchor() {
+        // Stationary but anchorless: nothing to measure displacement against, so it can't be
+        // called drift — assuming drift here would suppress every departure forever.
+        assertFalse(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0, -74.0, 0f, 0f))
+    }
+
+    @Test
+    fun drift_neverWithoutAnchor_evenAtGpsSpeed() {
+        // The speed override applies before the anchor check: anchorless + moving is a departure.
+        assertFalse(
+            h.isDriftAt(
+                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                Constants.DRIFT_MOVING_SPEED_MPS, 0f,
+            ),
+        )
     }
 
     @Test

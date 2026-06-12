@@ -18,9 +18,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import net.extrawdw.apps.locationhistory.core.AppLog
+import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
@@ -40,6 +44,11 @@ import javax.inject.Singleton
  * geofence exits) and to batched location deliveries, deciding when to record, when to drop into
  * the stationary/geofence state, and how to persist + classify each sample. It holds no wakelock —
  * everything is driven by system-delivered PendingIntents.
+ *
+ * Single-writer rule: every externally-invoked entry point (receivers, the foreground service,
+ * workers, UI) serializes on [stateMutex], so concurrent broadcasts cannot interleave state
+ * transitions or double-start the recorder. The mutex is NOT reentrant: locked wrappers delegate to
+ * private *Core helpers, and internal code only ever calls the helpers, never another wrapper.
  */
 @Singleton
 class RecordingController @Inject constructor(
@@ -71,6 +80,9 @@ class RecordingController @Inject constructor(
      *  See [RecordingHeuristics] — extracted so the rules are JVM-testable. */
     private val heuristics = RecordingHeuristics()
 
+    /** Serializes all externally-invoked entry points (see class doc). Not reentrant. */
+    private val stateMutex = Mutex()
+
     /** Long-lived scope for the significant-motion backoff re-arm (process-lifetime singleton). */
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -99,7 +111,11 @@ class RecordingController @Inject constructor(
      * — when the device is still we drop to a low-power location cadence rather than stopping the
      * service, so it never silently exits.
      */
-    suspend fun startTracking() = withContext(Dispatchers.Default) {
+    suspend fun startTracking() {
+        stateMutex.withLock { startTrackingCore() }
+    }
+
+    private suspend fun startTrackingCore() = withContext(Dispatchers.Default) {
         // The bootstrap fix is classified here (ML inference), and the UI calls this from the main
         // dispatcher — so keep the whole sequence off the main thread.
         AppLog.i(TAG, "startTracking")
@@ -108,19 +124,28 @@ class RecordingController @Inject constructor(
         recorderService.start(currentState, profile)
         val fix = getCurrentLocation()
         if (fix != null) {
-            AppLog.i(TAG, "startTracking: bootstrap fix ${fix.latitude},${fix.longitude}")
-            handleLocations(listOf(fix))
+            // No raw coordinates in logs: session files can leave the device via the log export.
+            val ageMs = System.currentTimeMillis() - fix.time
+            AppLog.i(
+                TAG,
+                "startTracking: bootstrap fix acc=${if (fix.hasAccuracy()) fix.accuracy else null} ageMs=$ageMs"
+            )
+            handleLocationsCore(listOf(fix))
         } else {
             AppLog.w(TAG, "startTracking: no bootstrap fix available")
         }
     }
 
-    suspend fun disableTracking() {
+    suspend fun disableTracking(): Unit = stateMutex.withLock {
         AppLog.i(TAG, "disableTracking")
         recognitionManager.stop()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
         recorderService.stop()
+        // The fused PI location request is system-persistent state (it survives process death) and
+        // is not tracked by the in-memory running flag — recorderService.stop() no-ops when the
+        // flag is already false — so remove it here unconditionally.
+        removeOrphanedLocationUpdates()
         workScheduler.cancelRecordingWatchdog()
     }
 
@@ -130,10 +155,14 @@ class RecordingController @Inject constructor(
      * (re)schedule the periodic workers. Mirrors the Settings toggle.
      */
     suspend fun enableTrackingFromUser() {
+        stateMutex.withLock { enableTrackingFromUserCore() }
+    }
+
+    private suspend fun enableTrackingFromUserCore() {
         AppLog.i(TAG, "enableTrackingFromUser")
         clearAutostartSuppression()
         settingsRepository.setTrackingEnabled(true)
-        startTracking()
+        startTrackingCore()
         workScheduler.schedulePeriodicTimelineMaintenance()
         workScheduler.scheduleRecordingWatchdog()
         workScheduler.schedulePeriodicBackup()
@@ -150,10 +179,10 @@ class RecordingController @Inject constructor(
      * Returns true if recording was actually paused, or false when the feature is disabled and the
      * caller should keep recording running.
      */
-    suspend fun pauseRecordingFromTaskRemoval(): Boolean {
+    suspend fun pauseRecordingFromTaskRemoval(): Boolean = stateMutex.withLock {
         if (!settingsRepository.settings.first().stopOnTaskRemoved) {
             AppLog.i(TAG, "task removed but stop-on-task-removed is off — keeping recording")
-            return false
+            return@withLock false
         }
         AppLog.w(
             TAG,
@@ -162,22 +191,26 @@ class RecordingController @Inject constructor(
         settingsRepository.setAutostartSuppressed(true)
         recorderService.suppressAutostart()
         recorderService.markStopped("task removed from Recents")
-        return true
+        true
     }
 
     /** Resume after a task-removal pause (notification action). Clears suppression and restarts. */
     suspend fun resumeRecordingFromUser() {
+        stateMutex.withLock { resumeRecordingFromUserCore() }
+    }
+
+    private suspend fun resumeRecordingFromUserCore() {
         AppLog.i(TAG, "resumeRecordingFromUser")
         clearAutostartSuppression()
-        if (!settingsRepository.settings.first().trackingEnabled) enableTrackingFromUser()
-        else startTracking()
+        if (!settingsRepository.settings.first().trackingEnabled) enableTrackingFromUserCore()
+        else startTrackingCore()
     }
 
     /** Notification action: stop pausing on close (turn the feature off) and resume recording now. */
-    suspend fun disableStopOnCloseAndResume() {
+    suspend fun disableStopOnCloseAndResume(): Unit = stateMutex.withLock {
         AppLog.i(TAG, "disableStopOnCloseAndResume")
         settingsRepository.setStopOnTaskRemoved(false)
-        resumeRecordingFromUser()
+        resumeRecordingFromUserCore()
     }
 
     /** Lift the autostart-suppression flag (persisted + in-memory). */
@@ -202,9 +235,9 @@ class RecordingController @Inject constructor(
      * This is the only place the pause is cleared — a background restart (boot, AR, geofence) keeps
      * it in effect, so recording stays paused "until the app is launched and in foreground".
      */
-    suspend fun onAppForegrounded() {
+    suspend fun onAppForegrounded(): Unit = stateMutex.withLock {
         clearAutostartSuppression()
-        resumeIfPreviouslyEnabled()
+        resumeIfPreviouslyEnabledCore()
     }
 
     /**
@@ -213,6 +246,10 @@ class RecordingController @Inject constructor(
      * task-removal pause — when suppressed, it leaves recording stopped until the app is foregrounded.
      */
     suspend fun resumeIfPreviouslyEnabled() {
+        stateMutex.withLock { resumeIfPreviouslyEnabledCore() }
+    }
+
+    private suspend fun resumeIfPreviouslyEnabledCore() {
         if (!settingsRepository.settings.first().trackingEnabled) {
             AppLog.i(TAG, "resume: tracking disabled, nothing to do")
             return
@@ -222,8 +259,9 @@ class RecordingController @Inject constructor(
             return
         }
         if (!recognitionManager.hasPermission()) {
+            // Degrade, don't disable: location-only recording still works. enableTracking() below
+            // skips AR registration internally while the permission is missing.
             AppLog.w(TAG, "resume: missing activity-recognition permission")
-            return
         }
         AppLog.i(TAG, "resume: tracking on, recorderRunning=${recorderService.isRecording}")
         enableTracking()
@@ -250,19 +288,28 @@ class RecordingController @Inject constructor(
      * plain worker has no background-start exemption — it posts an alert so the user can resume. A true
      * force-stop / OEM kill can't be recovered here: a stopped app's receivers and workers never run.
      */
-    suspend fun ensureRecorderRunning(trigger: String) {
-        if (recorderService.isRecording) return
+    suspend fun ensureRecorderRunning(trigger: String): Unit = stateMutex.withLock {
+        // Read the preference before the isRecording short-circuit: a recorder (or an orphaned PI
+        // location request) alive while tracking is disabled is a zombie and must be torn down.
         if (!settingsRepository.settings.first().trackingEnabled) {
-            AppLog.i(TAG, "$trigger: tracking disabled, nothing to do")
-            return
+            if (recorderService.isRecording) {
+                AppLog.w(TAG, "$trigger: tracking disabled but recorder running — stopping")
+                recorderService.stop()
+            } else {
+                AppLog.i(TAG, "$trigger: tracking disabled, nothing to do")
+            }
+            removeOrphanedLocationUpdates()
+            return@withLock
         }
+        if (recorderService.isRecording) return@withLock
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "$trigger: autostart suppressed (paused since task removal) — skipping")
-            return
+            return@withLock
         }
         if (!recognitionManager.hasPermission()) {
+            // Degrade, don't disable: location-only recording still works. enableTracking() below
+            // skips AR registration internally while the permission is missing.
             AppLog.w(TAG, "$trigger: missing activity-recognition permission")
-            return
         }
         AppLog.i(TAG, "$trigger: recorder down — re-arming and restarting")
         enableTracking()
@@ -278,27 +325,38 @@ class RecordingController @Inject constructor(
         }
     }
 
-    /** A single current fix, used to bootstrap recording and to anchor a stationary visit. */
+    /**
+     * A single current fix, used to bootstrap recording and to anchor a stationary visit. Bounded:
+     * a cold GPS fix indoors can take 20-30s — longer than a broadcast receiver's goAsync window —
+     * and [stateMutex] is held while waiting, stalling every other entry point. On timeout the GMS
+     * request is cancelled too, so the chip stops working on a fix nobody will use.
+     */
     private suspend fun getCurrentLocation(): Location? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) return null
-        return runCatching {
-            fusedClient.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token,
-            ).await()
-        }.getOrNull()
+        val cancellation = CancellationTokenSource()
+        return withTimeoutOrNull(Constants.CURRENT_FIX_TIMEOUT_MS) {
+            runCatching {
+                fusedClient.getCurrentLocation(
+                    Priority.PRIORITY_HIGH_ACCURACY, cancellation.token,
+                ).await()
+            }.getOrNull()
+        } ?: run {
+            cancellation.cancel()
+            null
+        }
     }
 
     /** Handle a batch of Activity Recognition transitions; react to the most recent one. */
-    suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>) {
+    suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
-            return
+            return@withLock
         }
-        val latest = events.lastOrNull() ?: return
+        val latest = events.lastOrNull() ?: return@withLock
         val (activityType, transitionType) = latest
-        if (transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) return
+        if (transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) return@withLock
 
         lastArActivity = arName(activityType)
         lastArConfidence = 90
@@ -329,10 +387,10 @@ class RecordingController @Inject constructor(
     }
 
     /** Leaving the dwell geofence means the user is on the move again (a real, forced departure). */
-    suspend fun handleGeofenceExit() {
+    suspend fun handleGeofenceExit(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "geofence EXIT ignored — recording paused (app removed from Recents)")
-            return
+            return@withLock
         }
         AppLog.i(TAG, "geofence EXIT")
         geofenceManager.clearAll()
@@ -354,15 +412,16 @@ class RecordingController @Inject constructor(
      * Doze-exit path ([handleDeviceIdleModeChanged]) and the next classified fix are additional
      * backstops.
      */
-    suspend fun handleSignificantMotion() {
+    suspend fun handleSignificantMotion(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
             AppLog.i(
                 TAG,
                 "significant motion ignored — recording paused (app removed from Recents)"
             )
-            return
+            return@withLock
         }
-        if (currentState != DevicePhysicalState.STATIONARY) return // already moving; stale trigger
+        // Already moving; stale trigger.
+        if (currentState != DevicePhysicalState.STATIONARY) return@withLock
         AppLog.i(TAG, "significant motion — verifying departure")
         if (!becameMoving(DevicePhysicalState.UNKNOWN, force = false)) {
             // Unconfirmed: stay in the low-power stationary cadence and re-arm with backoff.
@@ -380,16 +439,16 @@ class RecordingController @Inject constructor(
      *   confirm with a cheap accelerometer burst (no GPS): travel shakes the phone -> wake; otherwise
      *   just re-arm the sensor fresh so the next genuine move is caught immediately.
      */
-    suspend fun handleDeviceIdleModeChanged(idle: Boolean) {
-        if (isAutostartSuppressed()) return
+    suspend fun handleDeviceIdleModeChanged(idle: Boolean): Unit = stateMutex.withLock {
+        if (isAutostartSuppressed()) return@withLock
         if (idle) {
             AppLog.i(TAG, "device idle (Doze) — durably stationary; disarming significant motion")
             cancelSigMotionRearm()
             significantMotionManager.disarm()
-            return
+            return@withLock
         }
         AppLog.i(TAG, "device exited Doze idle")
-        if (currentState != DevicePhysicalState.STATIONARY) return
+        if (currentState != DevicePhysicalState.STATIONARY) return@withLock
         val motionVariance = motionSensorReader.motionVariance()
         if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) {
             AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) — treating as departure")
@@ -403,7 +462,7 @@ class RecordingController @Inject constructor(
     }
 
     /** Network changes are recorded as context on the next fix and may be a movement cue. */
-    suspend fun handleNetworkChanged() {
+    suspend fun handleNetworkChanged(): Unit = stateMutex.withLock {
         val day = locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
             ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
         workScheduler.enqueueTimelineMaintenance(day, "network_changed")
@@ -412,7 +471,22 @@ class RecordingController @Inject constructor(
 
     /** Persist + classify a batch of delivered fixes. */
     suspend fun handleLocations(locations: List<Location>) {
+        stateMutex.withLock { handleLocationsCore(locations) }
+    }
+
+    private suspend fun handleLocationsCore(locations: List<Location>) {
         if (locations.isEmpty()) return
+        // Safety net for an orphaned PI location request: the request survives process death, so
+        // fixes can keep arriving with tracking off (e.g. a stop() that early-returned on the
+        // in-memory flag). Never persist them; tear the request down instead.
+        if (!settingsRepository.settings.first().trackingEnabled) {
+            AppLog.w(
+                TAG,
+                "handleLocations: ${locations.size} fixes while tracking disabled — removing orphaned location request"
+            )
+            removeOrphanedLocationUpdates()
+            return
+        }
         AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=$currentState)")
         val context = deviceStateCollector.snapshot()
         val motionVariance = motionSensorReader.motionVariance()
@@ -537,7 +611,7 @@ class RecordingController @Inject constructor(
 
         // Make sure we have at least one fix to anchor the visit, even on a cold start.
         if (locationRepository.mostRecent() == null) {
-            getCurrentLocation()?.let { handleLocations(listOf(it)) }
+            getCurrentLocation()?.let { handleLocationsCore(listOf(it)) }
         }
         val anchor = locationRepository.mostRecent()
         if (anchor != null) {
@@ -646,7 +720,9 @@ class RecordingController @Inject constructor(
     /** Drift check against the last *stored* fix (may be stale on the low-power cadence). */
     private suspend fun isLikelyDrift(motionVariance: Float): Boolean {
         if (currentState != DevicePhysicalState.STATIONARY) return false
-        if (heuristics.stationaryAnchor == null) return true
+        // No anchor -> nothing to measure displacement against, so it cannot be called drift;
+        // assuming drift here would suppress every departure until an anchor appears.
+        if (heuristics.stationaryAnchor == null) return false
         val last = locationRepository.mostRecent() ?: return false
         return heuristics.isDriftAt(
             currentState, last.latitude, last.longitude, last.speed ?: 0f, motionVariance,
@@ -661,6 +737,17 @@ class RecordingController @Inject constructor(
         )
 
     // --- helpers ------------------------------------------------------------------------------
+
+    /**
+     * Remove the fused PI location request directly. The request is system-persistent state (it
+     * survives process death and service teardown), so its removal must never depend on the
+     * in-memory running flag — every "tracking is off" path calls this unconditionally.
+     */
+    private fun removeOrphanedLocationUpdates() {
+        runCatching {
+            fusedClient.removeLocationUpdates(LocationRecorderService.locationPendingIntent(context))
+        }
+    }
 
     private fun buildSample(
         location: Location,

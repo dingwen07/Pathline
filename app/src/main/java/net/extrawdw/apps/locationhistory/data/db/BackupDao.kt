@@ -19,9 +19,6 @@ interface BackupDao {
     @Query("SELECT * FROM backup_dirty_partitions")
     suspend fun allDirty(): List<BackupDirtyPartitionEntity>
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun markDirty(rows: List<BackupDirtyPartitionEntity>)
-
     @Query("DELETE FROM backup_dirty_partitions WHERE stream = :stream AND weekStart = :weekStart")
     suspend fun clearDirty(stream: String, weekStart: Long)
 
@@ -29,16 +26,17 @@ interface BackupDao {
     suspend fun clearAllDirty()
 
     /**
-     * Atomically read and remove the current dirty set ("claim"). Because this runs in a single
-     * write transaction, no concurrent writer can commit between the read and the delete; any rows
-     * a writer adds afterwards re-fire the triggers and survive for the next run. Callers re-mark a
-     * partition (via [markDirty]) if emitting it fails, so nothing is lost.
+     * Delete exactly the given dirty rows, by key. The backup engine reads the dirty set at run
+     * start (without consuming it) and calls this only AFTER its manifest commit, with the keys it
+     * successfully emitted — so a run that dies anywhere before the commit leaves every marker in
+     * place, and a week marked dirty during the run (a new key) is never touched. Known gap: the
+     * dirty triggers insert-where-not-exists, so a claimed week re-marked mid-run keeps its
+     * original row and is deleted here anyway; rows written to it after its emit wait for that
+     * week's next change (the entity carries no generation counter to tell the two apart).
      */
     @Transaction
-    suspend fun claimDirty(): List<BackupDirtyPartitionEntity> {
-        val claimed = allDirty()
-        clearAllDirty()
-        return claimed
+    suspend fun clearDirtySet(rows: List<BackupDirtyPartitionEntity>) {
+        rows.forEach { clearDirty(it.stream, it.weekStart) }
     }
 
     // --- Whole-week slices for serialization (keyed by dayEpoch, matching the triggers) --------

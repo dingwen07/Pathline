@@ -17,6 +17,9 @@ class ApiAccessActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableTransparentEdgeToEdge()
+        // Per-app grant management is consent UI: keep other apps' overlay windows from drawing on
+        // top of it (tapjacking defense).
+        window.setHideOverlayWindows(true)
         setContent {
             PathlineTheme {
                 ApiAccessScreen(onBack = { finish() })

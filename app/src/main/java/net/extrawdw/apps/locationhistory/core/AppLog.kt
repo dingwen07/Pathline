@@ -9,7 +9,8 @@ import java.util.Locale
 
 /**
  * Lightweight, app-wide file logger. Every component logs through here; output goes both to logcat
- * and to a rotating file under `filesDir/logs/`. A **new session file is started each time the
+ * and to a rotating file under `noBackupFilesDir/logs/` — sessions can contain location traces, so
+ * they must stay out of Google cloud auto-backup. A **new session file is started each time the
  * recorder service starts** (and when a file grows too large), so individual logs stay small and
  * easy to read. Old session files are pruned to a fixed count.
  */
@@ -28,7 +29,13 @@ object AppLog {
     /** Call once from the Application. */
     fun init(context: Context) = synchronized(lock) {
         if (logsDir == null) {
-            logsDir = File(context.filesDir, "logs").apply { mkdirs() }
+            // noBackupFilesDir: session logs carry location traces and must never ride along in
+            // Google cloud auto-backup (filesDir is backed up by default).
+            logsDir = File(context.noBackupFilesDir, "logs").apply { mkdirs() }
+            // Purge sessions written to the old, backed-up location (filesDir/logs, pre-move).
+            File(context.filesDir, "logs")
+                .listFiles { f -> f.name.startsWith("session-") }
+                ?.forEach { runCatching { it.delete() } }
             startSession("app-start")
         }
     }

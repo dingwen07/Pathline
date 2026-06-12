@@ -71,7 +71,10 @@ import javax.inject.Inject
  * - [MODE_REQUEST] — another app fired [PathlineContract.Actions.REQUEST_API_ACCESS]. Shows the
  *   explainer with the **requesting app's name and icon** and a note that this is the overall switch.
  *   It **returns a result to that app** (`RESULT_OK`/`RESULT_CANCELED` + [PathlineContract.Actions.EXTRA_ACCESS_ENABLED])
- *   and never opens the manager. If access is already on it returns `RESULT_OK` immediately.
+ *   and never opens the manager. If access is already on it returns `RESULT_OK` immediately. The
+ *   requester's identity comes only from [getCallingPackage] (system-verified, set for
+ *   startActivityForResult); a caller that can't be verified gets a generic "couldn't identify the
+ *   app" screen with no consent buttons instead of a personalized sheet.
  *
  * There is intentionally no up/back affordance; the system back button/gesture still dismisses it
  * (which, for a request, returns `RESULT_CANCELED` to the caller).
@@ -87,6 +90,8 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
         // Edge-to-edge enabled up front (best practice), before any work that might short-circuit to a
         // result. The screen keeps content clear of the system bars with safeDrawingPadding().
         enableTransparentEdgeToEdge()
+        // Consent UI: keep other apps' overlay windows from drawing on top of it (tapjacking defense).
+        window.setHideOverlayWindows(true)
 
         val mode = when {
             intent?.action == PathlineContract.Actions.REQUEST_API_ACCESS -> MODE_REQUEST
@@ -126,6 +131,14 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
 
     private fun showExplainer(mode: Int) {
         val requester = if (mode == MODE_REQUEST) resolveRequester() else null
+        // A request whose caller can't be verified must not render a personalized consent sheet:
+        // show a generic "couldn't identify the app" screen and leave the RESULT_CANCELED default.
+        if (mode == MODE_REQUEST && requester == null) {
+            setContent {
+                PathlineTheme { UnverifiedRequestScreen(onClose = { finish() }) }
+            }
+            return
+        }
         setContent {
             PathlineTheme {
                 ApiAccessOnboardingScreen(
@@ -174,13 +187,16 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
     }
 
     /**
-     * The app that launched a [MODE_REQUEST], for the header. Prefers [getCallingPackage] (set when the
-     * app launched us for a result) and falls back to [getReferrer] (set for any cross-app start), so
-     * the requesting app is identified whether or not it used `startActivityForResult`. If the label or
-     * icon can't be resolved, the raw package name is still shown so the request always looks distinct.
+     * The app that launched a [MODE_REQUEST], for the header. Identity comes ONLY from
+     * [getCallingPackage], which the system fills in (and verifies) when the caller used
+     * `startActivityForResult`. [getReferrer] is deliberately NOT consulted: it returns the
+     * caller-supplied `Intent.EXTRA_REFERRER` when present, so any app could impersonate a trusted
+     * one on this consent sheet. A plain-startActivity caller resolves to null and gets the
+     * unverified screen. If the label or icon can't be resolved, the raw package name is still
+     * shown so the request always looks distinct.
      */
     private fun resolveRequester(): RequesterInfo? {
-        val pkg = (callingPackage ?: referrer?.host)?.takeIf { it != packageName } ?: return null
+        val pkg = callingPackage?.takeIf { it != packageName } ?: return null
         val pm = packageManager
         val pkgInfo =
             runCatching { pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS) }.getOrNull()
@@ -346,6 +362,60 @@ private fun ApiAccessOnboardingScreen(
                     Text(stringResource(R.string.api_consent_never_ask))
                 }
             }
+        }
+    }
+}
+
+/**
+ * Shown for a [ApiAccessOnboardingActivity.MODE_REQUEST] whose caller could not be verified
+ * ([android.app.Activity.getCallingPackage] is null because the app used plain `startActivity`).
+ * Renders NO third-party name, icon or scopes and offers no consent buttons — the request stays
+ * declined (RESULT_CANCELED) and the user is pointed at Settings to enable access manually.
+ */
+@Composable
+private fun UnverifiedRequestScreen(onClose: () -> Unit) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .padding(start = 28.dp, end = 28.dp, top = 8.dp),
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.size(20.dp))
+                Text(
+                    stringResource(R.string.api_consent_unverified_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    stringResource(R.string.api_consent_unverified_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Button(
+                onClick = onClose,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+            ) { Text(stringResource(R.string.action_ok)) }
         }
     }
 }

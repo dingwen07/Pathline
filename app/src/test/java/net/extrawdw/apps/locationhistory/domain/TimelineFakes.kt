@@ -134,6 +134,14 @@ internal class FakeVisitDao : VisitDao {
                 it.startMs < endMs && it.endMs > startMs
         }.sortedBy { it.startMs }
 
+    override suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long? =
+        visits.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+            .minOfOrNull { it.startMs }
+
+    override suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long? =
+        visits.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+            .maxOfOrNull { it.endMs }
+
     override suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long) {
         visits.removeAll { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
     }
@@ -217,6 +225,14 @@ internal class FakeTripDao(private val visitDao: FakeVisitDao? = null) : TripDao
                 it.startMs < endMs && it.endMs > startMs
         }.sortedBy { it.startMs }
     }
+
+    override suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long? =
+        trips.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+            .minOfOrNull { it.startMs }
+
+    override suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long? =
+        trips.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+            .maxOfOrNull { it.endMs }
 
     override suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long) {
         trips.removeAll { !it.confirmed && it.startMs < endMs && it.endMs > startMs }

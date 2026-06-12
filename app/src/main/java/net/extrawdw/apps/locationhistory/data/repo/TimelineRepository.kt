@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -8,6 +9,7 @@ import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
+import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
@@ -15,6 +17,7 @@ import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
+import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import net.extrawdw.apps.locationhistory.ml.Features
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,6 +47,8 @@ class TimelineRepository @Inject constructor(
     private val trainingRepository: TrainingRepository,
     private val placesGateway: net.extrawdw.apps.locationhistory.data.places.PlacesGateway,
     private val locationRepository: LocationRepository,
+    private val db: AppDatabase,
+    private val writeLock: TimelineWriteLock,
 ) {
 
     /** Nearby Google Places suggestions for the confirm-place sheet. */
@@ -91,73 +96,80 @@ class TimelineRepository @Inject constructor(
      * existing place, saves a Google suggestion, or creates a new one. Confirming feeds the place
      * model ([PlaceRepository.recordVisitToPlace] updates its center/radius unless fixed) and adds a
      * stationary training example so the device-state model learns from the correction.
+     *
+     * Serialized against the maintenance rebuild via [TimelineWriteLock] and run inside one Room
+     * transaction: the visit is re-read inside it, so if the (still unconfirmed) row was deleted by
+     * a rebuild in the meantime, the confirm is a clean no-op — no orphan place is inserted and no
+     * zero-row `@Update` silently swallows the user's input.
      */
-    suspend fun confirmVisitPlace(visitId: Long, choice: PlaceChoice) {
-        val visit = visitDao.byId(visitId) ?: return
-        val placeId = when (choice) {
-            is PlaceChoice.Existing -> choice.placeId
-            is PlaceChoice.Google -> placeRepository.confirmPlace(
-                name = choice.candidate.name,
-                latitude = choice.candidate.latitude,
-                longitude = choice.candidate.longitude,
-                googlePlaceId = choice.candidate.googlePlaceId,
-                address = choice.candidate.address,
-                category = choice.candidate.primaryType,
-                types = choice.candidate.types.joinToString(",").ifEmpty { null },
-                source = PlaceSource.MAPS,
-            )
+    suspend fun confirmVisitPlace(visitId: Long, choice: PlaceChoice): Unit = writeLock.withLock {
+        db.withTransaction {
+            val visit = visitDao.byId(visitId) ?: return@withTransaction
+            val placeId = when (choice) {
+                is PlaceChoice.Existing -> choice.placeId
+                is PlaceChoice.Google -> placeRepository.confirmPlace(
+                    name = choice.candidate.name,
+                    latitude = choice.candidate.latitude,
+                    longitude = choice.candidate.longitude,
+                    googlePlaceId = choice.candidate.googlePlaceId,
+                    address = choice.candidate.address,
+                    category = choice.candidate.primaryType,
+                    types = choice.candidate.types.joinToString(",").ifEmpty { null },
+                    source = PlaceSource.MAPS,
+                )
 
-            is PlaceChoice.NewNamed -> placeRepository.confirmPlace(
-                name = choice.name,
-                latitude = visit.centroidLatitude,
-                longitude = visit.centroidLongitude,
-                googlePlaceId = null, address = null, category = null,
-                source = PlaceSource.USER,
-            )
+                is PlaceChoice.NewNamed -> placeRepository.confirmPlace(
+                    name = choice.name,
+                    latitude = visit.centroidLatitude,
+                    longitude = visit.centroidLongitude,
+                    googlePlaceId = null, address = null, category = null,
+                    source = PlaceSource.USER,
+                )
 
-            PlaceChoice.PromoteCandidate -> placeRepository.confirmPlace(
-                name = visit.candidateName ?: "Place",
-                latitude = visit.candidateLatitude ?: visit.centroidLatitude,
-                longitude = visit.candidateLongitude ?: visit.centroidLongitude,
-                googlePlaceId = visit.candidateGooglePlaceId,
-                address = null, category = null,
-                source = if (visit.candidateGooglePlaceId != null) PlaceSource.MAPS else PlaceSource.USER,
+                PlaceChoice.PromoteCandidate -> placeRepository.confirmPlace(
+                    name = visit.candidateName ?: "Place",
+                    latitude = visit.candidateLatitude ?: visit.centroidLatitude,
+                    longitude = visit.candidateLongitude ?: visit.centroidLongitude,
+                    googlePlaceId = visit.candidateGooglePlaceId,
+                    address = null, category = null,
+                    source = if (visit.candidateGooglePlaceId != null) PlaceSource.MAPS else PlaceSource.USER,
+                )
+            }
+            // Link + confirm the visit first so the place recompute counts it as a (weighted) ground-truth
+            // visit, then recompute the place center/radius as a recency/confirmation-weighted mean.
+            // Clear the candidate (the geocoder's pre-confirmation guess) so a confirmed visit can't keep a
+            // name/coords that diverge from the place the user actually chose — placeId is now authoritative.
+            visitDao.update(
+                visit.copy(
+                    placeId = placeId,
+                    confirmed = true,
+                    confidence = 1f,
+                    candidateName = null,
+                    candidateGooglePlaceId = null,
+                    candidateLatitude = null,
+                    candidateLongitude = null,
+                ),
             )
-        }
-        // Link + confirm the visit first so the place recompute counts it as a (weighted) ground-truth
-        // visit, then recompute the place center/radius as a recency/confirmation-weighted mean.
-        // Clear the candidate (the geocoder's pre-confirmation guess) so a confirmed visit can't keep a
-        // name/coords that diverge from the place the user actually chose — placeId is now authoritative.
-        visitDao.update(
-            visit.copy(
-                placeId = placeId,
-                confirmed = true,
-                confidence = 1f,
-                candidateName = null,
-                candidateGooglePlaceId = null,
-                candidateLatitude = null,
-                candidateLongitude = null,
-            ),
-        )
-        placeRepository.recordVisitToPlace(placeId)
-        // Mark fixes outside the (updated) place circle as GPS drift (bogus).
-        placeRepository.byId(placeId)?.let { p ->
-            locationRepository.excludeDriftOutside(
-                visit.startMs,
-                visit.endMs,
-                p.latitude,
-                p.longitude,
-                p.radiusMeters
-            )
-        }
-        // Re-fetch the now-filtered samples so the training example reflects only good fixes.
-        val included = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)
-        if (included.size >= 2) {
-            trainingRepository.addStateExample(
-                features = Features.stationaryFeatures(included),
-                label = DevicePhysicalState.MODEL_CLASSES.indexOf(DevicePhysicalState.STATIONARY),
-                fromUserConfirmation = true,
-            )
+            placeRepository.recordVisitToPlace(placeId)
+            // Mark fixes outside the (updated) place circle as GPS drift (bogus).
+            placeRepository.byId(placeId)?.let { p ->
+                locationRepository.excludeDriftOutside(
+                    visit.startMs,
+                    visit.endMs,
+                    p.latitude,
+                    p.longitude,
+                    p.radiusMeters
+                )
+            }
+            // Re-fetch the now-filtered samples so the training example reflects only good fixes.
+            val included = sampleDao.rangeForComputation(visit.startMs, visit.endMs + 1)
+            if (included.size >= 2) {
+                trainingRepository.addStateExample(
+                    features = Features.stationaryFeatures(included),
+                    label = DevicePhysicalState.MODEL_CLASSES.indexOf(DevicePhysicalState.STATIONARY),
+                    fromUserConfirmation = true,
+                )
+            }
         }
     }
 
@@ -165,33 +177,39 @@ class TimelineRepository @Inject constructor(
      * Confirm a trip's transport mode. Treated as ground truth: the trip is marked confirmed (so
      * maintenance leaves it alone) and a user-confirmed training example is recorded so the
      * transport model improves on the next (charging-gated) retrain.
+     *
+     * Serialized + transactional like [confirmVisitPlace]: the trip is re-read inside the
+     * transaction, so a row deleted by a concurrent rebuild makes this a clean no-op instead of a
+     * zero-row `@Update` that silently drops the user's confirmation.
      */
-    suspend fun confirmTripMode(tripId: Long, mode: TransportMode) {
-        val trip = tripDao.byId(tripId) ?: return
-        val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
+    suspend fun confirmTripMode(tripId: Long, mode: TransportMode): Unit = writeLock.withLock {
+        db.withTransaction {
+            val trip = tripDao.byId(tripId) ?: return@withTransaction
+            val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
 
-        // Rebuild geometry from the fixes in recorded order, like convertItemType does -- otherwise
-        // confirming the mode left the stored polyline untouched, so a trip scrambled by an earlier
-        // overlapping merge kept its straight spike. Too few fixes to draw a line: just relabel.
-        val points = samples.map { it.latitude to it.longitude }
-        val relabeled = trip.copy(mode = mode, modeConfidence = 1f, confirmed = true)
-        tripDao.update(
-            if (points.size >= 2) {
-                relabeled.copy(
-                    encodedPolyline = Geo.encodePolyline(points),
-                    distanceMeters = Geo.pathLengthMeters(points),
-                )
-            } else {
-                relabeled
-            },
-        )
-
-        if (samples.size >= 2 && mode in TransportMode.MODEL_CLASSES) {
-            trainingRepository.addTransportExample(
-                features = Features.transportFeatures(samples),
-                label = TransportMode.MODEL_CLASSES.indexOf(mode),
-                fromUserConfirmation = true,
+            // Rebuild geometry from the fixes in recorded order, like convertItemType does -- otherwise
+            // confirming the mode left the stored polyline untouched, so a trip scrambled by an earlier
+            // overlapping merge kept its straight spike. Too few fixes to draw a line: just relabel.
+            val points = samples.map { it.latitude to it.longitude }
+            val relabeled = trip.copy(mode = mode, modeConfidence = 1f, confirmed = true)
+            tripDao.update(
+                if (points.size >= 2) {
+                    relabeled.copy(
+                        encodedPolyline = Geo.encodePolyline(points),
+                        distanceMeters = Geo.pathLengthMeters(points),
+                    )
+                } else {
+                    relabeled
+                },
             )
+
+            if (samples.size >= 2 && mode in TransportMode.MODEL_CLASSES) {
+                trainingRepository.addTransportExample(
+                    features = Features.transportFeatures(samples),
+                    label = TransportMode.MODEL_CLASSES.indexOf(mode),
+                    fromUserConfirmation = true,
+                )
+            }
         }
     }
 }

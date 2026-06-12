@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,6 +76,7 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import net.extrawdw.apps.locationhistory.R
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
@@ -89,6 +91,8 @@ import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberUpdatedMarkerState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -126,9 +130,31 @@ fun TimelineScreen(
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val recordingEnabled by viewModel.recordingEnabled.collectAsStateWithLifecycle()
 
-    val today = remember { viewModel.today }
+    // "Today" must stay live: this screen never leaves composition (MainActivity keeps it mounted)
+    // and the recording FGS keeps the process alive overnight, so a once-captured value would leave
+    // the pager's last page mapped to yesterday — the new day would be unreachable.
+    var today by remember { mutableLongStateOf(viewModel.today) }
     fun dayForPage(p: Int) = today - (TODAY_PAGE - p)
     val pagerState = rememberPagerState(initialPage = TODAY_PAGE) { TODAY_PAGE + 1 }
+    // Roll `today` over at local midnight. The delay is re-derived from the wall clock on every
+    // pass (and is always >= 1s, so the loop can never spin); DST shifts just change the next delay.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(millisUntilNextLocalMidnight())
+            today = viewModel.today
+        }
+    }
+    // When `today` advances by N days while composed, the page->day mapping shifts by N. Snap the
+    // pager back N pages in the same frame so the user keeps looking at the same calendar day
+    // (someone sitting on the today page just stays on that — now yesterday's — date).
+    var mappedToday by remember { mutableLongStateOf(today) }
+    LaunchedEffect(today) {
+        val shift = (today - mappedToday).toInt()
+        mappedToday = today
+        if (shift > 0) {
+            pagerState.scrollToPage((pagerState.currentPage - shift).coerceIn(0, TODAY_PAGE))
+        }
+    }
 
     val cameraPositionState = rememberCameraPositionState()
     val scaffoldState = rememberBottomSheetScaffoldState()
@@ -151,9 +177,16 @@ fun TimelineScreen(
     val editing = editItem != null
     val editPoints = remember(editSamples) { editSamples.map { LatLng(it.latitude, it.longitude) } }
     val context = androidx.compose.ui.platform.LocalContext.current
-    val hasFineLocation = remember {
+    fun fineLocationGranted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
+    var hasFineLocation by remember { mutableStateOf(fineLocationGranted()) }
+    // Both can change while the process stays alive (settings toggle, day rollover in background):
+    // re-read whenever the screen returns to the foreground.
+    LifecycleResumeEffect(Unit) {
+        hasFineLocation = fineLocationGranted()
+        today = viewModel.today
+        onPauseOrDispose { }
     }
 
     val editBackProgress by rememberPredictiveBackProgress(enabled = editItem != null) {
@@ -178,22 +211,15 @@ fun TimelineScreen(
         if (editing || mapFitKey == null || fittedMapKey == mapFitKey) return@LaunchedEffect
         val bounds = mapState.boundsOrNull()
         if (bounds != null) {
-            runCatching {
-                cameraPositionState.animate(
-                    CameraUpdateFactory.newLatLngBounds(
-                        bounds,
-                        120
-                    )
-                )
+            try {
+                cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120))
+            } catch (e: CancellationException) {
+                // The user grabbed the map (or the effect restarted) mid-animation: snapping the
+                // fallback move here would yank the camera out from under their finger.
+                throw e
+            } catch (e: Exception) {
+                cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(bounds.center, 15f))
             }
-                .onFailure {
-                    cameraPositionState.move(
-                        CameraUpdateFactory.newLatLngZoom(
-                            bounds.center,
-                            15f
-                        )
-                    )
-                }
         } else {
             viewModel.currentLatLng()?.let {
                 cameraPositionState.move(
@@ -215,9 +241,13 @@ fun TimelineScreen(
         if (idx != null && idx in editPoints.indices) {
             cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(editPoints[idx], 17f))
         } else {
-            runCatching {
+            try {
                 val b = LatLngBounds.builder().apply { editPoints.forEach { include(it) } }.build()
                 cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(b, 140))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best-effort fit; unbuildable bounds just skip the zoom.
             }
         }
     }
@@ -612,6 +642,17 @@ fun TimelineScreen(
             placeId = id,
             onDismiss = { detailPlaceId = null })
     }
+}
+
+/**
+ * Milliseconds from now until just past the next local midnight. Always >= 1s, so the rollover loop
+ * that delays on it can never spin; the +1s margin lands the wake-up safely inside the new day.
+ */
+private fun millisUntilNextLocalMidnight(): Long {
+    val zone = java.time.ZoneId.systemDefault()
+    val now = java.time.ZonedDateTime.now(zone)
+    val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(zone)
+    return java.time.Duration.between(now, nextMidnight).toMillis().coerceAtLeast(0L) + 1_000L
 }
 
 // --- recording-off banner ---------------------------------------------------------------------

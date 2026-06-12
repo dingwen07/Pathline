@@ -210,6 +210,9 @@
     <string name="action_allow_all_time">Allow all the time</string>
     <string name="action_maybe_later">Maybe later</string>
     <string name="action_ok">OK</string>
+    <string name="action_open_settings">Open app settings</string>
+    <string name="permission_approximate_only_body">Precise location is turned off. Pathline needs precise location to detect visits and trips — turn it on for Pathline in app settings.</string>
+    <string name="permission_settings_needed_body">Android is no longer showing the permission dialog. Grant the permission for Pathline in app settings instead.</string>
 
     <!-- ============================ Map explorer ============================ -->
     <string name="range_today">Today</string>
@@ -386,6 +389,8 @@
     <!-- Shown with the requesting app\'s icon when another app asks to turn access on. %1$s = app name. -->
     <string name="api_consent_request_header">%1$s</string>
     <string name="api_consent_request_note">You might still need to approve these permissions for %1$s</string>
+    <string name="api_consent_unverified_title">Couldn\'t identify the requesting app</string>
+    <string name="api_consent_unverified_body">An app asked to access your Pathline data but didn\'t identify itself in a way Android can verify, so no consent screen is shown for it. You can still turn on data access yourself from Settings in Pathline.</string>
     <string name="api_consent_turn_on">Turn on access</string>
     <string name="api_consent_not_now">Not now</string>
     <string name="api_consent_never_ask">Don\'t ask again</string>

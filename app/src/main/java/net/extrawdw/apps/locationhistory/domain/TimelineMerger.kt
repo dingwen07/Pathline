@@ -17,9 +17,10 @@ import javax.inject.Singleton
  * a sequence of trips that only changes rows where the *transport mode* changes.
  *
  * It fuses:
- *  - consecutive **same-place** visits that overlap or have no real trip between them — including a
- *    stay that straddles midnight, which the old per-day merge could never reach because the two
- *    halves sat in different `dayEpoch` buckets; and
+ *  - consecutive **same-place** visits that overlap or have no real trip between them (and whose
+ *    gap is within [Constants.MAX_EVIDENCE_GAP_MS] — a longer sample-free gap is a recording
+ *    outage, not assumed presence) — including a stay that straddles midnight, which the old
+ *    per-day merge could never reach because the two halves sat in different `dayEpoch` buckets; and
  *  - consecutive **same-mode** trips with no visit between them, *even when they are confirmed* —
  *    a hand-split walk that the user never meant to break in two, or a confirmed stub left beside a
  *    freshly rebuilt run. Different modes are left as separate rows, so a real multi-modal journey
@@ -74,10 +75,21 @@ class TimelineMerger @Inject constructor(
         val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
+            // Low net displacement alone is NOT drift: a real loop trip (a run or dog walk from
+            // home) also ends where it started. Drift is jitter — a short, brief recorded path.
+            if (trip.distanceMeters > Constants.DRIFT_TRIP_MAX_PATH_METERS) continue
+            if (trip.endMs - trip.startMs > Constants.DRIFT_TRIP_MAX_DURATION_MS) continue
             val before = visits.lastOrNull { it.startMs <= trip.startMs }
             val after = visits.firstOrNull { it.startMs >= trip.endMs }
             val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
-            if (sameBoundingPlace && netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS) {
+            // Only fuse visits that actually abut the trip: a same-place pair hours away must not be
+            // welded across the whole span between them just because a jitter trip sits in it.
+            val adjacent = before != null && after != null &&
+                    trip.startMs - before.endMs <= Constants.MERGE_GAP_MS &&
+                    after.startMs - trip.endMs <= Constants.MERGE_GAP_MS
+            if (sameBoundingPlace && adjacent &&
+                netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS
+            ) {
                 tripDao.deleteTrip(trip.id)
                 if (before.id != after.id) {
                     val merged = mergedVisit(before, after)
@@ -115,12 +127,16 @@ class TimelineMerger @Inject constructor(
             // them (any movement worth showing would have left a trip). Keyed on time, not dayEpoch,
             // so a midnight-spanning stay finally collapses to a single row.
             val overlapsOrTouches = b.startMs <= a.endMs
-            if (overlapsOrTouches || !tripExistsBetween(
+            // The no-trip bridge is capped like the trip side's MERGE_GAP_MS: beyond
+            // MAX_EVIDENCE_GAP_MS with no samples, presence is no longer assumed, so a recording
+            // outage between two real same-place stays must not weld them into one.
+            val bridgeableGap = b.startMs - a.endMs <= Constants.MAX_EVIDENCE_GAP_MS
+            if (overlapsOrTouches || (bridgeableGap && !tripExistsBetween(
                     spanStartMs,
                     spanEndMs,
                     a.endMs,
                     b.startMs
-                )
+                ))
             ) {
                 visitDao.update(mergedVisit(a, b))
                 // a is older and its id survives; fold b's annotations onto it before b is deleted.

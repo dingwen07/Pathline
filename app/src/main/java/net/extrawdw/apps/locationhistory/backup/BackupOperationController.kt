@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import net.extrawdw.apps.locationhistory.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +18,7 @@ import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.BackupResult
 import net.extrawdw.apps.locationhistory.data.repo.EncryptionChoice
 import net.extrawdw.apps.locationhistory.data.repo.GpxRange
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -51,6 +53,9 @@ class BackupOperationController @Inject constructor(
     private val _state = MutableStateFlow<ManagedState?>(null)
     val state: StateFlow<ManagedState?> = _state.asStateFlow()
     private var job: Job? = null
+
+    /** True from a successful [launch] gate until its coroutine finishes (see the finally there). */
+    private val opRunning = AtomicBoolean(false)
 
     fun startConfigure(uri: Uri, subdir: String?, choice: EncryptionChoice?) =
         launch(
@@ -138,30 +143,46 @@ class BackupOperationController @Inject constructor(
         title: String,
         op: suspend (BackupReporter) -> BackupResult
     ) {
-        if (_state.value?.running == true) return
+        // Atomic begin-gate: a plain read of _state.value?.running is check-then-act, so two
+        // racing launches could both pass it. compareAndSet admits exactly one.
+        if (!opRunning.compareAndSet(false, true)) return
         _state.value = ManagedState(
             kind, title, running = true, progress = -1f, logs = emptyList(),
             finished = false, success = false, message = null
         )
         job = scope.launch {
-            val reporter = object : BackupReporter {
-                override fun log(message: String) {
-                    AppLog.i(TAG, message)
-                    _state.update { s -> s?.copy(logs = (s.logs + message).takeLast(MAX_LOG_LINES)) }
-                }
+            try {
+                val reporter = object : BackupReporter {
+                    override fun log(message: String) {
+                        AppLog.i(TAG, message)
+                        _state.update { s -> s?.copy(logs = (s.logs + message).takeLast(MAX_LOG_LINES)) }
+                    }
 
-                override fun progress(fraction: Float) {
-                    _state.update { s -> s?.copy(progress = fraction) }
+                    override fun progress(fraction: Float) {
+                        _state.update { s -> s?.copy(progress = fraction) }
+                    }
                 }
-            }
-            val result = op(reporter)
-            val ok =
-                result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
-            _state.update { s ->
-                s?.copy(
-                    running = false, finished = true, progress = if (ok) 1f else s.progress,
-                    success = ok, message = describe(result)
-                )
+                // The repository entry points catch their own failures; this catch covers anything
+                // thrown outside them (e.g. crypto-header assembly) so the gate + state can't be
+                // left stuck on "running" forever.
+                val result = try {
+                    op(reporter)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "managed operation failed: ${t.message}")
+                    BackupResult.Error(t.message ?: "operation failed")
+                }
+                val ok =
+                    result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
+                _state.update { s ->
+                    s?.copy(
+                        running = false, finished = true, progress = if (ok) 1f else s.progress,
+                        success = ok, message = describe(result)
+                    )
+                }
+            } finally {
+                opRunning.set(false)
             }
         }
     }

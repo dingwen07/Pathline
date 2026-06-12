@@ -22,7 +22,6 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
@@ -101,7 +100,9 @@ class LocationRecorderService : LifecycleService() {
         AppLog.i(TAG, "startRecording state=$state profile=$profile (restart=${intent == null})")
 
         if (!startForeground(state)) {
-            stopSelf()
+            // Also remove the PI location request: it is system-persistent and would otherwise
+            // keep delivering fixes to a service that never became foreground.
+            stopUpdatesAndSelf()
             return false
         }
         registerNetworkCallback()
@@ -132,7 +133,12 @@ class LocationRecorderService : LifecycleService() {
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
             )
-        } catch (e: SecurityException) {
+        } catch (e: RuntimeException) {
+            // SecurityException (missing permission) or ForegroundServiceStartNotAllowedException
+            // (an IllegalStateException subclass on API 31+: FGS start not allowed from the
+            // background). Either way the start can't become foreground — bail out cleanly
+            // instead of crash-looping on START_STICKY restarts. Mirrors the catch in
+            // RecorderServiceController.start().
             val message = e.message ?: e.javaClass.simpleName
             AppLog.w(TAG, "location FGS start denied: $message")
             serviceController.markStopped("FGS denied: $message")
@@ -161,16 +167,23 @@ class LocationRecorderService : LifecycleService() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         AppLog.w(TAG, "onTaskRemoved — app removed from Recents")
-        val paused = runCatching { runBlocking { controller.pauseRecordingFromTaskRemoval() } }
-            .onFailure { AppLog.e(TAG, "pauseRecordingFromTaskRemoval failed", it) }
-            .getOrDefault(false)
-        if (paused) {
-            runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
-            unregisterNetworkCallback()
-            unregisterIdleReceiver()
-            Notifications.notifyRecordingStopped(this)
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf()
+        // Async, not runBlocking: pauseRecordingFromTaskRemoval waits on the controller mutex
+        // (held for seconds by an in-flight getCurrentLocation) plus DataStore I/O — blocking the
+        // main thread here risks an ANR. The FGS stays alive until stopSelf, so the coroutine
+        // always gets to finish.
+        lifecycleScope.launch {
+            val paused = runCatching { controller.pauseRecordingFromTaskRemoval() }
+                .onFailure { AppLog.e(TAG, "pauseRecordingFromTaskRemoval failed", it) }
+                .getOrDefault(false)
+            if (paused) {
+                val service = this@LocationRecorderService
+                runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(service)) }
+                unregisterNetworkCallback()
+                unregisterIdleReceiver()
+                Notifications.notifyRecordingStopped(service)
+                ServiceCompat.stopForeground(service, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
         super.onTaskRemoved(rootIntent)
     }
