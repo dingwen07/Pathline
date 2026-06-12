@@ -135,8 +135,8 @@ object PathlineContract {
         const val IDS: String = "ids"
 
         /**
-         * Search query text. Its presence switches the `places`, `visits`, `trips` and `tags`
-         * collections into **search mode** (requires [Permissions.SEARCH_DATA]): instead of a plain
+         * Search query text. Its presence switches the `places`, `visits`, `trips`, `tags` and
+         * `concepts` collections into **search mode** (requires [Permissions.SEARCH_DATA]): instead of a plain
          * listing, only rows matching the text — in the fields selected by [FIELDS] — are returned,
          * in the collection's normal row shape. Matching is case-insensitive; FTS-backed fields
          * (place name/address/category/types, tag names) match on word prefixes, annotation text
@@ -213,7 +213,9 @@ object PathlineContract {
          * - `visits` / `trips`: [PLACE_NAME] (the saved place or candidate name attributed to the
          *   visit, or to the trip's endpoint visits), plus [TAGS] and [NOTES] of the visit/trip itself.
      * - `tags`: matches tag names only; [QueryParams.FIELDS] is ignored.
-     * - `concepts`: matches concept names, kinds and descriptions; [QueryParams.FIELDS] is ignored.
+     * - `concepts`: matches concept names, kinds and descriptions, plus the concept's own [TAGS],
+     *   [NOTES] and [MEMORIES] (like `places` — every concept read holds [Permissions.READ_ANNOTATIONS],
+     *   so these are always matched); [QueryParams.FIELDS] is ignored.
      */
     object SearchFields {
         const val NAME: String = "name"
@@ -898,8 +900,9 @@ object PathlineContract {
      * curation, not recorded location data, and member references are id pointers the caller
      * resolves through the normally-gated collections (an id it cannot read stays an opaque
      * number).
-     * - `concepts` — every concept; with [QueryParams.Q] a name/kind/description search
-     *   (requires [Permissions.SEARCH_DATA]); with [QueryParams.KIND] an exact kind filter;
+     * - `concepts` — every concept; with [QueryParams.Q] a search over name/kind/description and
+     *   the concept's own tags/notes/memories (requires [Permissions.SEARCH_DATA]); with
+     *   [QueryParams.KIND] an exact kind filter;
      *   with [QueryParams.IDS] an id filter. Windowless.
      * - `concepts/<id>` — one concept row.
      * - `concepts/<id>/members` — the members, as [Members] rows (see [membersUri]).

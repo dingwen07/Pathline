@@ -787,8 +787,9 @@ class PathlineProvider : ContentProvider() {
             var list = when {
                 q != null -> {
                     require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
-                    // bm25-ranked; byIds loses the order, so restore it.
-                    val ids = searchEngine.ftsConceptIds(q)
+                    // bm25-ranked FTS head + the concept's own tag/note/memory matches; byIds loses
+                    // the order, so restore it.
+                    val ids = searchEngine.matchedConceptIds(q)
                     if (ids.isEmpty()) emptyList()
                     else sortByIdOrder(dao.byIds(ids.toList()), ids) { it.id }
                 }

@@ -177,7 +177,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                     ) {
                         SettingsScreen(
                             permissionsGranted = permissions.granted,
-                            permissionsDeadEnded =
+                            permissionRequestBlocked =
                                 permissions.approximateOnly || permissions.foregroundPermanentlyDenied,
                             onRequestPermissions = permissions::request,
                             onOpenAppSettings = {

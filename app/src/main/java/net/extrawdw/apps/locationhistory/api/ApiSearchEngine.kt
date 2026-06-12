@@ -207,15 +207,43 @@ internal class ApiSearchEngine(
             ),
         ).mapTo(LinkedHashSet()) { it.id }
 
-    /** Concept ids whose name/kind/description matches [q] — **relevance-ordered** (bm25). */
-    suspend fun ftsConceptIds(q: String): LinkedHashSet<Long> =
-        searchDao.matchRowIds(
+    /** Union of the concept ids matching [q] in name/kind/description (FTS, **bm25-ranked** and
+     *  first) plus the concept's own tags/notes/memories (no score, appended in stable order) — the
+     *  concept analogue of [matchedPlaceIds]. Every concept read already holds READ_ANNOTATIONS
+     *  (see [PathlineProvider]'s concepts route), so the annotation legs need no extra gate. */
+    suspend fun matchedConceptIds(q: String): LinkedHashSet<Long> {
+        val ids = LinkedHashSet<Long>()
+        ids += searchDao.matchRowIds(
             SimpleSQLiteQuery(
                 "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ? " +
                         "ORDER BY bm25(concepts_fts)",
                 arrayOf(ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description"))),
             ),
-        ).mapTo(LinkedHashSet()) { it.id }
+        ).map { it.id }
+        val tagIds = ftsTagIds(q)
+        if (tagIds.isNotEmpty()) {
+            ids += tagDao.targetIdsForTags(AnnotationTarget.CONCEPT, tagIds.toList())
+        }
+        ApiSearch.likePatterns(q).forEach { pattern ->
+            ids += annotationDao.targetIdsWithContentLike(
+                AnnotationTarget.CONCEPT, AnnotationKind.NOTE, pattern,
+            )
+        }
+        // Memories are JSON objects; decode and match keys + values in code (see [matchedPlaceIds]).
+        val needles = ApiSearch.needles(q)
+        ids += annotationDao
+            .allOfKind(AnnotationTarget.CONCEPT, AnnotationKind.MEMORY)
+            .filter { row ->
+                MemoryMap.decode(row.content).any { (key, entry) ->
+                    needles.any { needle ->
+                        key.contains(needle, ignoreCase = true) ||
+                                entry.value.contains(needle, ignoreCase = true)
+                    }
+                }
+            }
+            .map { it.targetId }
+        return ids
+    }
 
     /** Place ids whose **name** matches [q] — the place-name leg of visit/trip search (order
      *  irrelevant there: timeline search results stay chronological). */

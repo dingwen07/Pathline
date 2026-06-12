@@ -49,7 +49,7 @@ fun SettingsScreen(
     permissionsGranted: Boolean,
     // The system permission dialog is gone (permanently denied, or fine location downgraded to
     // approximate) -> requesting again is a silent no-op; only the app's settings page can grant.
-    permissionsDeadEnded: Boolean,
+    permissionRequestBlocked: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onOpenApiAccess: () -> Unit,
@@ -78,12 +78,12 @@ fun SettingsScreen(
                         checked = settings.trackingEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled && !permissionsGranted) {
-                                if (permissionsDeadEnded) onOpenAppSettings() else onRequestPermissions()
+                                if (permissionRequestBlocked) onOpenAppSettings() else onRequestPermissions()
                             } else viewModel.setTracking(enabled)
                         },
                     )
                     if (!permissionsGranted) {
-                        if (permissionsDeadEnded) {
+                        if (permissionRequestBlocked) {
                             Text(
                                 stringResource(R.string.permission_settings_needed_body),
                                 style = MaterialTheme.typography.bodySmall,

@@ -298,9 +298,9 @@ fun OnboardingScreen(
                 OnboardingStep.PERMISSIONS -> {
                     // Once Android stops showing the dialog (or the user picked "Approximate"),
                     // re-requesting is a silent no-op — route to app settings instead.
-                    val deadEnded =
+                    val permissionRequestBlocked =
                         permissions.approximateOnly || permissions.foregroundPermanentlyDenied
-                    if (deadEnded) {
+                    if (permissionRequestBlocked) {
                         SettingsRedirectHint(
                             if (permissions.approximateOnly) R.string.permission_approximate_only_body
                             else R.string.permission_settings_needed_body
