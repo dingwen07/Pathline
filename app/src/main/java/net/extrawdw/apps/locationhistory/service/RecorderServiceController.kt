@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -16,7 +17,10 @@ import javax.inject.Singleton
 
 data class RecorderDebugState(
     val isRecording: Boolean = false,
-    val state: DevicePhysicalState = DevicePhysicalState.UNKNOWN,
+    /** The recorder's control/cadence tier. */
+    val state: RecorderState = RecorderState.UNKNOWN,
+    /** The movement shown to the user (notification badge); evidence, not cadence. */
+    val displayState: DevicePhysicalState = DevicePhysicalState.UNKNOWN,
     val profile: PowerProfile? = null,
     val updatedAtMs: Long? = null,
     val lastStartError: String? = null,
@@ -49,14 +53,15 @@ class RecorderServiceController @Inject constructor(
         autostartSuppressed.set(false)
     }
 
-    /** Start (or re-tune) the active recording session for the given state/profile. */
-    fun start(state: DevicePhysicalState, profile: PowerProfile): Boolean {
+    /** Start (or re-tune) the active recording session for the given cadence state/display/profile. */
+    fun start(state: RecorderState, display: DevicePhysicalState, profile: PowerProfile): Boolean {
         if (autostartSuppressed.get()) {
             AppLog.i(TAG, "start ignored — autostart suppressed until app returns to foreground")
             return false
         }
         val intent = Intent(context, LocationRecorderService::class.java).apply {
             putExtra(LocationRecorderService.EXTRA_STATE, state.name)
+            putExtra(LocationRecorderService.EXTRA_DISPLAY, display.name)
             putExtra(LocationRecorderService.EXTRA_PROFILE, profile.name)
         }
         try {
@@ -68,6 +73,7 @@ class RecorderServiceController @Inject constructor(
             debugMutable.value = RecorderDebugState(
                 isRecording = false,
                 state = state,
+                displayState = display,
                 profile = profile,
                 updatedAtMs = System.currentTimeMillis(),
                 lastStartError = message,
@@ -78,6 +84,7 @@ class RecorderServiceController @Inject constructor(
         debugMutable.value = RecorderDebugState(
             isRecording = true,
             state = state,
+            displayState = display,
             profile = profile,
             updatedAtMs = System.currentTimeMillis(),
             lastStartError = null,
@@ -92,11 +99,12 @@ class RecorderServiceController @Inject constructor(
      * [running] false and silently freeze the cadence (every [RecordingController] retune is gated
      * on [isRecording]). This makes the service the source of truth for the running flag.
      */
-    fun markStarted(state: DevicePhysicalState, profile: PowerProfile) {
+    fun markStarted(state: RecorderState, display: DevicePhysicalState, profile: PowerProfile) {
         running.set(true)
         debugMutable.value = RecorderDebugState(
             isRecording = true,
             state = state,
+            displayState = display,
             profile = profile,
             updatedAtMs = System.currentTimeMillis(),
             lastStartError = null,

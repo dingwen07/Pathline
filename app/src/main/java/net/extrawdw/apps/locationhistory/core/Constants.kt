@@ -110,6 +110,26 @@ object Constants {
      */
     const val DRIFT_MOTION_VARIANCE_CEILING = 1.0f
 
+    // --- Recorder state machine ---------------------------------------------------------------
+    /**
+     * How long the recorder may sit in the [net.extrawdw.apps.locationhistory.core.RecorderState.UNKNOWN]
+     * bootstrap cadence with no sign of motion before it self-demotes to the low-power STATIONARY
+     * cadence. UNKNOWN is meant to be transient (cold start / service restart); without this fuse a
+     * session that came up already-parked — Activity Recognition is edge-triggered and stays silent
+     * on an already-still start — burns the costly UNKNOWN cadence for hours when the fix-cluster
+     * detector can't form a stay (noisy indoor GPS). A bit longer than [MIN_VISIT_DURATION_MS] so a
+     * genuine brief departure still has time to classify as movement first.
+     */
+    const val UNKNOWN_IDLE_TIMEOUT_MS = 4 * 60_000L
+
+    /**
+     * How long [net.extrawdw.apps.locationhistory.core.RecorderState.VERIFYING_DEPARTURE] burst-samples
+     * before giving up on an unconfirmed departure hint and reverting to STATIONARY. Replaces the old
+     * "bet on one fresh fix while holding the mutex" check: a real departure shows movement in the
+     * burst within this window; a transient (phone bumped, HVAC) shows none and is suppressed.
+     */
+    const val DEPARTURE_VERIFY_WINDOW_MS = 75_000L
+
     /** Radius (m) of the geofence dropped when the device becomes stationary. */
     const val DWELL_GEOFENCE_RADIUS_METERS = 100f
 

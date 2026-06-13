@@ -26,6 +26,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.enrich.DeviceStateCollector
@@ -40,10 +41,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The recording brain. It reacts to the low-power signals (Activity Recognition transitions,
- * geofence exits) and to batched location deliveries, deciding when to record, when to drop into
- * the stationary/geofence state, and how to persist + classify each sample. It holds no wakelock —
- * everything is driven by system-delivered PendingIntents.
+ * The recording brain — now a thin **interpreter** over the pure [RecordingPolicy]. It owns the I/O
+ * and lifecycle (the foreground service, the AR heartbeat, geofences, the significant-motion sensor,
+ * sample persistence) and the wall clock; the policy owns the state-machine logic. Each entry point
+ * gathers evidence, persists what it must, hands the event to the policy, and executes the
+ * [RecordingAction]s it returns. It holds no wakelock — everything is driven by system-delivered
+ * PendingIntents.
  *
  * Single-writer rule: every externally-invoked entry point (receivers, the foreground service,
  * workers, UI) serializes on [stateMutex], so concurrent broadcasts cannot interleave state
@@ -65,26 +68,35 @@ class RecordingController @Inject constructor(
     private val significantMotionManager: SignificantMotionManager,
     private val workScheduler: WorkScheduler,
 ) {
-    @Volatile
-    private var currentState: DevicePhysicalState = DevicePhysicalState.UNKNOWN
+    /** The pure decision core: fix/speed buffers, drift guard, cluster detector, AR timeline, the
+     *  state machine itself. See [RecordingPolicy]/[RecordingHeuristics] — extracted so the rules are
+     *  JVM-testable. [RecordingPolicy.state] is the single source of truth for the recorder state. */
+    private val heuristics = RecordingHeuristics()
+    private val policy = RecordingPolicy(heuristics)
 
+    /** Latest non-stationary classification, shown as the notification movement badge while MOVING. */
+    @Volatile
+    private var latestMovingClassification: DevicePhysicalState? = null
+
+    /** The most recent AR activity + a nominal confidence, fed to the per-sample classifier. Kept as
+     *  the raw AR name (e.g. ON_BICYCLE) the classifier matches; the policy uses its own AR timeline. */
     @Volatile
     private var lastArActivity: String? = null
 
     @Volatile
     private var lastArConfidence: Int? = null
 
+    /** Mirror of the (state, display) last pushed to the service, so we only retune on real change. */
     @Volatile
-    private var serviceState: DevicePhysicalState? = null
+    private var serviceState: RecorderState? = null
 
-    /** The pure decision core: fix/speed buffers, drift guard, cluster detector, backoff curve.
-     *  See [RecordingHeuristics] — extracted so the rules are JVM-testable. */
-    private val heuristics = RecordingHeuristics()
+    @Volatile
+    private var serviceDisplay: DevicePhysicalState? = null
 
     /** Serializes all externally-invoked entry points (see class doc). Not reentrant. */
     private val stateMutex = Mutex()
 
-    /** Long-lived scope for the significant-motion backoff re-arm (process-lifetime singleton). */
+    /** Long-lived scope for the significant-motion backoff re-arm and the verification deadline. */
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Consecutive unconfirmed significant-motion triggers in the current stay -> backoff growth. */
@@ -93,6 +105,10 @@ class RecordingController @Inject constructor(
 
     @Volatile
     private var sigMotionRearmJob: Job? = null
+
+    /** Fires the VERIFYING_DEPARTURE deadline when the burst hasn't confirmed a departure. */
+    @Volatile
+    private var verifyDeadlineJob: Job? = null
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -117,12 +133,11 @@ class RecordingController @Inject constructor(
     }
 
     private suspend fun startTrackingCore() = withContext(Dispatchers.Default) {
-        // The bootstrap fix is classified here (ML inference), and the UI calls this from the main
-        // dispatcher — so keep the whole sequence off the main thread.
+        // The bootstrap fix is classified here, and the UI calls this from the main dispatcher — so
+        // keep the whole sequence off the main thread.
         AppLog.i(TAG, "startTracking")
         enableTracking()
-        val profile = settingsRepository.settings.first().powerProfile
-        recorderService.start(currentState, profile)
+        startService()
         val fix = getCurrentLocation()
         if (fix != null) {
             // No raw coordinates in logs: session files can leave the device via the log export.
@@ -142,6 +157,8 @@ class RecordingController @Inject constructor(
         recognitionManager.stop()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
+        cancelSigMotionRearm()
+        cancelVerify()
         recorderService.stop()
         // The fused PI location request is system-persistent state (it survives process death) and
         // is not tracked by the in-memory running flag — recorderService.stop() no-ops when the
@@ -267,10 +284,7 @@ class RecordingController @Inject constructor(
         AppLog.i(TAG, "resume: tracking on, recorderRunning=${recorderService.isRecording}")
         enableTracking()
         geofenceManager.restore()
-        if (!recorderService.isRecording) {
-            val profile = settingsRepository.settings.first().powerProfile
-            recorderService.start(currentState, profile)
-        }
+        if (!recorderService.isRecording) startService()
         repairStationaryFromStoredSamples()
     }
 
@@ -283,11 +297,14 @@ class RecordingController @Inject constructor(
      *  - the periodic [net.extrawdw.apps.locationhistory.work.RecordingWatchdogWorker], which catches a
      *    process kill / silent service death that `START_STICKY` didn't recover.
      *
-     * Fast no-op when the recorder is already up, so the 15-minute watchdog doesn't re-arm AR/geofences
-     * on every tick. When the recorder is down it re-arms the passive triggers (so a later AR/geofence
-     * event can still revive it) and tries the foreground start; if the platform refuses it — e.g. a
-     * plain worker has no background-start exemption — it posts an alert so the user can resume. A true
-     * force-stop / OEM kill can't be recovered here: a stopped app's receivers and workers never run.
+     * Stays cheap when the recorder is already up — it doesn't re-arm AR/geofences on every tick —
+     * but it still re-derives stationary state from stored fixes, so a recorder revived into a stale
+     * UNKNOWN cadence (a START_STICKY restart with no AR STILL to follow) drops to low power within a
+     * watchdog tick instead of holding UNKNOWN until the next departure. When the recorder is down it
+     * re-arms the passive triggers (so a later AR/geofence event can still revive it) and tries the
+     * foreground start; if the platform refuses it — e.g. a plain worker has no background-start
+     * exemption — it posts an alert so the user can resume. A true force-stop / OEM kill can't be
+     * recovered here: a stopped app's receivers and workers never run.
      */
     suspend fun ensureRecorderRunning(trigger: String): Unit = stateMutex.withLock {
         // Read the preference before the isRecording short-circuit: a recorder (or an orphaned PI
@@ -302,7 +319,17 @@ class RecordingController @Inject constructor(
             removeOrphanedLocationUpdates()
             return@withLock
         }
-        if (recorderService.isRecording) return@withLock
+        if (recorderService.isRecording) {
+            // Alive but maybe stuck in a stale cadence: a START_STICKY restart can revive the
+            // recorder in UNKNOWN while the device is already parked, with no AR STILL to follow
+            // (the Transition API only reports changes), so it would hold the costly UNKNOWN cadence
+            // until the next departure. Re-derive the stay from stored fixes and drop to low power.
+            // Gate strictly on UNKNOWN: MOVING resolves itself via the live cluster detector, and
+            // VERIFYING_DEPARTURE self-reverts on its deadline — repairing those would clobber the
+            // live buffer or abort an in-flight departure check.
+            if (policy.state == RecorderState.UNKNOWN) repairStationaryFromStoredSamples()
+            return@withLock
+        }
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "$trigger: autostart suppressed (paused since task removal) — skipping")
             return@withLock
@@ -315,8 +342,7 @@ class RecordingController @Inject constructor(
         AppLog.i(TAG, "$trigger: recorder down — re-arming and restarting")
         enableTracking()
         geofenceManager.restore()
-        val profile = settingsRepository.settings.first().powerProfile
-        if (recorderService.start(currentState, profile)) {
+        if (startService()) {
             repairStationaryFromStoredSamples()
         } else {
             // Background FGS start refused. AR/geofences are still armed (a passive trigger can revive
@@ -324,6 +350,16 @@ class RecordingController @Inject constructor(
             AppLog.w(TAG, "$trigger: foreground start denied — notifying user")
             Notifications.notifyRecordingNeedsResume(context)
         }
+    }
+
+    /**
+     * Repair a sticky-service restart that came back without intent extras. Android restarts the
+     * foreground service with `intent == null`, so [LocationRecorderService] briefly defaults to
+     * UNKNOWN until the controller can inspect stored fixes. If those fixes already prove a stay,
+     * immediately retune to STATIONARY instead of burning hours at the UNKNOWN fallback cadence.
+     */
+    suspend fun repairStateAfterServiceRestart(): Unit = stateMutex.withLock {
+        repairStationaryFromStoredSamples()
     }
 
     /**
@@ -349,42 +385,26 @@ class RecordingController @Inject constructor(
         }
     }
 
-    /** Handle a batch of Activity Recognition transitions; react to the most recent one. */
+    // --- event entry points (delegate to the policy, then execute its actions) -----------------
+
+    /** Handle a batch of Activity Recognition transitions. */
     suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
             return@withLock
         }
-        val latest = events.lastOrNull() ?: return@withLock
-        val (activityType, transitionType) = latest
-        if (transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) return@withLock
-
-        lastArActivity = arName(activityType)
-        lastArConfidence = 90
-        AppLog.i(TAG, "AR transition ENTER ${arName(activityType)}")
-        when (activityType) {
-            // A bare AR STILL must not collapse us to the low-power cadence while we're actually
-            // travelling — a smooth light-rail ride makes AR flap STILL/WALKING/RUNNING, and each
-            // STILL would otherwise undersample the whole leg. Trust STILL only when recent fixes
-            // show we've settled; a genuine stop is still caught here once the fixes stop moving (and
-            // by the stationary-cluster detector in handleLocations).
-            DetectedActivity.STILL -> if (heuristics.recentlyMoving()) {
-                AppLog.i(TAG, "AR STILL ignored — recent fixes still moving")
-            } else {
-                becameStationary()
-            }
-            // Walking can be in-place jitter at a dwell, so it still goes through the drift guard.
-            DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> becameMoving(DevicePhysicalState.WALKING)
-            // Running/cycling/vehicle are unambiguous motion (not plausible as dwell jitter): trust AR
-            // and leave the stay immediately. Otherwise boarding is suppressed by the stale stationary
-            // fix (the device hasn't moved 80m *yet*), so the whole moving leg is undersampled.
-            DetectedActivity.RUNNING -> becameMoving(DevicePhysicalState.RUNNING, force = true)
-            DetectedActivity.ON_BICYCLE -> becameMoving(DevicePhysicalState.CYCLING, force = true)
-            DetectedActivity.IN_VEHICLE -> becameMoving(
-                DevicePhysicalState.IN_VEHICLE,
-                force = true
-            )
+        // Feed the per-sample classifier the raw name of the latest ENTER (it matches names like
+        // ON_BICYCLE/ON_FOOT), while the policy gets the de-Android-ised ArActivity transitions.
+        events.lastOrNull { it.second == ActivityTransition.ACTIVITY_TRANSITION_ENTER }?.let { (type, _) ->
+            lastArActivity = arName(type)
+            lastArConfidence = 90
+            AppLog.i(TAG, "AR transition ENTER ${arName(type)}")
         }
+        val transitions = events.mapNotNull { (type, transitionType) ->
+            arActivityOf(type)?.let { it to (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) }
+        }
+        if (transitions.isEmpty()) return@withLock
+        executeActions(policy.onArTransitions(transitions, System.currentTimeMillis()))
     }
 
     /** Leaving the dwell geofence means the user is on the move again (a real, forced departure). */
@@ -395,23 +415,21 @@ class RecordingController @Inject constructor(
         }
         AppLog.i(TAG, "geofence EXIT")
         geofenceManager.clearAll()
-        becameMoving(DevicePhysicalState.UNKNOWN, force = true)
+        executeActions(policy.onGeofenceExit(System.currentTimeMillis()))
     }
 
     /**
      * The significant-motion trigger fired while stationary — a fast, low-power *hint* that the user
      * may have started location-changing motion. It is NOT trusted as a confirmed departure: the
      * one-shot hardware sensor fires on transients (a phone bumped on a desk, HVAC, a passing truck)
-     * that don't actually move the user, and blindly ramping GPS on each one pins the recorder in the
-     * costly UNKNOWN network-scanning cadence (the idle-battery drain seen in the 06-05 dump).
+     * that don't actually move the user.
      *
-     * Instead we *verify* before leaving low power, via the same drift guard used elsewhere
-     * ([becameMoving] with `force = false`): a real walk shakes the phone (`motionVariance`) or, for a
-     * smoother ride, a fresh fix shows GPS speed/displacement. A transient shows neither and is
-     * suppressed. An unconfirmed trigger re-arms the sensor with a growing backoff so a chronically
-     * noisy surface can't flap us awake. ~1 min to wake on a real departure is acceptable; the
-     * Doze-exit path ([handleDeviceIdleModeChanged]) and the next classified fix are additional
-     * backstops.
+     * Cheap pre-filter before paying for a GPS burst: a real walk shakes the phone
+     * ([MotionSensorReader.motionVariance]); a still phone is usually a transient but can also be a
+     * smooth, mounted-vehicle departure, so a still phone is confirmed against one fresh fix's
+     * displacement from the stay (the old drift guard) rather than bursting on every trigger. Only a
+     * genuine motion/displacement hint enters VERIFYING_DEPARTURE; a transient just re-arms the sensor
+     * with backoff so a chronically noisy surface can't flap us into the burst cadence.
      */
     suspend fun handleSignificantMotion(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
@@ -421,11 +439,23 @@ class RecordingController @Inject constructor(
             )
             return@withLock
         }
-        // Already moving; stale trigger.
-        if (currentState != DevicePhysicalState.STATIONARY) return@withLock
-        AppLog.i(TAG, "significant motion — verifying departure")
-        if (!becameMoving(DevicePhysicalState.UNKNOWN, force = false)) {
-            // Unconfirmed: stay in the low-power stationary cadence and re-arm with backoff.
+        if (policy.state != RecorderState.STATIONARY) return@withLock // stale trigger; already moving
+        val motionVariance = motionSensorReader.motionVariance()
+        val movingHint = if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) {
+            true // phone is shaking — a real walk; let the burst confirm vs. mere handling
+        } else {
+            // Still phone: confirm a possible smooth departure against one fresh fix before bursting.
+            val fresh = getCurrentLocation()
+            fresh != null && !heuristics.isWithinStay(
+                fresh.latitude, fresh.longitude,
+                if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
+            )
+        }
+        if (movingHint) {
+            AppLog.i(TAG, "significant motion — verifying departure")
+            executeActions(policy.onSignificantMotion(System.currentTimeMillis()))
+        } else {
+            AppLog.i(TAG, "significant motion — transient (no displacement); re-arming with backoff")
             rearmSignificantMotionWithBackoff()
         }
     }
@@ -434,8 +464,8 @@ class RecordingController @Inject constructor(
      * Doze idle-mode changed (`PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED`, delivered by the FGS).
      * Deep Doze is motion-gated by the platform's own significant-motion logic, so its verdict is a
      * higher-quality signal than our raw sensor:
-     * - **Entering** idle = the system confirms durable stationarity. Our sensor is redundant (a real
-     *   departure will break Doze and arrive on the exit branch), so disarm it to drop wakeups.
+     * - **Entering** idle = the system confirms durable stationarity, so the policy drops to the
+     *   stationary cadence (if it wasn't already) and we disarm the now-redundant sensor.
      * - **Exiting** idle is *usually* real motion, but maintenance windows and screen-on also exit, so
      *   confirm with a cheap accelerometer burst (no GPS): travel shakes the phone -> wake; otherwise
      *   just re-arm the sensor fresh so the next genuine move is caught immediately.
@@ -444,21 +474,23 @@ class RecordingController @Inject constructor(
         if (isAutostartSuppressed()) return@withLock
         if (idle) {
             AppLog.i(TAG, "device idle (Doze) — durably stationary; disarming significant motion")
+            executeActions(policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = System.currentTimeMillis()))
             cancelSigMotionRearm()
             significantMotionManager.disarm()
             return@withLock
         }
         AppLog.i(TAG, "device exited Doze idle")
-        if (currentState != DevicePhysicalState.STATIONARY) return@withLock
+        if (policy.state != RecorderState.STATIONARY) return@withLock
         val motionVariance = motionSensorReader.motionVariance()
-        if (motionVariance >= net.extrawdw.apps.locationhistory.core.Constants.DRIFT_MOTION_VARIANCE_CEILING) {
-            AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) — treating as departure")
-            becameMoving(DevicePhysicalState.UNKNOWN, force = true)
-        } else {
+        val actions = policy.onDozeIdle(idle = false, motionVariance = motionVariance, nowMs = System.currentTimeMillis())
+        if (actions.isEmpty()) {
             // Likely a maintenance-window / screen-on exit, not a departure. Restore the fast sensor.
             resetSigMotionBackoff()
             cancelSigMotionRearm()
             significantMotionManager.arm { handleSignificantMotion() }
+        } else {
+            AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) — treating as departure")
+            executeActions(actions)
         }
     }
 
@@ -488,7 +520,7 @@ class RecordingController @Inject constructor(
             removeOrphanedLocationUpdates()
             return
         }
-        AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=$currentState)")
+        AppLog.i(TAG, "handleLocations: ${locations.size} fixes (state=${policy.state})")
         val context = deviceStateCollector.snapshot()
         // One IMU+barometer burst per delivered batch; its summary is stamped on every sample in
         // the batch as evidence for the span-level timeline classifier.
@@ -499,6 +531,7 @@ class RecordingController @Inject constructor(
         val stepDelta = stepCounterMonitor.stepsSinceLastBatch()
         val affectedDays = linkedSetOf<Long>()
         val toPersist = ArrayList<LocationSampleEntity>(locations.size)
+        val classifiedFixes = ArrayList<ClassifiedFix>(locations.size)
 
         val sorted = locations.sortedBy { it.time }
         for (location in sorted) {
@@ -521,30 +554,21 @@ class RecordingController @Inject constructor(
                     cellSignalDbm = context.cellSignalDbm,
                 ),
             )
-            if (classification.state != DevicePhysicalState.STATIONARY &&
-                (classification.isConfident || (speed ?: 0f) >= 1.0f)
-            ) {
-                // Stationary exits should not wait solely for AR/geofence when the fixes themselves
-                // show real motion; the drift guard still blocks jitter inside the dwell radius.
-                if (currentState == DevicePhysicalState.STATIONARY) {
-                    // Non-drift already checked against this fresh delivered fix; force past the
-                    // stale-fix re-check inside becameMoving so it isn't re-suppressed.
-                    if (!isLikelyDrift(location, motionVariance)) becameMoving(
-                        classification.state,
-                        force = true
-                    )
-                } else {
-                    currentState = classification.state
-                }
+            if (classification.state != DevicePhysicalState.STATIONARY) {
+                latestMovingClassification = classification.state
             }
-            heuristics.pushFix(
-                RecentFix(
-                    t = location.time,
-                    lat = location.latitude,
-                    lon = location.longitude,
-                    accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
-                    speedMps = if (location.hasSpeed()) location.speed else null,
-                    stationary = classification.state == DevicePhysicalState.STATIONARY,
+            classifiedFixes.add(
+                ClassifiedFix(
+                    fix = RecentFix(
+                        t = location.time,
+                        lat = location.latitude,
+                        lon = location.longitude,
+                        accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                        speedMps = if (location.hasSpeed()) location.speed else null,
+                        stationary = classification.state == DevicePhysicalState.STATIONARY,
+                    ),
+                    classifiedState = classification.state,
+                    isConfident = classification.isConfident,
                 ),
             )
             val sample = buildSample(
@@ -554,146 +578,156 @@ class RecordingController @Inject constructor(
             toPersist.add(sample)
             affectedDays.add(sample.dayEpoch)
         }
-        // One transaction for the whole delivered batch — and it must land before the
-        // stationary-cluster handling below, which reads mostRecent() to anchor the stay.
+        // One transaction for the whole delivered batch — and it must land before any stationary
+        // transition below, whose executor reads mostRecent() to anchor the stay.
         locationRepository.recordAll(toPersist)
 
-        // Keep the FGS notification + cadence in sync with the current state (fixes a stale
-        // "Unknown" notification when the state was set by a geofence/AR event long ago).
+        // The policy buffers the fixes and decides the state (stay/leave/settle/idle-timeout).
+        executeActions(policy.onFixes(classifiedFixes, motionVariance, System.currentTimeMillis()))
+        // Keep the FGS notification + cadence in sync even when no transition fired (e.g. the
+        // movement badge was refined while staying MOVING).
         refreshServiceState()
-
-        // AR can be silent — if recent fixes have settled into one spot, switch the recorder to
-        // stationary cadence and ask maintenance to rebuild the derived timeline.
-        val stationaryCandidate = heuristics.stationaryClusterCandidate()
-        if (stationaryCandidate != null && currentState != DevicePhysicalState.STATIONARY) {
-            AppLog.i(TAG, "stationary detected from fixes (AR silent)")
-            becameStationary(stationaryCandidate, forceOpen = true)
-        }
         affectedDays.forEach { workScheduler.enqueueTimelineMaintenance(it, "samples") }
     }
 
-    /** Re-tune the foreground service (and its notification) when the state actually changes. */
-    private suspend fun refreshServiceState() {
-        if (!recorderService.isRecording) return
-        if (currentState == serviceState) return
-        serviceState = currentState
-        recorderService.start(currentState, settingsRepository.settings.first().powerProfile)
-    }
-
-    /** Repair a process-restart case where recent stored fixes already show a stationary cluster. */
+    /**
+     * Repair a process-restart case where recent stored fixes already show a stationary cluster. The
+     * policy replaces its buffer with the stored fixes and, if they cluster, returns an
+     * [RecordingAction.EnterStationary] — so a boot / START_STICKY restart while parked drops to the
+     * low-power cadence immediately instead of holding UNKNOWN until the next departure.
+     */
     private suspend fun repairStationaryFromStoredSamples() {
         val recent = locationRepository.latest(12)
             .filter { it.includedInComputation }
             .sortedBy { it.timestampMs }
-        if (recent.size < 3 || recent.last().devicePhysicalState != DevicePhysicalState.STATIONARY) return
-        heuristics.replaceFixes(
-            recent.map {
-                RecentFix(
-                    t = it.timestampMs,
-                    lat = it.latitude,
-                    lon = it.longitude,
-                    accuracyMeters = it.accuracy,
-                    speedMps = it.speed,
-                    stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
-                )
-            },
-        )
-        heuristics.stationaryClusterCandidate()?.let {
-            AppLog.i(TAG, "resume repair: restoring stationary recorder state from stored fixes")
-            becameStationary(it, forceOpen = true)
+        if (recent.isEmpty()) return
+        val fixes = recent.map {
+            RecentFix(
+                t = it.timestampMs,
+                lat = it.latitude,
+                lon = it.longitude,
+                accuracyMeters = it.accuracy,
+                speedMps = it.speed,
+                stationary = it.devicePhysicalState == DevicePhysicalState.STATIONARY,
+            )
+        }
+        executeActions(policy.onResumeRepair(fixes, System.currentTimeMillis()))
+    }
+
+    /** The VERIFYING_DEPARTURE deadline fired: ask the policy to revert if still unconfirmed. */
+    private suspend fun onVerifyDeadline() = stateMutex.withLock {
+        if (!recorderService.isRecording) return@withLock
+        executeActions(policy.onVerifyDeadline(System.currentTimeMillis()))
+    }
+
+    // --- action interpreter -------------------------------------------------------------------
+
+    private suspend fun executeActions(actions: List<RecordingAction>) {
+        for (action in actions) when (action) {
+            is RecordingAction.EnterStationary -> execEnterStationary(action)
+            is RecordingAction.EnterMoving -> execEnterMoving(action)
+            is RecordingAction.BeginVerifying -> execBeginVerifying(action)
+            is RecordingAction.RevertToStationary -> execRevertToStationary(action)
         }
     }
 
-    // --- state transitions --------------------------------------------------------------------
-
-    private suspend fun becameStationary(
-        candidateFromFixes: VisitCandidate? = null,
-        forceOpen: Boolean = false
-    ) {
-        if (currentState == DevicePhysicalState.STATIONARY && !forceOpen) return
-        currentState = DevicePhysicalState.STATIONARY
-        AppLog.i(TAG, "becameStationary: keeping FGS alive at low-power cadence")
-        // Keep the foreground service alive but drop to the low-power stationary location cadence,
-        // so it never silently exits. (We deliberately do NOT stopSelf here.)
-        if (recorderService.isRecording) {
-            recorderService.start(
-                DevicePhysicalState.STATIONARY,
-                settingsRepository.settings.first().powerProfile
-            )
-            serviceState = DevicePhysicalState.STATIONARY
-        }
-
+    private suspend fun execEnterStationary(action: RecordingAction.EnterStationary) {
+        AppLog.i(TAG, "enter STATIONARY (${action.reason}) — low-power cadence")
+        cancelVerify()
+        // Keep the foreground service alive but drop to the low-power stationary cadence; never stopSelf.
+        refreshServiceState()
         // Make sure we have at least one fix to anchor the visit, even on a cold start.
         if (locationRepository.mostRecent() == null) {
             getCurrentLocation()?.let { handleLocationsCore(listOf(it)) }
         }
-        val anchor = locationRepository.mostRecent()
-        if (anchor != null) {
-            val now = System.currentTimeMillis()
-            val candidate = candidateFromFixes ?: VisitCandidate(
-                startMs = anchor.timestampMs,
-                endMs = now,
-                centroidLatitude = anchor.latitude,
-                centroidLongitude = anchor.longitude,
+        val anchor = action.candidate ?: locationRepository.mostRecent()?.let {
+            VisitCandidate(
+                startMs = it.timestampMs,
+                endMs = System.currentTimeMillis(),
+                centroidLatitude = it.latitude,
+                centroidLongitude = it.longitude,
                 sampleCount = 1,
             )
-            geofenceManager.armDwellGeofence(
-                candidate.centroidLatitude,
-                candidate.centroidLongitude
-            )
-            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence — fires the moment
-            // the user starts location-changing motion. One-shot; re-armed on the next stationary entry.
-            // A genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
+        } ?: return
+        geofenceManager.armDwellGeofence(anchor.centroidLatitude, anchor.centroidLongitude)
+        // The policy anchors the drift guard from the cluster centroid; when it had no centroid
+        // (Doze / idle-timeout) seed it from the resolved anchor here.
+        if (action.candidate == null) {
+            heuristics.stationaryAnchor = anchor.centroidLatitude to anchor.centroidLongitude
+        }
+        if (action.armSigMotion) {
+            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence. One-shot; a
+            // genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
             cancelSigMotionRearm()
             resetSigMotionBackoff()
             significantMotionManager.arm { handleSignificantMotion() }
-            heuristics.stationaryAnchor = candidate.centroidLatitude to candidate.centroidLongitude
-            workScheduler.enqueueTimelineMaintenanceNow(
-                TimeBuckets.dayEpoch(anchor.timestampMs),
-                "became_stationary"
-            )
         }
+        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.startMs), action.reason)
     }
 
-    /** @return true if the state actually transitioned to moving; false if suppressed as drift. */
-    private suspend fun becameMoving(state: DevicePhysicalState, force: Boolean = false): Boolean {
-        // Drift guard: while inside the dwell geofence, an Activity Recognition "walking" is
-        // probably jitter. A real departure is caught by the geofence exit (force = true).
-        if (!force) {
-            // Weight device movement heavily: a real walk shakes the phone, GPS drift happens while it
-            // sits still. Sample the accelerometer once so any physical motion (or GPS speed) overrides
-            // the position-based drift check — a short walk at a noisy-GPS place must not read as drift.
-            val motionVariance = motionSensorReader.motionVariance()
-            if (isLikelyDrift(motionVariance)) {
-                // The stored fix can be minutes stale on the low-power cadence and still at the anchor,
-                // so confirm a possible departure against a fresh fix before suppressing.
-                val fresh = getCurrentLocation()
-                if (fresh == null || isLikelyDrift(fresh, motionVariance)) {
-                    AppLog.i(TAG, "becameMoving($state) ignored — within stay radius (drift)")
-                    return false
-                }
-                AppLog.i(
-                    TAG,
-                    "becameMoving($state): fresh fix confirms real departure (stale drift overridden)"
-                )
-            }
-        }
-        currentState = state
-        AppLog.i(TAG, "becameMoving: $state (force=$force)")
-        val maintenanceDay =
-            locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
-                ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
-        heuristics.stationaryAnchor = null
+    private suspend fun execEnterMoving(action: RecordingAction.EnterMoving) {
+        AppLog.i(TAG, "enter MOVING (${action.reason}) — high-accuracy cadence")
+        cancelVerify()
         cancelSigMotionRearm()
         resetSigMotionBackoff()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
-        workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay, "became_moving")
-        val profile = settingsRepository.settings.first().powerProfile
-        recorderService.start(state, profile)
-        serviceState = state
-        return true
+        workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay(), action.reason)
+        refreshServiceState()
     }
+
+    private suspend fun execBeginVerifying(action: RecordingAction.BeginVerifying) {
+        AppLog.i(TAG, "verifying departure (${action.reason}) — burst cadence for ${Constants.DEPARTURE_VERIFY_WINDOW_MS}ms")
+        refreshServiceState()
+        cancelVerify()
+        verifyDeadlineJob = controllerScope.launch {
+            delay(Constants.DEPARTURE_VERIFY_WINDOW_MS)
+            onVerifyDeadline()
+        }
+    }
+
+    private suspend fun execRevertToStationary(action: RecordingAction.RevertToStationary) {
+        AppLog.i(TAG, "verify window elapsed (${action.reason}) — reverting to STATIONARY")
+        refreshServiceState()
+        // The dwell geofence was left armed through verification; re-arm only the (consumed) one-shot
+        // sensor, with backoff growth so a chronically noisy surface can't flap us awake every minute.
+        rearmSignificantMotionWithBackoff()
+        workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay(), action.reason)
+    }
+
+    // --- service retune -----------------------------------------------------------------------
+
+    /** Start the service (cold start path), recording the pushed (state, display) so a later
+     *  [refreshServiceState] won't redundantly retune. Returns the FGS start result. */
+    private suspend fun startService(): Boolean {
+        val display = currentDisplayState()
+        serviceState = policy.state
+        serviceDisplay = display
+        return recorderService.start(
+            policy.state, display, settingsRepository.settings.first().powerProfile,
+        )
+    }
+
+    /** Re-tune the foreground service (cadence + notification) when the state or display changes. */
+    private suspend fun refreshServiceState() {
+        if (!recorderService.isRecording) return
+        val display = currentDisplayState()
+        if (policy.state == serviceState && display == serviceDisplay) return
+        serviceState = policy.state
+        serviceDisplay = display
+        recorderService.start(policy.state, display, settingsRepository.settings.first().powerProfile)
+    }
+
+    /** The movement shown to the user: the precise mode while travelling, plain Stationary at a stay. */
+    private fun currentDisplayState(): DevicePhysicalState = when (policy.state) {
+        RecorderState.STATIONARY -> DevicePhysicalState.STATIONARY
+        RecorderState.MOVING -> latestMovingClassification ?: DevicePhysicalState.UNKNOWN
+        RecorderState.VERIFYING_DEPARTURE, RecorderState.UNKNOWN -> DevicePhysicalState.UNKNOWN
+    }
+
+    private suspend fun maintenanceDay(): Long =
+        locationRepository.mostRecent()?.timestampMs?.let { TimeBuckets.dayEpoch(it) }
+            ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
 
     // --- significant-motion backoff -----------------------------------------------------------
 
@@ -704,6 +738,11 @@ class RecordingController @Inject constructor(
     private fun cancelSigMotionRearm() {
         sigMotionRearmJob?.cancel()
         sigMotionRearmJob = null
+    }
+
+    private fun cancelVerify() {
+        verifyDeadlineJob?.cancel()
+        verifyDeadlineJob = null
     }
 
     /**
@@ -721,7 +760,7 @@ class RecordingController @Inject constructor(
         cancelSigMotionRearm()
         sigMotionRearmJob = controllerScope.launch {
             delay(delayMs)
-            if (currentState == DevicePhysicalState.STATIONARY) {
+            if (policy.state == RecorderState.STATIONARY) {
                 AppLog.i(
                     TAG,
                     "re-arming significant motion after ${delayMs}ms (unconfirmed streak=$streak)"
@@ -730,25 +769,6 @@ class RecordingController @Inject constructor(
             }
         }
     }
-
-    /** Drift check against the last *stored* fix (may be stale on the low-power cadence). */
-    private suspend fun isLikelyDrift(motionVariance: Float): Boolean {
-        if (currentState != DevicePhysicalState.STATIONARY) return false
-        // No anchor -> nothing to measure displacement against, so it cannot be called drift;
-        // assuming drift here would suppress every departure until an anchor appears.
-        if (heuristics.stationaryAnchor == null) return false
-        val last = locationRepository.mostRecent() ?: return false
-        return heuristics.isDriftAt(
-            currentState, last.latitude, last.longitude, last.speed ?: 0f, motionVariance,
-        )
-    }
-
-    /** Drift check against a specific (fresh) fix. */
-    private fun isLikelyDrift(location: Location, motionVariance: Float): Boolean =
-        heuristics.isDriftAt(
-            currentState, location.latitude, location.longitude,
-            if (location.hasSpeed()) location.speed else 0f, motionVariance,
-        )
 
     // --- helpers ------------------------------------------------------------------------------
 
@@ -805,6 +825,16 @@ class RecordingController @Inject constructor(
         pressureHpa = burst.pressureHpa,
         stepDelta = stepDelta,
     )
+
+    /** Map a GMS `DetectedActivity` to the policy's [ArActivity], or null for untracked activities. */
+    private fun arActivityOf(activityType: Int): ArActivity? = when (activityType) {
+        DetectedActivity.STILL -> ArActivity.STILL
+        DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> ArActivity.WALKING
+        DetectedActivity.RUNNING -> ArActivity.RUNNING
+        DetectedActivity.ON_BICYCLE -> ArActivity.CYCLING
+        DetectedActivity.IN_VEHICLE -> ArActivity.IN_VEHICLE
+        else -> null
+    }
 
     private fun arName(activityType: Int): String = when (activityType) {
         DetectedActivity.STILL -> "STILL"

@@ -24,6 +24,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import javax.inject.Inject
 
@@ -91,18 +92,24 @@ class LocationRecorderService : LifecycleService() {
 
     @SuppressLint("MissingPermission")
     private fun startRecording(intent: Intent?): Boolean {
+        // The OS restarts a START_STICKY foreground service with a null intent (process death, app
+        // update) — no extras — so we fall back to the defaults and reconcile from stored fixes below.
+        val isServiceRestart = intent == null
         val state = intent?.getStringExtra(EXTRA_STATE)
+            ?.let { runCatching { RecorderState.valueOf(it) }.getOrNull() }
+            ?: RecorderState.UNKNOWN
+        val display = intent?.getStringExtra(EXTRA_DISPLAY)
             ?.let { runCatching { DevicePhysicalState.valueOf(it) }.getOrNull() }
             ?: DevicePhysicalState.UNKNOWN
         val profile = intent?.getStringExtra(EXTRA_PROFILE)
             ?.let { runCatching { PowerProfile.valueOf(it) }.getOrNull() }
             ?: PowerProfile.BALANCED
 
-        // A fresh launch (intent==null after a restart) starts a new log session; re-tunes don't.
-        if (intent == null) AppLog.startSession("service-restart")
-        AppLog.i(TAG, "startRecording state=$state profile=$profile (restart=${intent == null})")
+        // A fresh launch (a restart) starts a new log session; re-tunes don't.
+        if (isServiceRestart) AppLog.startSession("service-restart")
+        AppLog.i(TAG, "startRecording state=$state display=$display profile=$profile (restart=$isServiceRestart)")
 
-        if (!startForeground(state)) {
+        if (!startForeground(display)) {
             // Also remove the PI location request: it is system-persistent and would otherwise
             // keep delivering fixes to a service that never became foreground.
             stopUpdatesAndSelf()
@@ -124,13 +131,21 @@ class LocationRecorderService : LifecycleService() {
                 locationPendingIntent(this),
             )
         }.onSuccess {
-            serviceController.markStarted(state, profile)
+            serviceController.markStarted(state, display, profile)
+            // A restart defaulted to UNKNOWN; let the controller retune to STATIONARY when recent
+            // stored fixes already prove a stay, instead of burning the UNKNOWN cadence for hours.
+            if (isServiceRestart) {
+                lifecycleScope.launch {
+                    runCatching { controller.repairStateAfterServiceRestart() }
+                        .onFailure { AppLog.e(TAG, "service-restart repair failed", it) }
+                }
+            }
         }.onFailure { AppLog.e(TAG, "requestLocationUpdates failed", it) }
         return true
     }
 
-    private fun startForeground(state: DevicePhysicalState): Boolean {
-        val notification = Notifications.buildRecordingNotification(this, state)
+    private fun startForeground(display: DevicePhysicalState): Boolean {
+        val notification = Notifications.buildRecordingNotification(this, display)
         try {
             ServiceCompat.startForeground(
                 this,
@@ -250,6 +265,7 @@ class LocationRecorderService : LifecycleService() {
     companion object {
         const val ACTION_STOP = "net.extrawdw.apps.locationhistory.STOP_RECORDING"
         const val EXTRA_STATE = "state"
+        const val EXTRA_DISPLAY = "display"
         const val EXTRA_PROFILE = "profile"
         private const val TAG = "Service"
         private const val REQUEST_CODE = 4013

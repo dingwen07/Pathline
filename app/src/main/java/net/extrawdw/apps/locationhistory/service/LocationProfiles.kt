@@ -2,19 +2,19 @@ package net.extrawdw.apps.locationhistory.service
 
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.Priority
-import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 
 /**
- * Builds the [LocationRequest] for the active recording session. The cadence and accuracy are
- * tuned to the detected physical state and the user's power profile so we only spend battery on
- * GPS when motion actually warrants it. Updates are always **batched**
+ * Builds the [LocationRequest] for the active recording session. The cadence and accuracy are tuned
+ * to the recorder's control state ([RecorderState]) and the user's power profile so we only spend
+ * battery on GPS when motion actually warrants it. Updates are always **batched**
  * ([LocationRequest.Builder.setMaxUpdateDelayMillis]) so the radio can coalesce deliveries and the
  * app is woken in efficient bursts via a PendingIntent rather than holding a wakelock.
  */
 object LocationProfiles {
 
-    fun buildRequest(state: DevicePhysicalState, profile: PowerProfile): LocationRequest {
+    fun buildRequest(state: RecorderState, profile: PowerProfile): LocationRequest {
         val (priority, intervalMs, fastestMs, batchMs) = tune(state, profile)
         return LocationRequest.Builder(priority, intervalMs)
             .setMinUpdateIntervalMillis(fastestMs)
@@ -30,45 +30,36 @@ object LocationProfiles {
         val batchMs: Long,
     )
 
-    private fun tune(state: DevicePhysicalState, profile: PowerProfile): Tuning {
-        // Base cadence by motion: faster fixes when moving fast, sparse when slow.
+    private fun tune(state: RecorderState, profile: PowerProfile): Tuning {
+        // Base cadence by control state. The four AR moving activities collapsed into one MOVING tier:
+        // their old location requests were near-identical (vehicle/cycle/run 4s, walk 5s), so the
+        // distinction bought nothing but state churn — it lives in sample evidence for the timeline.
         val base = when (state) {
-            DevicePhysicalState.IN_VEHICLE -> Tuning(
+            // Travelling: tight, high-accuracy fixes for trip fidelity.
+            RecorderState.MOVING -> Tuning(
                 Priority.PRIORITY_HIGH_ACCURACY,
                 4_000,
                 2_000,
                 12_000
             )
 
-            DevicePhysicalState.CYCLING -> Tuning(
+            // Verifying a departure hint: a short, eager burst so a few fixes can confirm motion fast;
+            // tiny batch window so we are not waiting on the radio to coalesce the verdict.
+            RecorderState.VERIFYING_DEPARTURE -> Tuning(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                4_000,
                 2_000,
-                12_000
+                1_000,
+                4_000
             )
 
-            DevicePhysicalState.RUNNING -> Tuning(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                4_000,
-                2_000,
-                12_000
-            )
-
-            DevicePhysicalState.WALKING -> Tuning(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                5_000,
-                2_500,
-                15_000
-            )
-
-            DevicePhysicalState.STATIONARY -> Tuning(
+            RecorderState.STATIONARY -> Tuning(
                 Priority.PRIORITY_LOW_POWER,
                 180_000,
                 120_000,
                 300_000
             )
 
-            DevicePhysicalState.UNKNOWN -> Tuning(
+            RecorderState.UNKNOWN -> Tuning(
                 Priority.PRIORITY_BALANCED_POWER_ACCURACY,
                 12_000,
                 6_000,

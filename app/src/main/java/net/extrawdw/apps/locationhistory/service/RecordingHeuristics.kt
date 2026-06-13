@@ -1,8 +1,8 @@
 package net.extrawdw.apps.locationhistory.service
 
 import net.extrawdw.apps.locationhistory.core.Constants
-import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import net.extrawdw.apps.locationhistory.domain.VisitCandidate
 import kotlin.math.sqrt
 
@@ -50,6 +50,12 @@ internal class RecordingHeuristics {
     fun replaceFixes(fixes: List<RecentFix>) = synchronized(fixLock) {
         recentFixes.clear()
         fixes.forEach { recentFixes.addLast(it) }
+    }
+
+    /** (lat, lon) of the most recent buffered fix, or null when the buffer is empty — used to anchor
+     *  the drift guard when a stationary entry has no cluster centroid (Doze / idle-timeout paths). */
+    fun lastFixLatLon(): Pair<Double, Double>? = synchronized(fixLock) {
+        recentFixes.lastOrNull()?.let { it.lat to it.lon }
     }
 
     fun pushSpeed(speed: Float) = synchronized(speedLock) {
@@ -151,13 +157,24 @@ internal class RecordingHeuristics {
      * drift — treating that as drift would suppress every departure until an anchor appears.
      */
     fun isDriftAt(
-        state: DevicePhysicalState,
+        state: RecorderState,
         lat: Double,
         lon: Double,
         speedMps: Float,
         motionVariance: Float,
     ): Boolean {
-        if (state != DevicePhysicalState.STATIONARY) return false
+        if (state != RecorderState.STATIONARY) return false
+        return isWithinStay(lat, lon, speedMps, motionVariance)
+    }
+
+    /**
+     * Shared geometry behind the drift guard ([isDriftAt]) and the departure-verification check: is a
+     * fix consistent with *still being at the current stay*? — near the anchor, no GPS speed, and the
+     * phone physically still. A fix that is NOT within the stay has left it (displaced beyond the
+     * noise radius, carries speed, or shakes the device). Without a [stationaryAnchor] there is no
+     * stay to be within, so this is false (a departure is never suppressed for lack of an anchor).
+     */
+    fun isWithinStay(lat: Double, lon: Double, speedMps: Float, motionVariance: Float): Boolean {
         if (speedMps >= Constants.DRIFT_MOVING_SPEED_MPS) return false
         if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
         val anchor = stationaryAnchor ?: return false

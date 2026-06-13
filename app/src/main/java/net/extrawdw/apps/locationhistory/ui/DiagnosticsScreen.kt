@@ -130,7 +130,8 @@ class DiagnosticsViewModel @Inject constructor(
             recorderRows = listOf(
                 "Tracking enabled" to settings.trackingEnabled.toString(),
                 "Foreground service running" to recorder.isRecording.toString(),
-                "Motion state" to appContext.getString(recorder.state.labelRes),
+                "Recorder state" to recorder.state.name,
+                "Motion state" to appContext.getString(recorder.displayState.labelRes),
                 "Power profile" to (recorder.profile?.name ?: settings.powerProfile.name),
                 "Recorder updated" to (recorder.updatedAtMs?.let { Format.time(it) } ?: "—"),
                 "Last service start error" to (recorder.lastStartError ?: "—"),

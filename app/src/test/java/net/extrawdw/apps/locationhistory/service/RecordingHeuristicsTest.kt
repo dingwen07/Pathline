@@ -1,7 +1,7 @@
 package net.extrawdw.apps.locationhistory.service
 
 import net.extrawdw.apps.locationhistory.core.Constants
-import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -174,14 +174,14 @@ class RecordingHeuristicsTest {
     @Test
     fun drift_neverWhileMoving() {
         h.stationaryAnchor = 40.0 to -74.0
-        assertFalse(h.isDriftAt(DevicePhysicalState.WALKING, 40.0, -74.0, 0f, 0f))
+        assertFalse(h.isDriftAt(RecorderState.MOVING, 40.0, -74.0, 0f, 0f))
     }
 
     @Test
     fun drift_neverWithoutAnchor() {
         // Stationary but anchorless: nothing to measure displacement against, so it can't be
         // called drift — assuming drift here would suppress every departure forever.
-        assertFalse(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0, -74.0, 0f, 0f))
+        assertFalse(h.isDriftAt(RecorderState.STATIONARY, 40.0, -74.0, 0f, 0f))
     }
 
     @Test
@@ -189,7 +189,7 @@ class RecordingHeuristicsTest {
         // The speed override applies before the anchor check: anchorless + moving is a departure.
         assertFalse(
             h.isDriftAt(
-                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                RecorderState.STATIONARY, 40.0, -74.0,
                 Constants.DRIFT_MOVING_SPEED_MPS, 0f,
             ),
         )
@@ -201,14 +201,14 @@ class RecordingHeuristicsTest {
         // At the anchor, but the phone is moving per GPS -> not drift.
         assertFalse(
             h.isDriftAt(
-                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                RecorderState.STATIONARY, 40.0, -74.0,
                 Constants.DRIFT_MOVING_SPEED_MPS, 0f,
             ),
         )
         // At the anchor, no GPS speed, but the phone is shaking (a real walk) -> not drift.
         assertFalse(
             h.isDriftAt(
-                DevicePhysicalState.STATIONARY, 40.0, -74.0,
+                RecorderState.STATIONARY, 40.0, -74.0,
                 0f, Constants.DRIFT_MOTION_VARIANCE_CEILING,
             ),
         )
@@ -218,9 +218,9 @@ class RecordingHeuristicsTest {
     fun drift_nearAnchorPhysicallyStill_isDrift_farIsNot() {
         h.stationaryAnchor = 40.0 to -74.0
         // ~33 m from the anchor, still, slow: jitter.
-        assertTrue(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.0003, -74.0, 0f, 0f))
+        assertTrue(h.isDriftAt(RecorderState.STATIONARY, 40.0003, -74.0, 0f, 0f))
         // ~220 m away: beyond any noise widening (cap is 150 m): a real departure.
-        assertFalse(h.isDriftAt(DevicePhysicalState.STATIONARY, 40.002, -74.0, 0f, 0f))
+        assertFalse(h.isDriftAt(RecorderState.STATIONARY, 40.002, -74.0, 0f, 0f))
     }
 
     @Test
