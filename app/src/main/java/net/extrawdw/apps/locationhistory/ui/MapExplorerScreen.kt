@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,11 +30,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
@@ -42,9 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
-import com.google.android.gms.maps.model.TileOverlay
-import com.google.android.gms.maps.model.TileOverlayOptions
 import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapEffect
@@ -57,11 +59,18 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import kotlin.math.roundToInt
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlinx.coroutines.android.awaitFrame
 import androidx.compose.ui.graphics.Color as ComposeColor
 
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
 private val TRACK_RED = ComposeColor(0x66FF1744) // translucent
+private const val DOT_ALPHA_NO_TRACK = 0.72f
+private const val MERCATOR_TILE_SIZE = 256.0
 private const val DOT_DP = 3f
 private const val DOT_DP_NO_TRACK = 1.5f
 
@@ -85,17 +94,17 @@ fun MapExplorerScreen(
     val drawingTrack = state.trackPoints.size >= 2
     val dotSizePx =
         with(density) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
-    val cameraZoom = (cameraPositionState.position.zoom * 4f).roundToInt() / 4f
-    val dotTileProvider = remember(state.dotPoints, dotSizePx, density.density, cameraZoom) {
-        DotTileProvider(
-            points = state.dotPoints,
-            dotDiameterPx = dotSizePx,
-            screenDensity = density.density,
-            cameraZoom = cameraZoom,
-            color = SAMPLE_RED.toArgb(),
-        )
+    val dotIndex = remember(state.dotPoints) { MapDotIndex(state.dotPoints) }
+    val cameraPosition = cameraPositionState.position
+    val cameraMoving = cameraPositionState.isMoving
+    val overlayFrame = remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(cameraMoving) {
+        while (cameraMoving) {
+            awaitFrame()
+            overlayFrame.intValue++
+        }
     }
-    val dotOverlay = remember { arrayOfNulls<TileOverlay>(1) }
 
     // Open near the user's data (last recorded sample) instead of the global world view — only the
     // very first time the tab is shown, before any range's points have framed the camera.
@@ -143,41 +152,31 @@ fun MapExplorerScreen(
 
     Box(Modifier.fillMaxSize()) {
         if (showMap) {
-            // Tile overlays are owned by the live map. Remove the old one when the MapView leaves
-            // composition so a remount starts with the fresh map instance.
-            DisposableEffect(Unit) {
-                onDispose {
-                    dotOverlay[0]?.remove()
-                    dotOverlay[0] = null
-                }
-            }
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = cameraPositionState,
                 mapColorScheme = ComposeMapColorScheme.DARK,
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
-                    myLocationButtonEnabled = false
+                    myLocationButtonEnabled = false,
+                    rotationGesturesEnabled = false,
+                    tiltGesturesEnabled = false
                 ),
             ) {
                 if (state.trackPoints.size >= 2) {
                     Polyline(points = state.trackPoints, color = TRACK_RED, width = 6f)
                 }
-                // Red dots are rasterized into visible map tiles instead of one SDK marker per
-                // sample. This keeps dense dot-only ranges cheap while preserving visual density.
-                MapEffect(dotTileProvider) { map ->
-                    dotOverlay[0]?.remove()
-                    dotOverlay[0] = null
-                    if (state.dotPoints.isNotEmpty()) {
-                        dotOverlay[0] = map.addTileOverlay(
-                            TileOverlayOptions()
-                                .tileProvider(dotTileProvider)
-                                .fadeIn(false)
-                                .zIndex(2f)
-                        )
-                    }
-                }
             }
+
+            DotCanvasOverlay(
+                cameraPosition = cameraPosition,
+                dotIndex = dotIndex,
+                dotSizePx = dotSizePx,
+                dotAlpha = if (drawingTrack) 1f else DOT_ALPHA_NO_TRACK,
+                screenDensity = density.density,
+                frameTick = overlayFrame.intValue,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
 
         ControlBar(
@@ -209,6 +208,113 @@ fun MapExplorerScreen(
             },
             onDismiss = { showPicker.value = false },
         )
+    }
+}
+
+@Composable
+private fun DotCanvasOverlay(
+    cameraPosition: CameraPosition,
+    dotIndex: MapDotIndex,
+    dotSizePx: Float,
+    dotAlpha: Float,
+    screenDensity: Float,
+    frameTick: Int,
+    modifier: Modifier = Modifier,
+) {
+    if (dotIndex.isEmpty) return
+    val radiusPx = (dotSizePx / 2f).coerceAtLeast(0.5f)
+    val redrawTick = frameTick
+
+    Canvas(modifier) {
+        redrawTick
+        if (!cameraPosition.zoom.isFinite()) return@Canvas
+        val widthPx = size.width
+        val heightPx = size.height
+        if (widthPx <= 0f || heightPx <= 0f) return@Canvas
+
+        val capCellPx = (radiusPx * 0.5f).coerceAtLeast(1f)
+        val columns = ceil(widthPx / capCellPx).toInt().coerceAtLeast(1)
+        val rows = ceil(heightPx / capCellPx).toInt().coerceAtLeast(1)
+        val drawnCells = BooleanArray(columns * rows)
+        val margin = radiusPx
+
+        dotIndex.forEachVisible(cameraPosition, widthPx, heightPx, margin, screenDensity) { x, y ->
+            if (x < -margin || x > widthPx + margin || y < -margin || y > heightPx + margin) {
+                return@forEachVisible
+            }
+
+            val column = floor(x / capCellPx).toInt().coerceIn(0, columns - 1)
+            val row = floor(y / capCellPx).toInt().coerceIn(0, rows - 1)
+            val cell = row * columns + column
+            if (drawnCells[cell]) return@forEachVisible
+            drawnCells[cell] = true
+
+            drawCircle(
+                color = SAMPLE_RED.copy(alpha = dotAlpha),
+                radius = radiusPx,
+                center = Offset(x, y),
+            )
+        }
+    }
+}
+
+private class MapDotIndex(points: List<LatLng>) {
+    private val xs: DoubleArray
+    private val ys: DoubleArray
+    val isEmpty: Boolean
+        get() = xs.isEmpty()
+
+    init {
+        val projected = points.mapNotNull { point ->
+            val x = ((point.longitude + 180.0) / 360.0).mod(1.0)
+            val sinLatitude = sin(Math.toRadians(point.latitude)).coerceIn(-0.9999, 0.9999)
+            val y = 0.5 - ln((1.0 + sinLatitude) / (1.0 - sinLatitude)) / (4.0 * Math.PI)
+            if (x.isFinite() && y.isFinite()) x to y.coerceIn(0.0, 1.0) else null
+        }
+        xs = DoubleArray(projected.size)
+        ys = DoubleArray(projected.size)
+        for (i in projected.indices) {
+            xs[i] = projected[i].first
+            ys[i] = projected[i].second
+        }
+    }
+
+    inline fun forEachVisible(
+        cameraPosition: CameraPosition,
+        widthPx: Float,
+        heightPx: Float,
+        marginPx: Float,
+        screenDensity: Float,
+        draw: (Float, Float) -> Unit,
+    ) {
+        val center = project(cameraPosition.target)
+        val scale = MERCATOR_TILE_SIZE * screenDensity * 2.0.pow(cameraPosition.zoom.toDouble())
+        val centerX = center.first * scale
+        val centerY = center.second * scale
+        val halfWidth = widthPx / 2.0
+        val halfHeight = heightPx / 2.0
+        val worldWidth = scale
+
+        for (i in xs.indices) {
+            var dx = xs[i] * scale - centerX
+            if (dx > worldWidth / 2.0) dx -= worldWidth
+            if (dx < -worldWidth / 2.0) dx += worldWidth
+            if (dx < -halfWidth - marginPx || dx > halfWidth + marginPx) continue
+
+            val dy = ys[i] * scale - centerY
+            if (dy < -halfHeight - marginPx || dy > halfHeight + marginPx) continue
+
+            draw((dx + halfWidth).toFloat(), (dy + halfHeight).toFloat())
+        }
+    }
+
+    companion object {
+        fun project(point: LatLng): Pair<Double, Double> {
+            val x = ((point.longitude + 180.0) / 360.0).mod(1.0)
+            val sinLatitude = sin(Math.toRadians(point.latitude)).coerceIn(-0.9999, 0.9999)
+            val y = 0.5 - ln((1.0 + sinLatitude) / (1.0 - sinLatitude)) / (4.0 * Math.PI)
+            return x to y.coerceIn(0.0, 1.0)
+        }
     }
 }
 
