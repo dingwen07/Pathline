@@ -22,7 +22,6 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import java.time.LocalDate
 import javax.inject.Inject
-import kotlin.math.roundToLong
 
 /** Time windows the map explorer can plot. */
 enum class MapRange(@param:androidx.annotation.StringRes val labelRes: Int) {
@@ -34,7 +33,7 @@ enum class MapRange(@param:androidx.annotation.StringRes val labelRes: Int) {
 }
 
 data class MapExplorerState(
-    /** Positions to draw as red dots (already thinned/deduped off the UI thread). */
+    /** Positions to draw as red dots; no-track mode keeps raw repeats so density can accumulate. */
     val dotPoints: List<LatLng> = emptyList(),
     /** Ordered points for the connecting track polyline; empty when no track is drawn. */
     val trackPoints: List<LatLng> = emptyList(),
@@ -101,10 +100,10 @@ class MapExplorerViewModel @Inject constructor(
                             totalCount = samples.size
                         )
                     } else {
-                        // Keep coverage but collapse coordinates that land in the same ~1 m cell
-                        // (true duplicate fixes), which tames stacked stationary samples.
+                        // Keep raw samples: stacked stationary fixes are the signal for dots-mode
+                        // density, and the renderer maps those overlaps to higher HDR brightness.
                         MapExplorerState(
-                            dotPoints = dedupeByCell(samples),
+                            dotPoints = samples.map { LatLng(it.latitude, it.longitude) },
                             totalCount = samples.size
                         )
                     }
@@ -199,19 +198,6 @@ class MapExplorerViewModel @Inject constructor(
         return out
     }
 
-    /** Collapse samples whose coordinates round to the same ~1 m grid cell into a single dot. */
-    private fun dedupeByCell(samples: List<LocationSampleEntity>): List<LatLng> {
-        val seen = HashSet<Long>(samples.size)
-        val out = ArrayList<LatLng>(samples.size)
-        for (s in samples) {
-            val latCell = (s.latitude * CELLS_PER_DEGREE).roundToLong()
-            val lonCell = (s.longitude * CELLS_PER_DEGREE).roundToLong()
-            val key = (latCell shl 32) xor (lonCell and 0xFFFFFFFFL)
-            if (seen.add(key)) out.add(LatLng(s.latitude, s.longitude))
-        }
-        return out
-    }
-
     /** Where to point the camera before any data loads: the most recent recorded sample. */
     suspend fun initialCameraTarget(): LatLng? =
         locationRepository.mostRecent()?.let { LatLng(it.latitude, it.longitude) }
@@ -219,6 +205,5 @@ class MapExplorerViewModel @Inject constructor(
     private companion object {
         const val MIN_MOVE_METERS = 11.0
         const val MAX_STATIONARY_GAP_MS = 300_000L // ~12 kept points/hour while stationary
-        const val CELLS_PER_DEGREE = 111_000.0 // ≈ 1 m grid (1° latitude ≈ 111 km)
     }
 }

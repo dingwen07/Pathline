@@ -1,6 +1,8 @@
 package net.extrawdw.apps.locationhistory
 
+import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -21,4 +23,10 @@ fun ComponentActivity.enableTransparentEdgeToEdge() {
         navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
     )
     window.isNavigationBarContrastEnforced = false
+    window.setColorMode(ActivityInfo.COLOR_MODE_HDR)
+    if (Build.VERSION.SDK_INT >= 35) {
+        window.setDesiredHdrHeadroom(PATHLINE_HDR_HEADROOM)
+    }
 }
+
+private const val PATHLINE_HDR_HEADROOM = 3.4f

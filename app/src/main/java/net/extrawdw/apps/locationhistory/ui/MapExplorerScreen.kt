@@ -1,5 +1,7 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import android.graphics.BlendMode
+import android.view.View
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -36,8 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -64,7 +69,11 @@ import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.roundToInt
 import kotlinx.coroutines.android.awaitFrame
+import android.graphics.Color as AndroidColor
+import android.graphics.ColorSpace as AndroidColorSpace
+import android.graphics.Paint as AndroidPaint
 import androidx.compose.ui.graphics.Color as ComposeColor
 
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
@@ -73,6 +82,9 @@ private const val DOT_ALPHA_NO_TRACK = 0.72f
 private const val MERCATOR_TILE_SIZE = 256.0
 private const val DOT_DP = 3f
 private const val DOT_DP_NO_TRACK = 1.5f
+private const val HDR_FULL_SCALE_DOT_COUNT = 48f
+private const val HDR_HEADROOM_CAP = 3.4f
+private const val HDR_RED_HEADROOM_CAP = 3.4f
 
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
@@ -98,6 +110,7 @@ fun MapExplorerScreen(
     val cameraPosition = cameraPositionState.position
     val cameraMoving = cameraPositionState.isMoving
     val overlayFrame = remember { mutableIntStateOf(0) }
+    val rootView = LocalView.current
 
     LaunchedEffect(cameraMoving) {
         while (cameraMoving) {
@@ -168,15 +181,27 @@ fun MapExplorerScreen(
                 }
             }
 
-            DotCanvasOverlay(
-                cameraPosition = cameraPosition,
-                dotIndex = dotIndex,
-                dotSizePx = dotSizePx,
-                dotAlpha = if (drawingTrack) 1f else DOT_ALPHA_NO_TRACK,
-                screenDensity = density.density,
-                frameTick = overlayFrame.intValue,
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (drawingTrack) {
+                DotCanvasOverlay(
+                    cameraPosition = cameraPosition,
+                    dotIndex = dotIndex,
+                    dotSizePx = dotSizePx,
+                    dotAlpha = 1f,
+                    screenDensity = density.density,
+                    frameTick = overlayFrame.intValue,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                HdrDotCanvasOverlay(
+                    cameraPosition = cameraPosition,
+                    dotIndex = dotIndex,
+                    dotSizePx = dotSizePx,
+                    screenDensity = density.density,
+                    frameTick = overlayFrame.intValue,
+                    displayView = rootView,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         ControlBar(
@@ -208,6 +233,81 @@ fun MapExplorerScreen(
             },
             onDismiss = { showPicker.value = false },
         )
+    }
+}
+
+@Composable
+private fun HdrDotCanvasOverlay(
+    cameraPosition: CameraPosition,
+    dotIndex: MapDotIndex,
+    dotSizePx: Float,
+    screenDensity: Float,
+    frameTick: Int,
+    displayView: View,
+    modifier: Modifier = Modifier,
+) {
+    if (dotIndex.isEmpty) return
+    val buckets = remember { DotDensityBuckets() }
+    val paint = remember {
+        AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+            style = AndroidPaint.Style.FILL
+            blendMode = BlendMode.SRC_OVER
+        }
+    }
+    val hdrColorSpace = remember {
+        AndroidColorSpace.get(AndroidColorSpace.Named.LINEAR_EXTENDED_SRGB)
+    }
+    val redrawTick = frameTick
+
+    Canvas(modifier) {
+        redrawTick
+        if (!cameraPosition.zoom.isFinite()) return@Canvas
+        val widthPx = size.width
+        val heightPx = size.height
+        if (widthPx <= 0f || heightPx <= 0f) return@Canvas
+
+        val radiusPx = (dotSizePx / 2f).coerceAtLeast(0.5f)
+        val cellPx = (radiusPx * 0.65f).coerceAtLeast(1f)
+        val columns = ceil(widthPx / cellPx).toInt().coerceAtLeast(1)
+        val rows = ceil(heightPx / cellPx).toInt().coerceAtLeast(1)
+        val bucketData = buckets.obtain(columns * rows)
+        val margin = radiusPx
+
+        dotIndex.forEachVisible(cameraPosition, widthPx, heightPx, margin, screenDensity) { x, y ->
+            if (x < -margin || x > widthPx + margin || y < -margin || y > heightPx + margin) {
+                return@forEachVisible
+            }
+
+            val column = floor(x / cellPx).toInt().coerceIn(0, columns - 1)
+            val row = floor(y / cellPx).toInt().coerceIn(0, rows - 1)
+            val cell = row * columns + column
+            if (bucketData.counts[cell] == 0) {
+                bucketData.touchedCells[bucketData.touchedCount++] = cell
+            }
+            bucketData.counts[cell] += 1
+            bucketData.sumXs[cell] += x
+            bucketData.sumYs[cell] += y
+        }
+        if (bucketData.touchedCount == 0) return@Canvas
+
+        val hdrHeadroom = displayView.currentHdrHeadroom().coerceIn(1f, HDR_HEADROOM_CAP)
+        val useHdr = hdrHeadroom > 1.05f
+        drawIntoCanvas { composeCanvas ->
+            val nativeCanvas = composeCanvas.nativeCanvas
+            for (i in 0 until bucketData.touchedCount) {
+                val cell = bucketData.touchedCells[i]
+                val count = bucketData.counts[cell]
+                val density = densityToExposure(count)
+                if (useHdr) {
+                    paint.setColor(hdrSampleColor(density, hdrHeadroom, hdrColorSpace))
+                } else {
+                    paint.color = sdrSampleColor(density)
+                }
+                val x = bucketData.sumXs[cell] / count
+                val y = bucketData.sumYs[cell] / count
+                nativeCanvas.drawCircle(x, y, radiusPx, paint)
+            }
+        }
     }
 }
 
@@ -257,6 +357,76 @@ private fun DotCanvasOverlay(
         }
     }
 }
+
+private class DotDensityBuckets {
+    var counts = IntArray(0)
+        private set
+    var sumXs = FloatArray(0)
+        private set
+    var sumYs = FloatArray(0)
+        private set
+    var touchedCells = IntArray(0)
+        private set
+    var touchedCount = 0
+
+    fun obtain(size: Int): DotDensityBuckets {
+        if (counts.size != size) {
+            counts = IntArray(size)
+            sumXs = FloatArray(size)
+            sumYs = FloatArray(size)
+            touchedCells = IntArray(size)
+        } else {
+            for (i in 0 until touchedCount) {
+                val cell = touchedCells[i]
+                counts[cell] = 0
+                sumXs[cell] = 0f
+                sumYs[cell] = 0f
+            }
+        }
+        touchedCount = 0
+        return this
+    }
+}
+
+private fun densityToExposure(count: Int): Float {
+    if (count <= 1) return 0f
+    val exposure = ln(count.toFloat()) / ln(HDR_FULL_SCALE_DOT_COUNT)
+    return ((exposure - 0.12f) / 0.88f).coerceIn(0f, 1f)
+}
+
+private fun hdrSampleColor(
+    density: Float,
+    hdrHeadroom: Float,
+    hdrColorSpace: AndroidColorSpace,
+): Long {
+    val redHeadroom = hdrHeadroom.coerceAtMost(HDR_RED_HEADROOM_CAP)
+    val highlight = density * (0.55f + 0.45f * density)
+    val red = 1f + (redHeadroom - 1f) * highlight
+    val green = (0.004f + 0.014f * highlight) * red
+    val blue = (0.012f + 0.006f * highlight) * red
+    val alpha = 0.64f + 0.32f * highlight
+    return AndroidColor.pack(red, green, blue, alpha, hdrColorSpace)
+}
+
+private fun sdrSampleColor(density: Float): Int {
+    val alpha = ((DOT_ALPHA_NO_TRACK + (1f - DOT_ALPHA_NO_TRACK) * density) * 255f)
+        .toColorComponent()
+    val green = (23f + 120f * density).toColorComponent()
+    val blue = (68f + 48f * density).toColorComponent()
+    return AndroidColor.argb(alpha, 255, green, blue)
+}
+
+private fun View.currentHdrHeadroom(): Float {
+    val display = display ?: return 1f
+    val ratio = when {
+        display.isHdrSdrRatioAvailable -> display.hdrSdrRatio
+        display.isHdr -> display.highestHdrSdrRatio
+        else -> 1f
+    }
+    return if (ratio.isFinite() && ratio > 1f) ratio else 1f
+}
+
+private fun Float.toColorComponent(): Int = roundToInt().coerceIn(0, 255)
 
 private class MapDotIndex(points: List<LatLng>) {
     private val xs: DoubleArray
