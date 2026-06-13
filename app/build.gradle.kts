@@ -32,8 +32,8 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.7.0-rc2"
+        versionCode = 16
+        versionName = "1.7.0-rc3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

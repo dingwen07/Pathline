@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Circle
-import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.rememberCameraPositionState
@@ -159,7 +158,7 @@ fun PlaceEditDialog(
                     GoogleMap(
                         modifier = Modifier.fillMaxSize(),
                         cameraPositionState = cameraPositionState,
-                        mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+                        mapColorScheme = rememberMapColorScheme(),
                         uiSettings = MapUiSettings(zoomControlsEnabled = false),
                         onMapClick = { center = it },
                     ) {

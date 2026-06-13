@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -7,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
+import com.google.maps.android.compose.ComposeMapColorScheme
 
 /**
  * Decides whether a given map's GoogleMap should stay composed. maps-compose only frees the map's
@@ -43,3 +45,15 @@ fun rememberMapComposed(onScreen: Boolean): Boolean {
 object MapMemoryPressure {
     var active by mutableStateOf(false)
 }
+
+/**
+ * The map color scheme to follow the app's (system-driven) dark mode. We deliberately compute this
+ * from [isSystemInDarkTheme] instead of passing [ComposeMapColorScheme.FOLLOW_SYSTEM]: MainActivity
+ * declares `android:configChanges="uiMode"`, so a light/dark switch no longer recreates the Activity
+ * -- which means FOLLOW_SYSTEM (evaluated once by the SDK) would stay stuck on the original scheme.
+ * Reading [isSystemInDarkTheme] recomposes on the config change, flipping this value so maps-compose
+ * calls `googleMap.setMapColorScheme()` on the live map -- it recolors in place, no surface rebuild.
+ */
+@Composable
+fun rememberMapColorScheme(): ComposeMapColorScheme =
+    if (isSystemInDarkTheme()) ComposeMapColorScheme.DARK else ComposeMapColorScheme.LIGHT

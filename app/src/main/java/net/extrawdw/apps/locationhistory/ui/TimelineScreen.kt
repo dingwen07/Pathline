@@ -60,6 +60,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -83,7 +84,6 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.Circle
-import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
@@ -157,6 +157,20 @@ fun TimelineScreen(
     }
 
     val cameraPositionState = rememberCameraPositionState()
+    // Seed the camera on the last recorded sample before any day data loads, so the map opens near
+    // the user instead of the zoom-0 world view. One-shot: a day fit below supersedes it once data
+    // arrives, and we bail if the user already moved the camera (e.g. restored after recreation).
+    var cameraSeeded by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (cameraSeeded || cameraPositionState.position.zoom > 1f) {
+            cameraSeeded = true
+            return@LaunchedEffect
+        }
+        viewModel.mostRecentLatLng()?.let {
+            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(it, 15f))
+        }
+        cameraSeeded = true
+    }
     val scaffoldState = rememberBottomSheetScaffoldState()
     val scope = rememberCoroutineScope()
 
@@ -435,7 +449,7 @@ fun TimelineScreen(
                 GoogleMap(
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = cameraPositionState,
-                    mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+                    mapColorScheme = rememberMapColorScheme(),
                     contentPadding = contentPadding,
                     properties = MapProperties(isMyLocationEnabled = hasFineLocation),
                     uiSettings = MapUiSettings(

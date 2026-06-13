@@ -34,6 +34,7 @@ import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
+import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
@@ -69,6 +70,7 @@ data class MapState(
 class TimelineViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val timelineRepository: TimelineRepository,
+    private val locationRepository: LocationRepository,
     private val placeRepository: PlaceRepository,
     private val timelineEditor: TimelineEditor,
     private val annotationStore: AnnotationStore,
@@ -201,6 +203,13 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch { annotationStore.saveEdits(target, id, note, tags) }
 
     // --- map ----------------------------------------------------------------------------------
+
+    /**
+     * Where to point the camera before any day data has loaded (or on an empty day): the most
+     * recent recorded sample. Avoids opening on the zoom-0 world view. Null on a fresh install.
+     */
+    suspend fun mostRecentLatLng(): LatLng? =
+        locationRepository.mostRecent()?.let { LatLng(it.latitude, it.longitude) }
 
     /** Current device location for initial camera / the GPS recenter button. */
     suspend fun currentLatLng(): LatLng? {

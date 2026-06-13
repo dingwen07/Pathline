@@ -41,7 +41,6 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.Circle
-import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MarkerComposable
@@ -297,7 +296,7 @@ private fun PlaceDetailMap(
     GoogleMap(
         modifier = Modifier.fillMaxSize(),
         cameraPositionState = cameraPositionState,
-        mapColorScheme = ComposeMapColorScheme.FOLLOW_SYSTEM,
+        mapColorScheme = rememberMapColorScheme(),
         uiSettings = MapUiSettings(zoomControlsEnabled = false),
     ) {
         // The saved place's own radius, drawn as a yellow ring (matches the timeline map).
