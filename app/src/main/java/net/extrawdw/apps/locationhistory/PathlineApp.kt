@@ -29,6 +29,7 @@ class PathlineApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         AppLog.init(this)
+        AppLog.logRecentApplicationExitInfo(this)
         AppLog.i("App", "onCreate")
         Notifications.ensureChannel(this)
         initAppCheck()
