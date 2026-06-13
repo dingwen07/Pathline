@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- Day theme; the night variant lives in values-night/themes.xml. Both must exist so the window
+         reports the matching isLightTheme and the Android 16 "Expanded dark theme" is skipped. -->
     <style name="Theme.Pathline" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

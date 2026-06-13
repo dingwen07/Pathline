@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Night variant. The day theme (values/themes.xml) is Material.Light; without this the activity
+         window keeps reporting isLightTheme=true at night, so the Android 16 "Expanded dark theme"
+         setting auto-inverts it — and since Compose already draws correct dark colors via
+         isSystemInDarkTheme(), the result is a double inversion. A dark parent here makes the window
+         report isLightTheme=false at night, so force-dark is skipped. -->
+    <style name="Theme.Pathline" parent="android:Theme.Material.NoActionBar" />
+</resources>
