@@ -20,6 +20,19 @@ class LocationRepository @Inject constructor(
         return dao.insert(sample.copy(includedInComputation = included, exclusionReason = reason))
     }
 
+    /** Persists one delivered batch in a single transaction (Room wraps list inserts in one),
+     *  so a mid-batch process kill never leaves half a delivery and the commit cost is paid once. */
+    suspend fun recordAll(samples: List<LocationSampleEntity>): List<Long> {
+        if (samples.isEmpty()) return emptyList()
+        return dao.insertAll(
+            samples.map { sample ->
+                val (included, reason) = computationEligibility(sample)
+                if (!included) AppLog.i(TAG, "sample excluded from computation: $reason")
+                sample.copy(includedInComputation = included, exclusionReason = reason)
+            },
+        )
+    }
+
     suspend fun mostRecent(): LocationSampleEntity? = dao.mostRecent()
 
     /**

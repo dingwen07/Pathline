@@ -498,6 +498,7 @@ class RecordingController @Inject constructor(
         // summing non-null stepDelta over a span counts each step exactly once.
         val stepDelta = stepCounterMonitor.stepsSinceLastBatch()
         val affectedDays = linkedSetOf<Long>()
+        val toPersist = ArrayList<LocationSampleEntity>(locations.size)
 
         val sorted = locations.sortedBy { it.time }
         for (location in sorted) {
@@ -550,9 +551,12 @@ class RecordingController @Inject constructor(
                 location, context, burst, classification.state, classification.confidence,
                 stepDelta = if (location === sorted.last()) stepDelta else null,
             )
-            locationRepository.record(sample)
+            toPersist.add(sample)
             affectedDays.add(sample.dayEpoch)
         }
+        // One transaction for the whole delivered batch — and it must land before the
+        // stationary-cluster handling below, which reads mostRecent() to anchor the stay.
+        locationRepository.recordAll(toPersist)
 
         // Keep the FGS notification + cadence in sync with the current state (fixes a stale
         // "Unknown" notification when the state was set by a geofence/AR event long ago).
