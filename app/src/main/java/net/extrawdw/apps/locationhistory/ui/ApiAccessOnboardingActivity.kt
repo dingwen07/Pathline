@@ -259,7 +259,20 @@ private data class ApiPermInfo(
     @param:StringRes val desc: Int,
 )
 
-/** The permissions an app can be granted, shown with their friendly labels (not raw permission names). */
+/**
+ * The data an app can be granted, shown with friendly labels (not raw permission names). One row per
+ * dangerous permission, except the Search and Edit-annotations groups, which collapse to a single row
+ * per group (matching how the OS bundles a group into one grant at request time). The LOCATION_HISTORY
+ * group is intentionally kept as its two member rows — precise routes vs raw location samples are
+ * distinct enough to spell out. Kept in sync with the <permission> / <permission-group> declarations in
+ * AndroidManifest.xml:
+ *   - READ_TIMELINE (ungrouped)
+ *   - READ_TIMELINE_ROUTES (LOCATION_HISTORY group, shown individually)
+ *   - READ_LOCATION_HISTORY (LOCATION_HISTORY group, shown individually)
+ *   - READ_EXTENDED_HISTORY (ungrouped)
+ *   - Search group <- READ_ALL_PLACES + READ_ANNOTATIONS + SEARCH_DATA
+ *   - Edit-annotations group <- WRITE_ANNOTATIONS + WRITE_ANNOTATIONS_NOTES
+ */
 private val API_PERMISSIONS = listOf(
     ApiPermInfo(
         R.drawable.ic_perm_timeline,
@@ -280,6 +293,16 @@ private val API_PERMISSIONS = listOf(
         R.drawable.ic_perm_extended_history,
         R.string.perm_read_extended_history_label,
         R.string.perm_read_extended_history_description
+    ),
+    ApiPermInfo(
+        R.drawable.ic_perm_search,
+        R.string.perm_group_search_label,
+        R.string.perm_group_search_description
+    ),
+    ApiPermInfo(
+        R.drawable.ic_perm_write,
+        R.string.perm_group_write_annotations_label,
+        R.string.perm_group_write_annotations_description
     ),
 )
 
