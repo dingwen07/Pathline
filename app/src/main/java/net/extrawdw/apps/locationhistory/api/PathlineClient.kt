@@ -188,6 +188,33 @@ data class PlaceStats(
 )
 
 /**
+ * A Google Maps travel-time estimate between two visible Pathline saved places. Mirrors the
+ * provider-side `TravelTimeEstimate` plus the injected [providerAttribution]; the two are separate
+ * types only because this client is copied verbatim into consumer apps that have no gateway.
+ * Transit-only fields ([firstTransitDepartureTimeMs], [transitModes], [localizedFare], ...) are null
+ * for non-transit modes; [staticDurationSeconds] (traffic-free duration) is typically driving-only.
+ */
+data class TravelTime(
+    val routeIndex: Int,
+    val originPlaceId: Long,
+    val destinationPlaceId: Long,
+    val travelMode: String,
+    val durationSeconds: Long,
+    val staticDurationSeconds: Long?,
+    val distanceMeters: Int?,
+    val routeDepartureTimeMs: Long?,
+    val routeArrivalTimeMs: Long?,
+    val firstTransitDepartureTimeMs: Long?,
+    val lastTransitArrivalTimeMs: Long?,
+    val transitModes: String?,
+    val stepTravelModes: String?,
+    val localizedDuration: String?,
+    val localizedDistance: String?,
+    val localizedFare: String?,
+    val providerAttribution: String,
+)
+
+/**
  * Thin suspend client over Pathline's exported ContentProvider. Windows are `[startMs, endMs)`
  * epoch-ms pairs; a shared [group] key (a ~now epoch-ms value) tags related reads so they appear
  * as one access group in Pathline's audit log; [limit] caps rows server-side (chronological
@@ -213,6 +240,16 @@ class PathlineClient(private val resolver: ContentResolver) {
         query(PathlineContract.Visits.itemUri(id).withGroup(group)) { c -> visit(c) }.firstOrNull()
     }
 
+    /** Batch-resolve visible visits by stable id. Missing, invisible or out-of-window ids are omitted. */
+    suspend fun visitsByIds(ids: List<Long>, group: Long? = null): List<Visit> = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext emptyList()
+        val uri = PathlineContract.Visits.CONTENT_URI.buildUpon()
+            .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
+            .apply { if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString()) }
+            .build()
+        query(uri) { c -> visit(c) }
+    }
+
     suspend fun trips(
         startMs: Long,
         endMs: Long,
@@ -225,6 +262,16 @@ class PathlineClient(private val resolver: ContentResolver) {
     /** ONE trip by id — same visibility rules as [visitById]. */
     suspend fun tripById(id: Long, group: Long? = null): Trip? = withContext(Dispatchers.IO) {
         query(PathlineContract.Trips.itemUri(id).withGroup(group)) { c -> trip(c) }.firstOrNull()
+    }
+
+    /** Batch-resolve visible trips by stable id. Missing, invisible or out-of-window ids are omitted. */
+    suspend fun tripsByIds(ids: List<Long>, group: Long? = null): List<Trip> = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext emptyList()
+        val uri = PathlineContract.Trips.CONTENT_URI.buildUpon()
+            .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
+            .apply { if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString()) }
+            .build()
+        query(uri) { c -> trip(c) }
     }
 
     /** Raw samples in the window (point-in-window semantics). Needs READ_LOCATION_HISTORY. */
@@ -375,6 +422,73 @@ class PathlineClient(private val resolver: ContentResolver) {
                 totalDurationMs = c.reqLong(s.TOTAL_DURATION_MS),
                 firstVisitMs = c.reqLong(s.FIRST_VISIT_MS),
                 lastVisitMs = c.reqLong(s.LAST_VISIT_MS),
+            )
+        }
+    }
+
+    /**
+     * Google Maps travel-time summaries between two saved places this app may already read.
+     * [travelMode] is DRIVE (default), WALK, BICYCLE, TWO_WHEELER, or TRANSIT. [modes] (transit only)
+     * may contain BUS, SUBWAY, TRAIN, LIGHT_RAIL, or RAIL; these are preferences, not guarantees.
+     * [traffic] (driving only) is TRAFFIC_UNAWARE/TRAFFIC_AWARE/TRAFFIC_AWARE_OPTIMAL. Pass at most
+     * one of [departureTimeMs] or [arrivalTimeMs], and neither in the past.
+     */
+    suspend fun travelTimes(
+        originPlaceId: Long,
+        destinationPlaceId: Long,
+        travelMode: String? = null,
+        departureTimeMs: Long? = null,
+        arrivalTimeMs: Long? = null,
+        modes: List<String>? = null,
+        routingPreference: String? = null,
+        traffic: String? = null,
+        avoidTolls: Boolean = false,
+        avoidHighways: Boolean = false,
+        avoidFerries: Boolean = false,
+        alternatives: Boolean = false,
+        languageCode: String? = null,
+        regionCode: String? = null,
+        group: Long? = null,
+    ): List<TravelTime> = withContext(Dispatchers.IO) {
+        val t = PathlineContract.TravelTimes
+        val uri = t.CONTENT_URI.buildUpon()
+            .appendQueryParameter(t.ORIGIN_PLACE_ID, originPlaceId.toString())
+            .appendQueryParameter(t.DESTINATION_PLACE_ID, destinationPlaceId.toString())
+            .apply {
+                if (travelMode != null) appendQueryParameter(t.TRAVEL_MODE, travelMode)
+                if (departureTimeMs != null) appendQueryParameter(t.DEPARTURE_TIME_MS, departureTimeMs.toString())
+                if (arrivalTimeMs != null) appendQueryParameter(t.ARRIVAL_TIME_MS, arrivalTimeMs.toString())
+                if (!modes.isNullOrEmpty()) appendQueryParameter(t.MODES, modes.joinToString(","))
+                if (routingPreference != null) appendQueryParameter(t.ROUTING_PREFERENCE, routingPreference)
+                if (traffic != null) appendQueryParameter(t.TRAFFIC, traffic)
+                if (avoidTolls) appendQueryParameter(t.AVOID_TOLLS, "1")
+                if (avoidHighways) appendQueryParameter(t.AVOID_HIGHWAYS, "1")
+                if (avoidFerries) appendQueryParameter(t.AVOID_FERRIES, "1")
+                if (alternatives) appendQueryParameter(t.ALTERNATIVES, "1")
+                if (languageCode != null) appendQueryParameter(t.LANGUAGE_CODE, languageCode)
+                if (regionCode != null) appendQueryParameter(t.REGION_CODE, regionCode)
+                if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString())
+            }
+            .build()
+        query(uri) { c ->
+            TravelTime(
+                routeIndex = c.reqInt(t.ROUTE_INDEX),
+                originPlaceId = c.reqLong(t.ORIGIN_PLACE_ID),
+                destinationPlaceId = c.reqLong(t.DESTINATION_PLACE_ID),
+                travelMode = c.reqString(t.TRAVEL_MODE),
+                durationSeconds = c.reqLong(t.DURATION_SECONDS),
+                staticDurationSeconds = c.optLong(t.STATIC_DURATION_SECONDS),
+                distanceMeters = c.optInt(t.DISTANCE_METERS),
+                routeDepartureTimeMs = c.optLong(t.ROUTE_DEPARTURE_TIME_MS),
+                routeArrivalTimeMs = c.optLong(t.ROUTE_ARRIVAL_TIME_MS),
+                firstTransitDepartureTimeMs = c.optLong(t.FIRST_TRANSIT_DEPARTURE_TIME_MS),
+                lastTransitArrivalTimeMs = c.optLong(t.LAST_TRANSIT_ARRIVAL_TIME_MS),
+                transitModes = c.optString(t.TRANSIT_MODES),
+                stepTravelModes = c.optString(t.STEP_TRAVEL_MODES),
+                localizedDuration = c.optString(t.LOCALIZED_DURATION),
+                localizedDistance = c.optString(t.LOCALIZED_DISTANCE),
+                localizedFare = c.optString(t.LOCALIZED_FARE),
+                providerAttribution = c.reqString(t.PROVIDER_ATTRIBUTION),
             )
         }
     }
@@ -807,6 +921,9 @@ class PathlineClient(private val resolver: ContentResolver) {
 
     private fun Cursor.optFloat(col: String) =
         getColumnIndexOrThrow(col).let { if (isNull(it)) null else getFloat(it) }
+
+    private fun Cursor.optInt(col: String) =
+        getColumnIndexOrThrow(col).let { if (isNull(it)) null else getInt(it) }
 
     private fun Cursor.optDouble(col: String) =
         getColumnIndexOrThrow(col).let { if (isNull(it)) null else getDouble(it) }

@@ -368,6 +368,9 @@
     <string name="api_consent_never_ask">不再询问</string>
     <string name="api_access_title">访问 Pathline 数据</string>
     <string name="api_access_intro">最近访问过您 Pathline 数据的应用。由 Android 权限管理。</string>
+    <!-- travel_times 路线端点的开关，会向 Google Routes API 发起外部请求。 -->
+    <string name="api_access_routing_title">出行时间路线规划</string>
+    <string name="api_access_routing_desc">允许应用获取您保存地点之间的 Google 地图出行时间。每次请求都会发送至 Google Routes API。</string>
     <string name="api_access_apps_header">拥有访问权限的应用</string>
     <string name="api_access_no_apps">还没有应用读取过您的 Pathline 数据。</string>
     <string name="api_access_activity_header">最近活动</string>
@@ -422,6 +425,7 @@
     <string name="api_data_concepts">概念</string>
     <string name="api_data_concept_members">概念成员</string>
     <string name="api_data_place_stats">地点统计</string>
+    <string name="api_data_travel_times">出行估算</string>
     <string name="api_data_unknown">数据</string>
     <string name="api_access_event_write_subtitle">更新了 %1$d 个%2$s</string>
 
@@ -441,6 +445,7 @@
     <string name="api_notify_data_tags">%1$s 个标签</string>
     <string name="api_notify_data_notes">%1$s 条笔记</string>
     <string name="api_notify_data_memories">%1$s 条记忆</string>
+    <string name="api_notify_data_travel_times">%1$s 项出行估算</string>
     <string name="api_notify_write_title">有应用更新了您的 Pathline 注释</string>
     <string name="api_notify_write_text_one">%1$s 更新了%2$s。</string>
     <string name="api_notify_data_separator">、</string>

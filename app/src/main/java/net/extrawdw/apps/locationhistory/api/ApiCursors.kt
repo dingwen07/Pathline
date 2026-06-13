@@ -10,6 +10,7 @@ import net.extrawdw.apps.locationhistory.data.db.PlaceStatsRow
 import net.extrawdw.apps.locationhistory.data.db.TagEntity
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.routes.TravelTimeEstimate
 import net.extrawdw.apps.locationhistory.domain.MemoryEntry
 
 /**
@@ -111,6 +112,37 @@ internal object ApiCursors {
                     p.longitude,
                     p.radiusMeters,
                     distances?.get(p.id),
+                ),
+            )
+        }
+        return cursor
+    }
+
+    /** [PathlineContract.TravelTimes] rows. Column order must match [PathlineContract.TravelTimes.COLUMNS]. */
+    fun travelTimes(rows: List<TravelTimeEstimate>): Cursor {
+        val t = PathlineContract.TravelTimes
+        val cursor = MatrixCursor(t.COLUMNS, rows.size)
+        for (r in rows) {
+            cursor.addRow(
+                arrayOf<Any?>(
+                    r.routeIndex.toLong(),
+                    r.routeIndex,
+                    r.originPlaceId,
+                    r.destinationPlaceId,
+                    r.travelMode,
+                    r.durationSeconds,
+                    r.staticDurationSeconds,
+                    r.distanceMeters,
+                    r.routeDepartureTimeMs,
+                    r.routeArrivalTimeMs,
+                    r.firstTransitDepartureTimeMs,
+                    r.lastTransitArrivalTimeMs,
+                    r.transitModes,
+                    r.stepTravelModes,
+                    r.localizedDuration,
+                    r.localizedDistance,
+                    r.localizedFare,
+                    "Google Maps",
                 ),
             )
         }

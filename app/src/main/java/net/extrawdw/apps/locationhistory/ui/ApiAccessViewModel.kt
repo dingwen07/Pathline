@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -21,6 +22,7 @@ import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
 import net.extrawdw.apps.locationhistory.data.repo.ApiAccessRepository
 import net.extrawdw.apps.locationhistory.data.repo.ApiScope
 import net.extrawdw.apps.locationhistory.data.repo.CleanupConfig
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import java.io.File
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -41,8 +43,19 @@ data class ApiAppRow(
 @HiltViewModel
 class ApiAccessViewModel @Inject constructor(
     private val repo: ApiAccessRepository,
+    private val settingsRepository: SettingsRepository,
     @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
+
+    /** The routing (`travel_times`) kill switch, on by default. Surfaced as a toggle in the manager. */
+    val routeApiEnabled: StateFlow<Boolean> =
+        settingsRepository.settings
+            .map { it.routeApiEnabled }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setRouteApiEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setRouteApiEnabled(enabled) }
+    }
 
     // The in-app history only covers a recent window; everything is still kept for "export all".
     private val windowStartMs = System.currentTimeMillis() - HISTORY_WINDOW_MS

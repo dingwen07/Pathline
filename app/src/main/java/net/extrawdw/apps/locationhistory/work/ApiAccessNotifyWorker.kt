@@ -175,6 +175,9 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
             maxByType["memories"]?.let {
                 add(ctx.getString(R.string.api_notify_data_memories, nf.format(it)))
             }
+            maxByType["travel_times"]?.let {
+                add(ctx.getString(R.string.api_notify_data_travel_times, nf.format(it)))
+            }
         }
         if (parts.isEmpty()) return null
         return parts.joinToString(ctx.getString(R.string.api_notify_data_separator))

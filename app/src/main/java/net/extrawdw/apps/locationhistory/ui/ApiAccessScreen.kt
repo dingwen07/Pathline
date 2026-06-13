@@ -123,6 +123,7 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cleanupConfig by viewModel.cleanupConfig.collectAsStateWithLifecycle()
+    val routeApiEnabled by viewModel.routeApiEnabled.collectAsStateWithLifecycle()
     val infoByPackage = remember(apps) { apps.associateBy { it.packageName } }
     // Expand state for aggregated access groups, keyed by "package|groupId".
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
@@ -243,6 +244,14 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                     Spacer(Modifier.height(16.dp))
                 }
 
+                item {
+                    RouteApiToggleCard(
+                        enabled = routeApiEnabled,
+                        onToggle = { viewModel.setRouteApiEnabled(it) },
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+
                 // Apps with access (resolved only from apps that have actually read data).
                 item { SectionHeader(stringResource(R.string.api_access_apps_header)) }
                 if (apps.isEmpty()) {
@@ -333,6 +342,41 @@ private fun IntroCard(text: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
         )
+    }
+}
+
+@Composable
+private fun RouteApiToggleCard(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                role = Role.Switch,
+                onClick = { onToggle(!enabled) },
+            ),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(16.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.api_access_routing_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.api_access_routing_desc),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = enabled, onCheckedChange = null)
+        }
     }
 }
 
@@ -627,6 +671,7 @@ private fun groupSummary(events: List<ApiAccessEventEntity>): String {
         maxByType["concepts"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_concepts)}" },
         maxByType["concept_members"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_concept_members)}" },
         maxByType["place_stats"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_place_stats)}" },
+        maxByType["travel_times"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_travel_times)}" },
     )
     val requests = stringResource(R.string.api_access_group_requests, events.size)
     return if (parts.isEmpty()) requests
@@ -946,6 +991,7 @@ private fun dataTypeLabel(dataType: String): String = stringResource(
         "concepts" -> R.string.api_data_concepts
         "concept_members" -> R.string.api_data_concept_members
         "place_stats" -> R.string.api_data_place_stats
+        "travel_times" -> R.string.api_data_travel_times
         else -> R.string.api_data_unknown
     },
 )

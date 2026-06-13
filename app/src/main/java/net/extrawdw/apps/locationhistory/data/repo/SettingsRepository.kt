@@ -38,6 +38,12 @@ data class AppSettings(
      * data" goes straight to the access manager. Set by the consent screen's "don't ask again" choice.
      */
     val apiAccessConsentNeverAsk: Boolean = false,
+    /**
+     * Per-feature switch for the `travel_times` routing endpoint, which calls the (billable) Google
+     * Routes API. Defaults **on**; when off the provider returns no rows and makes no Google call, so
+     * routing can never bill unexpectedly. Independent of (and gated behind) [apiAccessEnabled].
+     */
+    val routeApiEnabled: Boolean = true,
 )
 
 /**
@@ -75,6 +81,7 @@ class SettingsRepository @Inject constructor(
     private val keyAutostartSuppressed = booleanPreferencesKey("autostart_suppressed")
     private val keyApiEnabled = booleanPreferencesKey("api_access_enabled")
     private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
+    private val keyRouteApiEnabled = booleanPreferencesKey("route_api_enabled")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -94,6 +101,7 @@ class SettingsRepository @Inject constructor(
             stopOnTaskRemoved = prefs[keyStopOnTaskRemoved] ?: true,
             apiAccessEnabled = prefs[keyApiEnabled] ?: false,
             apiAccessConsentNeverAsk = prefs[keyApiNeverAsk] ?: false,
+            routeApiEnabled = prefs[keyRouteApiEnabled] ?: true,
         )
     }
 
@@ -103,6 +111,14 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setApiAccessEnabled(enabled: Boolean) {
         context.dataStore.edit { it[keyApiEnabled] = enabled }
+    }
+
+    /** Current routing (`travel_times`) switch state, read once for the provider IPC path. On by default. */
+    suspend fun routeApiEnabled(): Boolean =
+        context.dataStore.data.map { it[keyRouteApiEnabled] ?: true }.first()
+
+    suspend fun setRouteApiEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[keyRouteApiEnabled] = enabled }
     }
 
     /** Suppress the first-run API-access consent screen (the "don't ask again" choice). */

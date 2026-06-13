@@ -70,6 +70,11 @@ import android.net.Uri
  *   never widens scope — it filters and orders what the caller's place scope already allows.
  *   Likewise `limit=` ([QueryParams.LIMIT]) only caps row counts, on any collection that
  *   documents it.
+ * - `travel_times` computes Google Maps travel-time estimates (driving, walking, bicycling,
+ *   two-wheeler, or public transit) between two saved places. It requires the caller to be able to
+ *   read both places: [Permissions.READ_ALL_PLACES], or [Permissions.READ_TIMELINE] plus existing
+ *   per-place grants for both ids. It does not expose raw route geometry, stops, or the user's
+ *   recorded movement, and the user can disable it entirely in the access manager.
  * - Reading anything **older than 30 days** (a window whose `start` predates `now - 30 days`)
  *   additionally requires [Permissions.READ_EXTENDED_HISTORY]. For a call with an **explicit**
  *   `start` that far back, the query throws a [SecurityException] without it — an explicitly
@@ -683,6 +688,98 @@ object PathlineContract {
                 RADIUS_METERS, CONFIDENCE, CONFIRMED, IS_ONGOING,
             )
         }
+    }
+
+    /**
+     * Google Maps travel-time estimates between two Pathline saved places visible to the caller.
+     *
+     * This endpoint is intentionally place-id-only: callers cannot submit arbitrary coordinates or
+     * addresses, so Pathline does not become a general routing proxy. If the caller lacks the base
+     * place-read tier ([Permissions.READ_TIMELINE] or [Permissions.READ_ALL_PLACES]) the query throws
+     * [SecurityException]. If either requested place is outside the caller's place scope, missing, the
+     * user has disabled routing in the access manager, or Google cannot find a route, the query
+     * returns no rows.
+     *
+     * The returned rows are route summaries, not navigation instructions: travel mode, duration
+     * (and a traffic-free [STATIC_DURATION_SECONDS] for driving), distance, approximate route-level
+     * departure/arrival times, transit modes actually used, optional localized fare/distance/duration
+     * text, and required provider attribution.
+     *
+     * Query parameters:
+     * - [ORIGIN_PLACE_ID] and [DESTINATION_PLACE_ID] are required Pathline saved-place ids.
+     * - [TRAVEL_MODE] is optional: `DRIVE` (default), `WALK`, `BICYCLE`, `TWO_WHEELER`, or `TRANSIT`.
+     * - [DEPARTURE_TIME_MS] or [ARRIVAL_TIME_MS] may be supplied, but not both, and must not be in
+     *   the past. When neither is supplied Google uses "now". [ARRIVAL_TIME_MS] is only honored for
+     *   `TRANSIT`.
+     * - [MODES] (TRANSIT only) is an optional comma-separated list of preferred transit sub-modes:
+     *   `BUS,SUBWAY,TRAIN,LIGHT_RAIL,RAIL`. These are preferences, not hard guarantees; the
+     *   [TRANSIT_MODES] result column reports what Google actually used.
+     * - [ROUTING_PREFERENCE] (TRANSIT only) is optional: `LESS_WALKING` or `FEWER_TRANSFERS`.
+     * - [TRAFFIC] (DRIVE / TWO_WHEELER only) is optional: `TRAFFIC_UNAWARE`, `TRAFFIC_AWARE`, or
+     *   `TRAFFIC_AWARE_OPTIMAL`.
+     * - [AVOID_TOLLS], [AVOID_HIGHWAYS], [AVOID_FERRIES] (DRIVE / TWO_WHEELER only) may be `1`/`true`.
+     * - [ALTERNATIVES] may be `1`/`true` to request alternate routes.
+     */
+    object TravelTimes {
+        const val PATH: String = "travel_times"
+
+        @JvmField
+        val CONTENT_URI: Uri = BASE.buildUpon().appendPath(PATH).build()
+        const val CONTENT_TYPE: String =
+            "vnd.android.cursor.dir/vnd.net.extrawdw.apps.locationhistory.travel_time"
+
+        const val ORIGIN_PLACE_ID: String = "origin_place_id"
+        const val DESTINATION_PLACE_ID: String = "destination_place_id"
+        const val TRAVEL_MODE: String = "travel_mode"
+        const val DEPARTURE_TIME_MS: String = "departure_time_ms"
+        const val ARRIVAL_TIME_MS: String = "arrival_time_ms"
+        const val MODES: String = "modes"
+        const val ROUTING_PREFERENCE: String = "routing_preference"
+        const val TRAFFIC: String = "traffic"
+        const val AVOID_TOLLS: String = "avoid_tolls"
+        const val AVOID_HIGHWAYS: String = "avoid_highways"
+        const val AVOID_FERRIES: String = "avoid_ferries"
+        const val ALTERNATIVES: String = "alternatives"
+        const val LANGUAGE_CODE: String = "language_code"
+        const val REGION_CODE: String = "region_code"
+
+        const val ID: String = "_id"
+        const val ROUTE_INDEX: String = "route_index"
+        const val DURATION_SECONDS: String = "duration_seconds"
+        const val STATIC_DURATION_SECONDS: String = "static_duration_seconds"
+        const val DISTANCE_METERS: String = "distance_meters"
+        const val ROUTE_DEPARTURE_TIME_MS: String = "route_departure_time_ms"
+        const val ROUTE_ARRIVAL_TIME_MS: String = "route_arrival_time_ms"
+        const val FIRST_TRANSIT_DEPARTURE_TIME_MS: String = "first_transit_departure_time_ms"
+        const val LAST_TRANSIT_ARRIVAL_TIME_MS: String = "last_transit_arrival_time_ms"
+        const val TRANSIT_MODES: String = "transit_modes"
+        const val STEP_TRAVEL_MODES: String = "step_travel_modes"
+        const val LOCALIZED_DURATION: String = "localized_duration"
+        const val LOCALIZED_DISTANCE: String = "localized_distance"
+        const val LOCALIZED_FARE: String = "localized_fare"
+        const val PROVIDER_ATTRIBUTION: String = "provider_attribution"
+
+        @JvmField
+        val COLUMNS: Array<String> = arrayOf(
+            ID,
+            ROUTE_INDEX,
+            ORIGIN_PLACE_ID,
+            DESTINATION_PLACE_ID,
+            TRAVEL_MODE,
+            DURATION_SECONDS,
+            STATIC_DURATION_SECONDS,
+            DISTANCE_METERS,
+            ROUTE_DEPARTURE_TIME_MS,
+            ROUTE_ARRIVAL_TIME_MS,
+            FIRST_TRANSIT_DEPARTURE_TIME_MS,
+            LAST_TRANSIT_ARRIVAL_TIME_MS,
+            TRANSIT_MODES,
+            STEP_TRAVEL_MODES,
+            LOCALIZED_DURATION,
+            LOCALIZED_DISTANCE,
+            LOCALIZED_FARE,
+            PROVIDER_ATTRIBUTION,
+        )
     }
 
     /**

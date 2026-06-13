@@ -12,6 +12,7 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
+import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
@@ -29,12 +30,15 @@ import net.extrawdw.apps.locationhistory.data.db.TagEntity
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.routes.RoutesGateway
+import net.extrawdw.apps.locationhistory.data.routes.TravelTimeRequest
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
 import net.extrawdw.apps.locationhistory.domain.ConceptStore
 import net.extrawdw.apps.locationhistory.domain.MemoryMap
 import net.extrawdw.apps.locationhistory.domain.NameCanonicalizer
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
+import java.io.IOException
 
 /**
  * On-device API exposing the user's timeline, recorded samples, saved places and annotations
@@ -76,6 +80,7 @@ class PathlineProvider : ContentProvider() {
         fun conceptStore(): ConceptStore
         fun apiAccessDao(): ApiAccessDao
         fun apiPlaceGrantDao(): ApiPlaceGrantDao
+        fun routesGateway(): RoutesGateway
         fun settingsRepository(): SettingsRepository
         fun workScheduler(): WorkScheduler
     }
@@ -94,6 +99,7 @@ class PathlineProvider : ContentProvider() {
         addURI(PathlineContract.AUTHORITY, trips, CODE_TRIPS)
         addURI(PathlineContract.AUTHORITY, PathlineContract.Samples.PATH, CODE_SAMPLES)
         addURI(PathlineContract.AUTHORITY, places, CODE_PLACES)
+        addURI(PathlineContract.AUTHORITY, PathlineContract.TravelTimes.PATH, CODE_TRAVEL_TIMES)
         addURI(
             PathlineContract.AUTHORITY,
             "$places/#/${PathlineContract.Places.VISITS_PATH}",
@@ -212,6 +218,7 @@ class PathlineProvider : ContentProvider() {
         CODE_TRIP_ITEM -> PathlineContract.Trips.ITEM_CONTENT_TYPE
         CODE_SAMPLES -> PathlineContract.Samples.CONTENT_TYPE
         CODE_PLACES -> PathlineContract.Places.CONTENT_TYPE
+        CODE_TRAVEL_TIMES -> PathlineContract.TravelTimes.CONTENT_TYPE
         CODE_PLACE_VISITS -> PathlineContract.Places.VisitHistory.CONTENT_TYPE
         CODE_PLACE_STATS -> PathlineContract.PlaceStats.CONTENT_TYPE
         CODE_STATUS -> PathlineContract.Status.CONTENT_TYPE
@@ -257,6 +264,7 @@ class PathlineProvider : ContentProvider() {
         // required-`start` parsing below; so do searches, where `start` becomes optional.
         when (code) {
             CODE_PLACES -> return placesQuery(caller, uri, now)
+            CODE_TRAVEL_TIMES -> return travelTimesQuery(caller, uri, now)
             CODE_PLACE_VISITS -> return placeVisitsQuery(caller, uri, now)
             CODE_PLACE_STATS -> return placeStatsQuery(caller, uri, now)
             CODE_VISIT_ITEM, CODE_TRIP_ITEM -> return timelineItemQuery(caller, uri, code, now)
@@ -375,6 +383,163 @@ class PathlineProvider : ContentProvider() {
             if (limit == null) entryPoint.locationSampleDao().range(start, end)
             else entryPoint.locationSampleDao().rangeNewest(start, end, limit).asReversed()
         ApiCursors.samples(samples)
+    }
+
+    // ---- Travel estimates -----------------------------------------------------------------------
+
+    /**
+     * `travel_times`: Google Maps travel-time summaries (driving / walking / cycling / two-wheeler /
+     * transit) between two saved Pathline places. It never widens place scope: the caller must hold
+     * READ_ALL_PLACES, or already have grants for both requested place ids under READ_TIMELINE.
+     * Returns no rows (and makes no billable Google call) when the user has disabled routing or when
+     * a place is out of scope; network/Google errors are mapped to no rows rather than thrown.
+     */
+    private fun travelTimesQuery(caller: Caller, uri: Uri, now: Long): Cursor {
+        val t = PathlineContract.TravelTimes
+        val groupId = parseGroup(uri, now)
+        fun deny(permission: String): Nothing =
+            gate.deny(caller, permission, t.PATH, now, now, now, groupId)
+
+        val originId = uri.getQueryParameter(t.ORIGIN_PLACE_ID)?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid '${t.ORIGIN_PLACE_ID}'")
+        val destinationId = uri.getQueryParameter(t.DESTINATION_PLACE_ID)?.toLongOrNull()
+            ?: throw IllegalArgumentException("Missing or invalid '${t.DESTINATION_PLACE_ID}'")
+
+        val allPlaces = caller.holds(PathlineContract.Permissions.READ_ALL_PLACES)
+        if (!allPlaces && !caller.holds(PathlineContract.Permissions.READ_TIMELINE)) {
+            deny(PathlineContract.Permissions.READ_TIMELINE)
+        }
+
+        val request = travelTimeRequest(uri, now)
+        val cursor = runBlocking {
+            // Per-feature kill switch: when routing is off, return no rows and make no (billable)
+            // Google call. The master API switch is already enforced upstream in query().
+            if (!entryPoint.settingsRepository().routeApiEnabled()) {
+                return@runBlocking ApiCursors.travelTimes(emptyList())
+            }
+            val byId = placesInScope(caller, allPlaces, listOf(originId, destinationId))
+            val origin = byId[originId]
+            val destination = byId[destinationId]
+            val rows = if (origin == null || destination == null) {
+                emptyList()
+            } else {
+                // A network failure / non-2xx surfaces as IOException, which is NOT marshalable
+                // across a ContentProvider binder; map it to no rows so a flaky network or Google
+                // error never crashes the consumer (and honors the "no route -> no rows" contract).
+                try {
+                    entryPoint.routesGateway().travelTimes(origin, destination, request, now)
+                } catch (e: IOException) {
+                    AppLog.w(TAG, "travel_times lookup failed: ${e.message}")
+                    emptyList()
+                }
+            }
+            ApiCursors.travelTimes(rows)
+        }
+        // Audited on every path -- including disabled, out-of-scope, empty, and failed lookups.
+        logger.log(
+            caller,
+            AccessEvent(
+                dataType = t.PATH,
+                startMs = now,
+                endMs = now,
+                rowCount = cursor.count,
+                nowMs = now,
+                groupId = groupId,
+            ),
+        )
+        context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
+        return cursor
+    }
+
+    /**
+     * Resolve [ids] to the [PlaceEntity]s the caller may see, keyed by id: the whole corpus under
+     * READ_ALL_PLACES, otherwise only ids the caller already holds a grant for. Mirrors the place
+     * scoping `places`/`place_stats` use, so an out-of-scope id is simply absent from the result
+     * (never an error, never a leak).
+     */
+    private suspend fun placesInScope(
+        caller: Caller,
+        allPlaces: Boolean,
+        ids: List<Long>,
+    ): Map<Long, PlaceEntity> {
+        val requested = ids.distinct()
+        if (requested.isEmpty()) return emptyMap()
+        val allowed = if (allPlaces) {
+            requested
+        } else {
+            entryPoint.apiPlaceGrantDao().grantedAmong(caller.pkgOrUnknown, requested)
+        }
+        if (allowed.isEmpty()) return emptyMap()
+        return entryPoint.placeDao().byIds(allowed).associateBy { it.id }
+    }
+
+    private fun travelTimeRequest(uri: Uri, now: Long): TravelTimeRequest {
+        val t = PathlineContract.TravelTimes
+        val mode = uri.getQueryParameter(t.TRAVEL_MODE)
+            ?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: "DRIVE"
+        val travelModes = setOf("DRIVE", "WALK", "BICYCLE", "TWO_WHEELER", "TRANSIT")
+        require(mode in travelModes) {
+            "'${t.TRAVEL_MODE}' must be one of ${travelModes.joinToString(",")}"
+        }
+
+        val departure = uri.getQueryParameter(t.DEPARTURE_TIME_MS)?.toLongOrNull()
+        val arrival = uri.getQueryParameter(t.ARRIVAL_TIME_MS)?.toLongOrNull()
+        require(!(departure != null && arrival != null)) {
+            "Specify at most one of '${t.DEPARTURE_TIME_MS}' or '${t.ARRIVAL_TIME_MS}'"
+        }
+        require(arrival == null || mode == "TRANSIT") {
+            "'${t.ARRIVAL_TIME_MS}' is only supported for TRANSIT"
+        }
+        // Past times are rejected: Google rejects past transit/traffic-aware departures, and a past
+        // request can never produce a useful estimate. A small skew window absorbs clock drift.
+        val time = departure ?: arrival
+        if (time != null) {
+            require(time >= now - TRAVEL_PAST_SKEW_MS && time <= now + TRAVEL_FUTURE_WINDOW_MS) {
+                "'${t.DEPARTURE_TIME_MS}'/'${t.ARRIVAL_TIME_MS}' must not be in the past or beyond 100 days out"
+            }
+        }
+
+        val transitModes = uri.getQueryParameter(t.MODES)
+            ?.split(',')
+            ?.map { it.trim().uppercase() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            .orEmpty()
+        val transitSubModes = setOf("BUS", "SUBWAY", "TRAIN", "LIGHT_RAIL", "RAIL")
+        require(transitModes.all { it in transitSubModes }) {
+            "'${t.MODES}' may contain only ${transitSubModes.joinToString(",")}"
+        }
+        val transitPreference = uri.getQueryParameter(t.ROUTING_PREFERENCE)
+            ?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        require(transitPreference == null ||
+            transitPreference == "LESS_WALKING" || transitPreference == "FEWER_TRANSFERS") {
+            "'${t.ROUTING_PREFERENCE}' must be LESS_WALKING or FEWER_TRANSFERS"
+        }
+        val traffic = uri.getQueryParameter(t.TRAFFIC)
+            ?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        require(traffic == null ||
+            traffic == "TRAFFIC_UNAWARE" || traffic == "TRAFFIC_AWARE" || traffic == "TRAFFIC_AWARE_OPTIMAL") {
+            "'${t.TRAFFIC}' must be TRAFFIC_UNAWARE, TRAFFIC_AWARE, or TRAFFIC_AWARE_OPTIMAL"
+        }
+
+        fun flag(name: String): Boolean = uri.getQueryParameter(name)?.let {
+            it == "1" || it.equals("true", ignoreCase = true)
+        } == true
+
+        return TravelTimeRequest(
+            travelMode = mode,
+            departureTimeMs = departure,
+            arrivalTimeMs = arrival,
+            transitModes = transitModes,
+            transitRoutingPreference = transitPreference,
+            drivingRoutingPreference = traffic,
+            avoidTolls = flag(t.AVOID_TOLLS),
+            avoidHighways = flag(t.AVOID_HIGHWAYS),
+            avoidFerries = flag(t.AVOID_FERRIES),
+            computeAlternatives = flag(t.ALTERNATIVES),
+            languageCode = uri.getQueryParameter(t.LANGUAGE_CODE)?.trim()?.takeIf { it.isNotEmpty() },
+            regionCode = uri.getQueryParameter(t.REGION_CODE)?.trim()?.takeIf { it.isNotEmpty() },
+        )
     }
 
     // ---- Places --------------------------------------------------------------------------------
@@ -1137,6 +1302,7 @@ class PathlineProvider : ContentProvider() {
         CODE_TRIPS -> PathlineContract.Trips.PATH
         CODE_SAMPLES -> PathlineContract.Samples.PATH
         CODE_PLACES -> PathlineContract.Places.PATH
+        CODE_TRAVEL_TIMES -> PathlineContract.TravelTimes.PATH
         CODE_PLACE_VISITS -> PathlineContract.Places.VISITS_DATA_TYPE
         CODE_PLACE_STATS -> PathlineContract.PlaceStats.PATH
         CODE_TAGS, in TAGS_CODES, in TAG_NAME_CODES -> PathlineContract.Tags.PATH
@@ -1712,6 +1878,8 @@ class PathlineProvider : ContentProvider() {
     }
 
     private companion object {
+        const val TAG = "PathlineProvider"
+
         const val CODE_VISITS = 1
         const val CODE_TRIPS = 2
         const val CODE_SAMPLES = 3
@@ -1719,6 +1887,7 @@ class PathlineProvider : ContentProvider() {
         const val CODE_PLACE_VISITS = 5
         const val CODE_STATUS = 6
         const val CODE_TAGS = 7
+        const val CODE_TRAVEL_TIMES = 8
 
         const val CODE_PLACE_TAGS = 10
         const val CODE_VISIT_TAGS = 11
@@ -1798,5 +1967,8 @@ class PathlineProvider : ContentProvider() {
 
         /** Upper bound for a memory entry's `source` provenance note (a pointer, not a document). */
         const val MAX_MEMORY_SOURCE_LENGTH = 500
+        /** Small grace for clock skew; departure/arrival times must otherwise not be in the past. */
+        const val TRAVEL_PAST_SKEW_MS = 5L * 60 * 1000
+        const val TRAVEL_FUTURE_WINDOW_MS = 100L * 24 * 60 * 60 * 1000
     }
 }
