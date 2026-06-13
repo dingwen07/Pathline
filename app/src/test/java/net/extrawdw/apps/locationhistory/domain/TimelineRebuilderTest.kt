@@ -85,11 +85,12 @@ class TimelineRebuilderTest {
         lon: Double = -74.0,
         state: DevicePhysicalState,
         speed: Float,
+        accuracy: Float = 10f,
     ) = runBlocking {
         sampleDao.insert(
             LocationSampleEntity(
                 timestampMs = tMs, dayEpoch = TimeBuckets.dayEpoch(tMs),
-                latitude = lat, longitude = lon, altitude = null, accuracy = 10f,
+                latitude = lat, longitude = lon, altitude = null, accuracy = accuracy,
                 verticalAccuracyMeters = null, bearing = null, bearingAccuracyDegrees = null,
                 speed = speed, speedAccuracyMetersPerSecond = null, provider = "fused",
                 isMock = false, elapsedRealtimeNanos = 0, satelliteCount = null, batteryPct = null,
@@ -410,6 +411,25 @@ class TimelineRebuilderTest {
         val trip = runBlocking { tripDao.byId(100) }!!
         assertNull(trip.fromVisitId)
         assertNull(trip.toVisitId)
+    }
+
+    // ---- ongoing-stay coarse sustain -----------------------------------------------------------------
+
+    @Test
+    fun ongoingStay_closesAtLastCoarseSustainingFix_whenEvidenceIsStale() {
+        // One precise stationary fix (too few for the detector to emit a cluster), then a Doze-style
+        // run of coarse (100 m) stationary fixes at the same spot, then nothing. `now` is an hour
+        // past the last fix, so the stay must CLOSE — at the last coarse sustaining fix, not be
+        // truncated back to the lone precise one.
+        sample(at(600), 40.0, state = DevicePhysicalState.STATIONARY, speed = 0f)
+        for (m in 605L..660L step 5) {
+            sample(at(m), 40.0, state = DevicePhysicalState.STATIONARY, speed = 0f, accuracy = 100f)
+        }
+        nowMs = at(720)
+        rebuild()
+        val v = visitDao.visits.single()
+        assertEquals(at(600), v.startMs)
+        assertEquals(at(660), v.endMs)
     }
 
     // ---- subtractRanges ------------------------------------------------------------------------------

@@ -89,6 +89,118 @@ class TimelineMergerTest {
         assertEquals(0.9f, v.confidence)
     }
 
+    /** A coarse (100 m) stationary fix at the merge tests' visit location (1.0, 1.0). */
+    private fun gapSample(tMs: Long, lat: Double = 1.0) = runBlocking {
+        sampleDao.insert(
+            net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity(
+                timestampMs = tMs, dayEpoch = 0, latitude = lat, longitude = 1.0,
+                altitude = null, accuracy = 100f, verticalAccuracyMeters = null, bearing = null,
+                bearingAccuracyDegrees = null, speed = 0f, speedAccuracyMetersPerSecond = null,
+                provider = null, isMock = false, elapsedRealtimeNanos = 0, satelliteCount = null,
+                batteryPct = null, isCharging = null, networkTransport = null,
+                networkTypeName = null, cellSignalDbm = null, hasCellService = null,
+                wifiSsid = null, wifiBssid = null, screenOn = null, arActivity = null,
+                arConfidence = null,
+                devicePhysicalState = net.extrawdw.apps.locationhistory.core.DevicePhysicalState.STATIONARY,
+                devicePhysicalStateConfidence = 0.8f,
+            ),
+        )
+    }
+
+    @Test
+    fun confirmedSamePlacePair_mergesAcrossGapWithConsistentEvidence() {
+        // The 2026-06-12 repro: a 64-min same-place hole (a coarse-fix evening) split the home
+        // stay; the user confirmed BOTH halves. For a confirmed pair the gap cap relaxes from
+        // quality to PRESENCE: a single coarse fix near the place mid-gap bridges it.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
+            visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = true),
+        )
+        gapSample(t0 + hour + 30 * 60_000L)
+        merge()
+        val v = visitDao.visits.single()
+        assertEquals(1L, v.id)
+        assertEquals(t0 + 4 * hour, v.endMs)
+        assertTrue(v.confirmed)
+    }
+
+    @Test
+    fun confirmedPair_recordingOffGap_staysSplit() {
+        // No samples at all through the 64-min hole: confirming both rows asserts two valid
+        // visits, not continuity — a fabricated all-day weld must not happen.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
+            visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = true),
+        )
+        merge()
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun confirmedPair_gapEvidenceElsewhere_staysSplit() {
+        // Samples exist through the gap but ~1.1 km from the place: that's evidence of absence,
+        // not presence — the confirmed pair stays split.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
+            visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = true),
+        )
+        gapSample(t0 + hour + 30 * 60_000L, lat = 1.01)
+        merge()
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun unconfirmedPair_gapBeyondEvidenceCap_staysSplit() {
+        // The automated pipeline must NOT bridge a >45 min same-place hole on its own, even with
+        // consistent coarse evidence through it.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = false),
+            visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = false),
+        )
+        gapSample(t0 + hour + 30 * 60_000L)
+        merge()
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun confirmedPair_withTripBetween_staysSplit() {
+        // A real round trip between two confirmed home stays must never be welded over.
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
+            visit(id = 2, start = t0 + 3 * hour, end = t0 + 4 * hour, confirmed = true),
+        )
+        tripDao.seed(trip(id = 10, start = t0 + hour, end = t0 + 3 * hour))
+        merge()
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun confirmedSameModeTrips_bridgeUpToEvidenceCap_notBeyond() {
+        // A hand-categorized journey split by sparse samples fuses across a 10-min gap (beyond
+        // the 90 s automated cap), but two confirmed trips hours apart stay separate legs.
+        tripDao.seed(
+            trip(id = 1, start = t0, end = t0 + 10 * 60_000L, confirmed = true),
+            trip(
+                id = 2, start = t0 + 20 * 60_000L, end = t0 + 30 * 60_000L, confirmed = true,
+                points = listOf(1.0 to 1.014, 1.0 to 1.028),
+            ),
+            trip(id = 3, start = t0 + 3 * hour, end = t0 + 4 * hour, confirmed = true),
+        )
+        merge()
+        assertEquals(listOf(1L, 3L), tripDao.trips.map { it.id }.sorted())
+    }
+
+    @Test
+    fun mixedConfirmationTrips_keepTheAutomatedGapCap() {
+        // One side unconfirmed: the 90 s automated cap still applies to a 10-min gap.
+        tripDao.seed(
+            trip(id = 1, start = t0, end = t0 + 10 * 60_000L, confirmed = true),
+            trip(id = 2, start = t0 + 20 * 60_000L, end = t0 + 30 * 60_000L, confirmed = false),
+        )
+        merge()
+        assertEquals(2, tripDao.trips.size)
+    }
+
     @Test
     fun samePlaceVisitsWithGapAndNoTripBetween_merge() {
         // 30 min gap: within MAX_EVIDENCE_GAP_MS, so the no-trip bridge applies.
@@ -104,9 +216,11 @@ class TimelineMergerTest {
     fun samePlaceVisitsAcrossLongNoTripGap_stayApart() {
         // No trip between them, but the 2h sample-free gap exceeds MAX_EVIDENCE_GAP_MS: presence
         // across the gap is not assumed, so the two real stays must not be welded into one.
+        // One row unconfirmed: the cap binds whenever the pairing isn't a double user
+        // confirmation (a confirmed PAIR overrides it — see confirmedSamePlacePair_mergesAcrossAnyGap).
         visitDao.seed(
-            visit(id = 1, start = t0, end = t0 + hour),
-            visit(id = 2, start = t0 + 3 * hour, end = t0 + 4 * hour),
+            visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
+            visit(id = 2, start = t0 + 3 * hour, end = t0 + 4 * hour, confirmed = false),
         )
         merge()
         assertEquals(2, visitDao.visits.size)

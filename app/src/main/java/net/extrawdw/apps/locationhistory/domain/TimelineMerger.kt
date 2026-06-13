@@ -130,7 +130,16 @@ class TimelineMerger @Inject constructor(
             // The no-trip bridge is capped like the trip side's MERGE_GAP_MS: beyond
             // MAX_EVIDENCE_GAP_MS with no samples, presence is no longer assumed, so a recording
             // outage between two real same-place stays must not weld them into one.
-            val bridgeableGap = b.startMs - a.endMs <= Constants.MAX_EVIDENCE_GAP_MS
+            // A pair the user confirmed on BOTH sides relaxes the cap from *quality* to *presence*:
+            // sample quality becomes irrelevant (the gap cap guards the automated pipeline against
+            // poor evidence, and the user has overridden that judgment), but samples consistent
+            // with the place must still EXIST through the gap — confirming "morning at home" and
+            // "evening at home" around a recording-off hole asserts two valid rows, not continuity,
+            // and must not weld into a fabricated all-day stay. The no-trip-between requirement
+            // always applies, so a confirmed round trip never welds either.
+            val bothConfirmed = a.confirmed && b.confirmed
+            val bridgeableGap = b.startMs - a.endMs <= Constants.MAX_EVIDENCE_GAP_MS ||
+                    (bothConfirmed && evidenceBridges(a, b.startMs))
             if (overlapsOrTouches || (bridgeableGap && !tripExistsBetween(
                     spanStartMs,
                     spanEndMs,
@@ -162,7 +171,13 @@ class TimelineMerger @Inject constructor(
             if (visitExistsBetween(spanStartMs, spanEndMs, a.endMs, b.startMs)) continue
             // Overlapping (gap < 0), touching, or within the merge gap all fuse; a wider gap is two
             // separate legs of the same mode (e.g. two walks with a stop between) and is left alone.
-            if (b.startMs - a.endMs > Constants.MERGE_GAP_MS) continue
+            // A user-confirmed PAIR widens the bridge to the evidence-gap cap (a hand-categorized
+            // journey split by sparse samples is one leg) — but unlike visits not unboundedly:
+            // welding two confirmed trips across hours would fabricate *movement* through what was
+            // almost certainly a stay.
+            val maxGapMs =
+                if (a.confirmed && b.confirmed) Constants.MAX_EVIDENCE_GAP_MS else Constants.MERGE_GAP_MS
+            if (b.startMs - a.endMs > maxGapMs) continue
 
             // Chaining a's points then b's is only chronological when b starts after a ends. If they
             // overlap in time -- e.g. a converted stay (a tight cluster of fixes) sitting *inside* a
@@ -211,6 +226,24 @@ class TimelineMerger @Inject constructor(
             .map { it.latitude to it.longitude }
         if (points.size < 2) return null
         return Geo.encodePolyline(points) to Geo.pathLengthMeters(points)
+    }
+
+    /**
+     * True when included samples bridge [a]'s end to [bStartMs] with no stretch longer than
+     * [Constants.MAX_EVIDENCE_GAP_MS] lacking *consistent* evidence — a sample of ANY accuracy
+     * within the coarse-sustain allowance of [a]'s centroid advances the clock; inconsistent
+     * samples are ignored. This is the confirmed-pair relaxation: quality-blind, presence-strict.
+     */
+    private suspend fun evidenceBridges(a: VisitEntity, bStartMs: Long): Boolean {
+        var clock = a.endMs
+        for (s in sampleDao.rangeForComputation(a.endMs, bStartMs)) {
+            if (s.timestampMs - clock > Constants.MAX_EVIDENCE_GAP_MS) return false
+            val d = Geo.distanceMeters(
+                a.centroidLatitude, a.centroidLongitude, s.latitude, s.longitude,
+            )
+            if (d <= coarseSustainAllowanceMeters(s.accuracy)) clock = s.timestampMs
+        }
+        return bStartMs - clock <= Constants.MAX_EVIDENCE_GAP_MS
     }
 
     private fun samePlace(a: VisitEntity, b: VisitEntity): Boolean = when {

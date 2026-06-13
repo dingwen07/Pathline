@@ -331,6 +331,7 @@ internal class TimelineRebuilder(
         if (!trustedStationary) return null
 
         val tail = ArrayDeque<LocationSampleEntity>()
+        val coarseTail = ArrayList<LocationSampleEntity>()
         for (sample in samples.asReversed()) {
             if (sample.timestampMs < dayStart || sample.timestampMs >= dayEnd) continue
             if (!sample.includedInComputation || sample.devicePhysicalState != DevicePhysicalState.STATIONARY) break
@@ -338,21 +339,36 @@ internal class TimelineRebuilder(
             if ((sample.accuracy ?: Constants.SAMPLE_ACCURACY_GATE_METERS) >
                 Constants.SAMPLE_ACCURACY_GATE_METERS
             ) {
-                break
+                // Coarse fixes sustain the walk but contribute no geometry — a Doze evening of
+                // 100 m Wi-Fi fixes must not truncate the ongoing stay at the last GPS-quality fix
+                // (same accuracy policy as VisitDetector). Consistency is checked below, once the
+                // precise tail's centroid is known.
+                coarseTail.add(sample)
+                continue
             }
             tail.addFirst(sample)
         }
         if (tail.isEmpty()) tail.add(latest)
         val good = tail.toList()
         val geom = VisitGeometry.compute(good, latest.latitude, latest.longitude)
+        // Last fix (precise, or coarse-but-consistent with the tail's centroid) supporting
+        // continued presence — the stale-evidence close below must use THIS, not the last precise
+        // fix, or the coarse-sustained span gets truncated right back off.
+        var lastEvidenceMs = good.last().timestampMs
+        for (c in coarseTail) {
+            if (c.timestampMs <= lastEvidenceMs) continue
+            val d = Geo.distanceMeters(geom.latitude, geom.longitude, c.latitude, c.longitude)
+            if (d <= coarseSustainAllowanceMeters(c.accuracy)) lastEvidenceMs = c.timestampMs
+        }
         // Extend the ongoing stay to `now` only while the evidence is fresh; once the latest sample
-        // is older than the gap cap, presence is no longer assumed and the stay closes at it.
+        // is older than the gap cap, presence is no longer assumed and the stay closes at the last
+        // sustaining evidence.
         val nowMs = now()
         val endMs =
             if (nowMs - latest.timestampMs <= Constants.MAX_EVIDENCE_GAP_MS) {
-                maxOf(good.last().timestampMs, nowMs)
+                maxOf(lastEvidenceMs, nowMs)
             } else {
-                good.last().timestampMs
+                lastEvidenceMs
             }
         return VisitCandidate(
             startMs = good.first().timestampMs,
