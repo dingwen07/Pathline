@@ -1,8 +1,5 @@
 package net.extrawdw.apps.locationhistory.ui
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import androidx.core.graphics.createBitmap
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,31 +42,28 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLngBounds
-import com.google.android.gms.maps.model.Marker
-import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.TileOverlay
+import com.google.android.gms.maps.model.TileOverlayOptions
 import com.google.maps.android.compose.ComposeMapColorScheme
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapEffect
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MapsComposeExperimentalApi
 import com.google.maps.android.compose.Polyline
-import kotlinx.coroutines.yield
 import net.extrawdw.apps.locationhistory.R
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Color as ComposeColor
 
 private val SAMPLE_RED = ComposeColor(0xFFFF1744)
 private val TRACK_RED = ComposeColor(0x66FF1744) // translucent
 private const val DOT_DP = 3f
 private const val DOT_DP_NO_TRACK = 1.5f
-private const val MARKER_BATCH = 400 // markers added per UI-thread slice before yielding
 
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
@@ -87,14 +81,21 @@ fun MapExplorerScreen(
     val showPicker = remember { mutableStateOf(false) }
 
     // Without a track line the dots stand on their own, so shrink them further to cut clutter.
+    val density = LocalDensity.current
     val drawingTrack = state.trackPoints.size >= 2
     val dotSizePx =
-        with(LocalDensity.current) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
-    // Built lazily once the map (and thus BitmapDescriptorFactory) is initialized; rebuilt when the
-    // dot size changes (the array also caches the size it was built for).
-    val dotIcon = remember { arrayOfNulls<BitmapDescriptor>(1) }
-    val dotIconSizePx = remember { floatArrayOf(-1f) }
-    val markers = remember { mutableListOf<Marker>() }
+        with(density) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
+    val cameraZoom = (cameraPositionState.position.zoom * 4f).roundToInt() / 4f
+    val dotTileProvider = remember(state.dotPoints, dotSizePx, density.density, cameraZoom) {
+        DotTileProvider(
+            points = state.dotPoints,
+            dotDiameterPx = dotSizePx,
+            screenDensity = density.density,
+            cameraZoom = cameraZoom,
+            color = SAMPLE_RED.toArgb(),
+        )
+    }
+    val dotOverlay = remember { arrayOfNulls<TileOverlay>(1) }
 
     // Open near the user's data (last recorded sample) instead of the global world view — only the
     // very first time the tab is shown, before any range's points have framed the camera.
@@ -142,14 +143,12 @@ fun MapExplorerScreen(
 
     Box(Modifier.fillMaxSize()) {
         if (showMap) {
-            // The markers/icon below are added imperatively against the live map; when the map
-            // leaves composition they are invalidated with it. Drop our stale references (and the
-            // icon cached against the old map's factory) so the next mount rebuilds cleanly.
+            // Tile overlays are owned by the live map. Remove the old one when the MapView leaves
+            // composition so a remount starts with the fresh map instance.
             DisposableEffect(Unit) {
                 onDispose {
-                    markers.clear()
-                    dotIcon[0] = null
-                    dotIconSizePx[0] = -1f
+                    dotOverlay[0]?.remove()
+                    dotOverlay[0] = null
                 }
             }
             GoogleMap(
@@ -164,24 +163,18 @@ fun MapExplorerScreen(
                 if (state.trackPoints.size >= 2) {
                     Polyline(points = state.trackPoints, color = TRACK_RED, width = 6f)
                 }
-                // Red dots are plain map markers sharing a single bitmap icon (far cheaper than
-                // MarkerComposable), added in batches that yield so the UI thread never stalls.
-                MapEffect(state.dotPoints, dotSizePx) { map ->
-                    markers.forEach { it.remove() }
-                    markers.clear()
-                    val pts = state.dotPoints
-                    if (pts.isEmpty()) return@MapEffect
-                    if (dotIcon[0] == null || dotIconSizePx[0] != dotSizePx) {
-                        dotIcon[0] = redDotDescriptor(dotSizePx)
-                        dotIconSizePx[0] = dotSizePx
-                    }
-                    val icon = dotIcon[0]!!
-                    var i = 0
-                    for (p in pts) {
-                        map.addMarker(
-                            MarkerOptions().position(p).icon(icon).anchor(0.5f, 0.5f).flat(true),
-                        )?.let { markers.add(it) }
-                        if (++i % MARKER_BATCH == 0) yield()
+                // Red dots are rasterized into visible map tiles instead of one SDK marker per
+                // sample. This keeps dense dot-only ranges cheap while preserving visual density.
+                MapEffect(dotTileProvider) { map ->
+                    dotOverlay[0]?.remove()
+                    dotOverlay[0] = null
+                    if (state.dotPoints.isNotEmpty()) {
+                        dotOverlay[0] = map.addTileOverlay(
+                            TileOverlayOptions()
+                                .tileProvider(dotTileProvider)
+                                .fadeIn(false)
+                                .zIndex(2f)
+                        )
                     }
                 }
             }
@@ -217,16 +210,6 @@ fun MapExplorerScreen(
             onDismiss = { showPicker.value = false },
         )
     }
-}
-
-/** A small solid red dot bitmap used as the shared icon for every sample marker. */
-private fun redDotDescriptor(diameterPx: Float): BitmapDescriptor {
-    val size = diameterPx.coerceAtLeast(1f).toInt()
-    val bmp = createBitmap(size, size)
-    val canvas = Canvas(bmp)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = SAMPLE_RED.toArgb() }
-    canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-    return BitmapDescriptorFactory.fromBitmap(bmp)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
