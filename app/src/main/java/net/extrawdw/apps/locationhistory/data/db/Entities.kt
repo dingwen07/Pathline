@@ -70,6 +70,12 @@ data class LocationSampleEntity(
     val gravityAngleDeltaDeg: Float? = null,
     val pressureHpa: Float? = null,
 
+    /** Hardware step-counter steps since the previous delivered batch, stamped on the LAST
+     *  sample of each batch (null on the others), so summing non-null values over a time span
+     *  counts each step exactly once. Null = unknown (no sensor, first reading of a session, or
+     *  a counter reset), never "zero steps". See StepCounterMonitor. */
+    val stepDelta: Int? = null,
+
     /** All samples are stored; this flag (with [exclusionReason]) excludes a sample from
      *  computation — e.g. mock locations or implausibly large accuracy — without deleting it. */
     val includedInComputation: Boolean = true,

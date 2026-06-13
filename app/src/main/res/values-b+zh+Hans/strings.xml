@@ -178,8 +178,6 @@
     <string name="perm_location_desc">记录您去往的地点，以便 Pathline 构建您的时间线。</string>
     <string name="perm_activity_title">身体活动</string>
     <string name="perm_activity_desc">检测您何时移动以及如何出行，让记录更省电。</string>
-    <string name="perm_phone_title">电话（可选）</string>
-    <string name="perm_phone_desc">读取蜂窝信号强度以改进位置判断。即使拒绝，Pathline 也能正常使用。</string>
     <string name="onboarding_background_title">在后台持续记录</string>
     <string name="onboarding_background_body">为了构建完整的时间线，位置访问需要设置为“始终允许”，这样 Pathline 才能在应用关闭时继续记录。Android 会在下一个界面单独请求此项。</string>
     <string name="onboarding_oem_autostart_title">保持 Pathline 运行</string>

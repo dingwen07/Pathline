@@ -57,6 +57,7 @@ class RecordingController @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val deviceStateCollector: DeviceStateCollector,
     private val motionSensorReader: MotionSensorReader,
+    private val stepCounterMonitor: net.extrawdw.apps.locationhistory.data.enrich.StepCounterMonitor,
     private val classifier: HeuristicClassifier,
     private val recorderService: RecorderServiceController,
     private val recognitionManager: RecognitionManager,
@@ -493,9 +494,13 @@ class RecordingController @Inject constructor(
         // the batch as evidence for the span-level timeline classifier.
         val burst = motionSensorReader.burstSummary()
         val motionVariance = burst.accelVariance
+        // One step-counter delta per batch, stamped on the batch's LAST sample (others null) so
+        // summing non-null stepDelta over a span counts each step exactly once.
+        val stepDelta = stepCounterMonitor.stepsSinceLastBatch()
         val affectedDays = linkedSetOf<Long>()
 
-        for (location in locations.sortedBy { it.time }) {
+        val sorted = locations.sortedBy { it.time }
+        for (location in sorted) {
             val speed = if (location.hasSpeed()) location.speed else null
             speed?.let { heuristics.pushSpeed(it) }
             val (mean, max, variance) = heuristics.speedStats()
@@ -543,6 +548,7 @@ class RecordingController @Inject constructor(
             )
             val sample = buildSample(
                 location, context, burst, classification.state, classification.confidence,
+                stepDelta = if (location === sorted.last()) stepDelta else null,
             )
             locationRepository.record(sample)
             affectedDays.add(sample.dayEpoch)
@@ -759,6 +765,7 @@ class RecordingController @Inject constructor(
         burst: net.extrawdw.apps.locationhistory.data.enrich.MotionBurst,
         state: DevicePhysicalState,
         confidence: Float,
+        stepDelta: Int?,
     ): LocationSampleEntity = LocationSampleEntity(
         timestampMs = location.time,
         dayEpoch = TimeBuckets.dayEpoch(location.time),
@@ -792,6 +799,7 @@ class RecordingController @Inject constructor(
         stepCadenceHz = burst.stepCadenceHz,
         gravityAngleDeltaDeg = burst.gravityAngleDeltaDeg,
         pressureHpa = burst.pressureHpa,
+        stepDelta = stepDelta,
     )
 
     private fun arName(activityType: Int): String = when (activityType) {

@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -405,11 +404,6 @@ internal fun PermissionsStepContent() {
                 Icons.AutoMirrored.Filled.DirectionsRun,
                 stringResource(R.string.perm_activity_title),
                 stringResource(R.string.perm_activity_desc),
-            ),
-            PermissionRow(
-                Icons.Filled.Phone,
-                stringResource(R.string.perm_phone_title),
-                stringResource(R.string.perm_phone_desc),
             ),
         ),
     )

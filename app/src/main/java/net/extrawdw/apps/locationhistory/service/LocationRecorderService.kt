@@ -41,6 +41,9 @@ class LocationRecorderService : LifecycleService() {
     @Inject
     lateinit var serviceController: RecorderServiceController
 
+    @Inject
+    lateinit var stepCounterMonitor: net.extrawdw.apps.locationhistory.data.enrich.StepCounterMonitor
+
     private val fusedClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(this)
     }
@@ -107,6 +110,8 @@ class LocationRecorderService : LifecycleService() {
         }
         registerNetworkCallback()
         registerIdleReceiver()
+        // Session-long batched step-counter listener (idempotent across cadence re-tunes).
+        stepCounterMonitor.start()
 
         if (!hasLocationPermission()) {
             AppLog.w(TAG, "no location permission — stopping")
@@ -154,6 +159,7 @@ class LocationRecorderService : LifecycleService() {
         runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
         unregisterNetworkCallback()
         unregisterIdleReceiver()
+        stepCounterMonitor.stop()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -180,6 +186,7 @@ class LocationRecorderService : LifecycleService() {
                 runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(service)) }
                 unregisterNetworkCallback()
                 unregisterIdleReceiver()
+                stepCounterMonitor.stop()
                 Notifications.notifyRecordingStopped(service)
                 ServiceCompat.stopForeground(service, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -193,6 +200,7 @@ class LocationRecorderService : LifecycleService() {
         runCatching { fusedClient.removeLocationUpdates(locationPendingIntent(this)) }
         unregisterNetworkCallback()
         unregisterIdleReceiver()
+        stepCounterMonitor.stop()
         super.onDestroy()
     }
 

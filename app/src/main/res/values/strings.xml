@@ -189,8 +189,6 @@
     <string name="perm_location_desc">Records where you go so Pathline can build your timeline.</string>
     <string name="perm_activity_title">Physical activity</string>
     <string name="perm_activity_desc">Detects when you\'re moving and how you travel, so recording stays light on the battery.</string>
-    <string name="perm_phone_title">Phone (optional)</string>
-    <string name="perm_phone_desc">Reads cell-signal strength to improve location context. Pathline works fine if you deny this.</string>
     <string name="onboarding_background_title">Keep recording in the background</string>
     <string name="onboarding_background_body">To build a complete timeline, location access needs to be set to \"Allow all the time\" so Pathline keeps recording when the app is closed. Android asks for this separately on the next screen.</string>
     <string name="onboarding_oem_autostart_title">Keep Pathline running</string>

@@ -51,6 +51,8 @@ object AppMigrations {
             db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `stepCadenceHz` REAL")
             db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `gravityAngleDeltaDeg` REAL")
             db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `pressureHpa` REAL")
+            // Step-counter delta, stamped per delivered batch (see StepCounterMonitor).
+            db.execSQL("ALTER TABLE `location_samples` ADD COLUMN `stepDelta` INTEGER")
 
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `tags` (" +

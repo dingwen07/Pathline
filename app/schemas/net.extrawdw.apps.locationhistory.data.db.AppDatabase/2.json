@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "bce0845061f0c9fcd9349996e05d7b7b",
+    "identityHash": "50f794df4bac55f1d4f40f55b9f5765a",
     "entities": [
       {
         "tableName": "location_samples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitude` REAL, `accuracy` REAL, `verticalAccuracyMeters` REAL, `bearing` REAL, `bearingAccuracyDegrees` REAL, `speed` REAL, `speedAccuracyMetersPerSecond` REAL, `provider` TEXT, `isMock` INTEGER NOT NULL, `elapsedRealtimeNanos` INTEGER NOT NULL, `satelliteCount` INTEGER, `batteryPct` INTEGER, `isCharging` INTEGER, `networkTransport` TEXT, `networkTypeName` TEXT, `cellSignalDbm` INTEGER, `hasCellService` INTEGER, `wifiSsid` TEXT, `wifiBssid` TEXT, `screenOn` INTEGER, `arActivity` TEXT, `arConfidence` INTEGER, `devicePhysicalState` TEXT NOT NULL, `devicePhysicalStateConfidence` REAL NOT NULL, `motionVariance` REAL, `stepCadenceHz` REAL, `gravityAngleDeltaDeg` REAL, `pressureHpa` REAL, `includedInComputation` INTEGER NOT NULL, `exclusionReason` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitude` REAL, `accuracy` REAL, `verticalAccuracyMeters` REAL, `bearing` REAL, `bearingAccuracyDegrees` REAL, `speed` REAL, `speedAccuracyMetersPerSecond` REAL, `provider` TEXT, `isMock` INTEGER NOT NULL, `elapsedRealtimeNanos` INTEGER NOT NULL, `satelliteCount` INTEGER, `batteryPct` INTEGER, `isCharging` INTEGER, `networkTransport` TEXT, `networkTypeName` TEXT, `cellSignalDbm` INTEGER, `hasCellService` INTEGER, `wifiSsid` TEXT, `wifiBssid` TEXT, `screenOn` INTEGER, `arActivity` TEXT, `arConfidence` INTEGER, `devicePhysicalState` TEXT NOT NULL, `devicePhysicalStateConfidence` REAL NOT NULL, `motionVariance` REAL, `stepCadenceHz` REAL, `gravityAngleDeltaDeg` REAL, `pressureHpa` REAL, `stepDelta` INTEGER, `includedInComputation` INTEGER NOT NULL, `exclusionReason` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -181,6 +181,11 @@
             "fieldPath": "pressureHpa",
             "columnName": "pressureHpa",
             "affinity": "REAL"
+          },
+          {
+            "fieldPath": "stepDelta",
+            "columnName": "stepDelta",
+            "affinity": "INTEGER"
           },
           {
             "fieldPath": "includedInComputation",
@@ -984,7 +989,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bce0845061f0c9fcd9349996e05d7b7b')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '50f794df4bac55f1d4f40f55b9f5765a')"
     ]
   }
 }
