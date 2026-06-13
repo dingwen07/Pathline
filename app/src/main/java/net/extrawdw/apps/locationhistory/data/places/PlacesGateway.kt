@@ -1,13 +1,17 @@
 package net.extrawdw.apps.locationhistory.data.places
 
 import android.content.Context
+import androidx.concurrent.futures.CallbackToFutureAdapter
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.auth.PlacesAppCheckTokenProvider
 import com.google.android.libraries.places.api.model.CircularBounds
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.android.libraries.places.api.net.SearchByTextRequest
 import com.google.android.libraries.places.api.net.SearchNearbyRequest
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.tasks.await
@@ -45,6 +49,19 @@ class PlacesGateway @Inject constructor(
         if (key.isBlank()) return null
         if (!Places.isInitialized()) {
             Places.initializeWithNewPlacesApiEnabled(context.applicationContext, key)
+        }
+
+        if (FirebaseApp.getApps(context.applicationContext).isNotEmpty()) {
+            Places.setPlacesAppCheckTokenProvider(
+                PlacesAppCheckTokenProvider {
+                    CallbackToFutureAdapter.getFuture { completer ->
+                        FirebaseAppCheck.getInstance().getAppCheckToken(false)
+                            .addOnSuccessListener { completer.set(it.token) }
+                            .addOnFailureListener { completer.setException(it) }
+                        "places-app-check-token"
+                    }
+                },
+            )
         }
         Places.createClient(context.applicationContext)
     }.getOrNull()

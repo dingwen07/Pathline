@@ -8,6 +8,12 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// Firebase App Check needs google-services.json (gitignored, like the Maps key). Apply the plugin
+// only when the file is present so CI / fresh checkouts still build without Firebase configured.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // Read the Google Maps / Places API key from local.properties (never committed) so it can be
 // injected as a manifest placeholder and a BuildConfig field. Falls back to an empty string
 // so CI / fresh checkouts still build (maps simply won't load).
@@ -26,8 +32,8 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 13
-        versionName = "1.6.0"
+        versionCode = 14
+        versionName = "1.7.0-rc1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -108,6 +114,13 @@ dependencies {
     implementation(libs.maps.compose)
     implementation(libs.maps.compose.utils)
     implementation(libs.places)
+
+    // Firebase App Check — attests the Routes API web-service call. Play Integrity in release,
+    // the debug provider (a registered debug token) for local builds. Needs app/google-services.json.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.appcheck.playintegrity)
+    debugImplementation(libs.firebase.appcheck.debug)
+    implementation(libs.androidx.concurrent.futures)
 
     // Serialization & coroutines
     implementation(libs.kotlinx.serialization.json)
