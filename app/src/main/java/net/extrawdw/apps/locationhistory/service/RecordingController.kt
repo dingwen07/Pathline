@@ -407,15 +407,31 @@ class RecordingController @Inject constructor(
         executeActions(policy.onArTransitions(transitions, System.currentTimeMillis()))
     }
 
-    /** Leaving the dwell geofence means the user is on the move again (a real, forced departure). */
+    /**
+     * A dwell-geofence EXIT fired. The geofence triggers on a single boundary-crossing fix, so before
+     * paying for the high-accuracy MOVING cadence we re-sample once and let the policy confirm the
+     * displacement is real (GPS speed, a shaking phone, or a trustworthy fix clearly outside the
+     * stay). A coarse, motionless outlier is indoor drift -> keep the low-power stay and re-arm the
+     * geofence. Pre-refactor every exit promoted to MOVING, so drift pinned high-accuracy GPS for
+     * 8-16 min at a time (the 06-13 idle drain).
+     */
     suspend fun handleGeofenceExit(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
             AppLog.i(TAG, "geofence EXIT ignored — recording paused (app removed from Recents)")
             return@withLock
         }
         AppLog.i(TAG, "geofence EXIT")
-        geofenceManager.clearAll()
-        executeActions(policy.onGeofenceExit(System.currentTimeMillis()))
+        // Cheap confirmatory re-sample (the same pattern as significant-motion): one fresh fix + the
+        // current IMU variance, handed to the pure policy for the drift-vs-departure verdict.
+        val motionVariance = motionSensorReader.motionVariance()
+        val freshFix = getCurrentLocation()?.toRecentFix()
+        val actions = policy.onGeofenceExit(freshFix, motionVariance, System.currentTimeMillis())
+        if (actions.isEmpty()) {
+            AppLog.i(TAG, "geofence EXIT — unconfirmed (drift); keeping stay, re-arming dwell geofence")
+            rearmDwellGeofenceAtAnchor()
+        } else {
+            executeActions(actions) // EnterMoving clears the geofence itself
+        }
     }
 
     /**
@@ -649,7 +665,7 @@ class RecordingController @Inject constructor(
                 sampleCount = 1,
             )
         } ?: return
-        geofenceManager.armDwellGeofence(anchor.centroidLatitude, anchor.centroidLongitude)
+        armDwellGeofenceAdaptive(anchor.centroidLatitude, anchor.centroidLongitude)
         // The policy anchors the drift guard from the cluster centroid; when it had no centroid
         // (Doze / idle-timeout) seed it from the resolved anchor here.
         if (action.candidate == null) {
@@ -771,6 +787,38 @@ class RecordingController @Inject constructor(
     }
 
     // --- helpers ------------------------------------------------------------------------------
+
+    /** Decouple a delivered [Location] into the heuristics' [RecentFix] for a one-off policy check
+     *  (the geofence-exit confirmation); not persisted — that is [handleLocationsCore]'s job. */
+    private fun Location.toRecentFix(): RecentFix = RecentFix(
+        t = time,
+        lat = latitude,
+        lon = longitude,
+        accuracyMeters = if (hasAccuracy()) accuracy else null,
+        speedMps = if (hasSpeed()) speed else null,
+        stationary = false,
+    )
+
+    /** Re-arm the dwell geofence at the current stay anchor after a drift-only exit, so monitoring
+     *  continues without promoting to the high-accuracy cadence. */
+    private suspend fun rearmDwellGeofenceAtAnchor() {
+        val anchor = heuristics.stationaryAnchor
+            ?: locationRepository.mostRecent()?.let { it.latitude to it.longitude }
+            ?: return
+        armDwellGeofenceAdaptive(anchor.first, anchor.second)
+    }
+
+    /**
+     * Arm the dwell geofence with a radius widened to the GPS noise actually seen at this stay, so an
+     * indoor place that scatters 100 m+ fixes doesn't trip a tight boundary on every wobble. Floored
+     * at [Constants.DWELL_GEOFENCE_RADIUS_METERS] and capped at [Constants.DWELL_GEOFENCE_MAX_RADIUS_METERS]
+     * so a pathological place can't open a dead zone where a real departure goes unnoticed.
+     */
+    private suspend fun armDwellGeofenceAdaptive(latitude: Double, longitude: Double) {
+        val radius = (heuristics.stationaryNoiseRadius().toFloat() + Constants.DWELL_GEOFENCE_MARGIN_METERS)
+            .coerceIn(Constants.DWELL_GEOFENCE_RADIUS_METERS, Constants.DWELL_GEOFENCE_MAX_RADIUS_METERS)
+        geofenceManager.armDwellGeofence(latitude, longitude, radius)
+    }
 
     /**
      * Remove the fused PI location request directly. The request is system-persistent state (it

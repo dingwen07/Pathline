@@ -36,14 +36,22 @@ class GeofenceManager @Inject constructor(
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
 
-    /** Replace any existing dwell geofence with one centred on the stationary location. */
+    /**
+     * Replace any existing dwell geofence with one centred on the stationary location. [radiusMeters]
+     * defaults to the floor, but the controller widens it to the GPS noise observed at the stay so a
+     * noisy indoor place gets a roomier boundary that ordinary drift can't trip on every wobble.
+     */
     @SuppressLint("MissingPermission")
-    suspend fun armDwellGeofence(latitude: Double, longitude: Double) {
+    suspend fun armDwellGeofence(
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Float = Constants.DWELL_GEOFENCE_RADIUS_METERS,
+    ) {
         if (!hasPermission()) return
         clearAll()
         val geofence = Geofence.Builder()
             .setRequestId(DWELL_ID)
-            .setCircularRegion(latitude, longitude, Constants.DWELL_GEOFENCE_RADIUS_METERS)
+            .setCircularRegion(latitude, longitude, radiusMeters)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
             .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_EXIT)
             .setNotificationResponsiveness(Constants.DWELL_GEOFENCE_RESPONSIVENESS_MS)
@@ -59,7 +67,7 @@ class GeofenceManager @Inject constructor(
                     requestId = DWELL_ID,
                     latitude = latitude,
                     longitude = longitude,
-                    radiusMeters = Constants.DWELL_GEOFENCE_RADIUS_METERS,
+                    radiusMeters = radiusMeters,
                     createdAtMs = System.currentTimeMillis(),
                 ),
             )

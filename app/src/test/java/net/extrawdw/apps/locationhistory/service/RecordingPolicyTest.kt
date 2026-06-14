@@ -41,6 +41,10 @@ class RecordingPolicyTest {
     private fun feed(atSec: Long, motionVariance: Float = 0f, fix: ClassifiedFix) =
         policy.onFixes(listOf(fix), motionVariance, t0 + atSec * 1000)
 
+    /** A bare confirming fix for the geofence-exit check (no classification needed). */
+    private fun freshFix(lat: Double = 40.0, lon: Double = -74.0, accuracy: Float? = 10f, speed: Float? = 0f) =
+        RecentFix(t0 + 250_000, lat, lon, accuracy, speed, stationary = false)
+
     // ---- stationary entry paths -----------------------------------------------------------------
 
     @Test
@@ -222,11 +226,70 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.UNKNOWN, policy.state)
     }
 
+    // ---- geofence-exit confirmation (the 06-13 drain) -------------------------------------------
+
     @Test
-    fun geofenceExitEntersMoving() {
+    fun geofenceExitConfirmsRealDeparture() {
         enterStationary()
-        val actions = policy.onGeofenceExit(t0 + 250_000)
+        // Trustworthy fix far from the anchor, carrying GPS speed: an unambiguous departure.
+        val actions = policy.onGeofenceExit(freshFix(lat = 40.02, speed = 5f), motionVariance = 0f, nowMs = t0 + 250_000)
         assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun geofenceExitConfirmsDisplacementWithoutSpeed() {
+        enterStationary()
+        // Trustworthy fix clearly outside the stay but no Doppler speed (e.g. network fix) -> real.
+        val actions = policy.onGeofenceExit(freshFix(lat = 40.02, accuracy = 15f, speed = 0f), motionVariance = 0f, nowMs = t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun geofenceExitConfirmsOnImuMotion() {
+        enterStationary()
+        // Even a coarse fix confirms when the phone is physically shaking — a real walk just began.
+        val actions = policy.onGeofenceExit(freshFix(lat = 40.0008, accuracy = 120f, speed = 0f), motionVariance = 5f, nowMs = t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun geofenceExitIgnoresCoarseDrift() {
+        enterStationary()
+        // Coarse (>gate) outlier, no speed, still IMU: indoor multipath drift, NOT a departure. This
+        // is the row that fails if a raw geofence EXIT is trusted again (the 8-16 min MOVING bursts).
+        val actions = policy.onGeofenceExit(freshFix(lat = 40.0008, accuracy = 120f, speed = 0f), motionVariance = 0f, nowMs = t0 + 250_000)
+        assertTrue("a coarse, motionless drift exit must not enter MOVING", actions.isEmpty())
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun geofenceExitWithoutFreshFixKeepsStay() {
+        enterStationary()
+        // No confirming fix (cold GPS indoors timed out) -> can't prove a departure, so keep the stay.
+        val actions = policy.onGeofenceExit(freshFix = null, motionVariance = 0f, nowMs = t0 + 250_000)
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    // ---- coarse-fix drift guard on UNKNOWN/MOVING promotion -------------------------------------
+
+    @Test
+    fun coarseMovingFixDoesNotPromoteFromUnknown() {
+        // A single coarse (>gate) WALKING-classified fix is indoor scatter, not a departure: it must
+        // not promote UNKNOWN -> MOVING (where it would pin the high-accuracy cadence).
+        val actions = feed(0, fix = fix(0, lat = 40.02, speed = 0f, state = DevicePhysicalState.WALKING, accuracy = 120f))
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.UNKNOWN, policy.state)
+    }
+
+    @Test
+    fun trustedMovingFixPromotesFromUnknown() {
+        // The same departure with a trustworthy fix still promotes — the gate is on quality, not motion.
+        val actions = feed(0, fix = fix(0, lat = 40.02, speed = 5f, state = DevicePhysicalState.WALKING, accuracy = 12f))
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "fix_departure" })
         assertEquals(RecorderState.MOVING, policy.state)
     }
 

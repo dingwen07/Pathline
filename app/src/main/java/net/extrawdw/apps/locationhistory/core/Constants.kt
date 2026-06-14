@@ -130,16 +130,29 @@ object Constants {
      */
     const val DEPARTURE_VERIFY_WINDOW_MS = 75_000L
 
-    /** Radius (m) of the geofence dropped when the device becomes stationary. */
+    /** Floor (m) for the dwell geofence dropped when the device becomes stationary. The radius is
+     *  widened per-stay to the GPS noise actually observed there (see [DWELL_GEOFENCE_MARGIN_METERS]);
+     *  this is the minimum a clean, quiet place uses. */
     const val DWELL_GEOFENCE_RADIUS_METERS = 100f
 
+    /** Margin (m) added above the observed GPS-noise radius when sizing the dwell geofence, so a
+     *  normal stationary wobble sits comfortably inside the boundary instead of tripping a spurious
+     *  EXIT. Indoors a place can scatter 100 m+ fixes; a fixed 100 m ring is then guaranteed to flap. */
+    const val DWELL_GEOFENCE_MARGIN_METERS = 25f
+
+    /** Cap (m) on the adaptive dwell-geofence radius — a pathologically noisy place must not open a
+     *  dead zone so large that a real departure goes unnoticed. */
+    const val DWELL_GEOFENCE_MAX_RADIUS_METERS = 180f
+
     /**
-     * How responsive (ms) the dwell-geofence EXIT should be. Left at the default 0, the system
-     * optimizes for power and can take minutes to report an exit — long enough that a short walk to
-     * the bus/train is missed entirely (the exit is the only departure signal that survives Doze).
-     * 30s trades a little battery for catching departures promptly.
+     * Best-effort EXIT responsiveness (ms) for the dwell geofence, passed to
+     * `Geofence.Builder.setNotificationResponsiveness`. Per the GMS contract LARGER values save power
+     * (the system batches boundary checks) and 0 means "notify as soon as possible"; in practice
+     * modern Play Services clamps small values up to ~2 min regardless, so this is a hint, not a
+     * guarantee. 30s leans prompt (a real walk to the bus is still caught) while letting the system
+     * batch. NOTE: the real anti-drift lever is the adaptive radius above, not this value.
      */
-    const val DWELL_GEOFENCE_RESPONSIVENESS_MS = 0
+    const val DWELL_GEOFENCE_RESPONSIVENESS_MS = 30_000
 
     // --- Trip segmentation --------------------------------------------------------------------
     /** Sliding window (number of samples) used when classifying transport mode along a trip. */
