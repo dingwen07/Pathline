@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -368,12 +370,14 @@ class RecordingController @Inject constructor(
      * and [stateMutex] is held while waiting, stalling every other entry point. On timeout the GMS
      * request is cancelled too, so the chip stops working on a fix nobody will use.
      */
-    private suspend fun getCurrentLocation(): Location? {
+    private suspend fun getCurrentLocation(
+        timeoutMs: Long = Constants.CURRENT_FIX_TIMEOUT_MS,
+    ): Location? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) return null
         val cancellation = CancellationTokenSource()
-        return withTimeoutOrNull(Constants.CURRENT_FIX_TIMEOUT_MS) {
+        return withTimeoutOrNull(timeoutMs) {
             runCatching {
                 fusedClient.getCurrentLocation(
                     Priority.PRIORITY_HIGH_ACCURACY, cancellation.token,
@@ -421,10 +425,14 @@ class RecordingController @Inject constructor(
             return@withLock
         }
         AppLog.i(TAG, "geofence EXIT")
-        // Cheap confirmatory re-sample (the same pattern as significant-motion): one fresh fix + the
-        // current IMU variance, handed to the pure policy for the drift-vs-departure verdict.
-        val motionVariance = motionSensorReader.motionVariance()
-        val freshFix = getCurrentLocation()?.toRecentFix()
+        // Cheap confirmatory re-sample (the significant-motion pattern), but this runs inside the
+        // geofence broadcast's goAsync() budget, so gather the IMU burst and the fix CONCURRENTLY and
+        // cap the fix wait tighter than the foreground path. The pure policy gets both for the verdict.
+        val (motionVariance, freshFix) = coroutineScope {
+            val mv = async { motionSensorReader.motionVariance() }
+            val ff = async { getCurrentLocation(Constants.GEOFENCE_CONFIRM_FIX_TIMEOUT_MS)?.toRecentFix() }
+            mv.await() to ff.await()
+        }
         val actions = policy.onGeofenceExit(freshFix, motionVariance, System.currentTimeMillis())
         if (actions.isEmpty()) {
             AppLog.i(TAG, "geofence EXIT — unconfirmed (drift); keeping stay, re-arming dwell geofence")

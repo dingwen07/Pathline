@@ -266,12 +266,32 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun geofenceExitWithoutFreshFixKeepsStay() {
+    fun geofenceExitWithoutFreshFixButImuMotionConfirms() {
         enterStationary()
-        // No confirming fix (cold GPS indoors timed out) -> can't prove a departure, so keep the stay.
+        // The confirming fix request failed (GPS-hostile departure) but the phone is shaking — a real
+        // walk. Must NOT be discarded as drift just because the fix was null.
+        val actions = policy.onGeofenceExit(freshFix = null, motionVariance = 5f, nowMs = t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun geofenceExitWithoutFreshFixAndStillPhoneKeepsStay() {
+        enterStationary()
+        // No fix AND a still phone -> can't prove a departure; keep the stay (AR/sig-motion recover).
         val actions = policy.onGeofenceExit(freshFix = null, motionVariance = 0f, nowMs = t0 + 250_000)
         assertTrue(actions.isEmpty())
         assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun coarseButFastFixPromotesFromUnknown() {
+        // Start a trip already moving in a GPS-hostile place: coarse accuracy but real Doppler speed.
+        // Speed is a separate signal from horizontal position, so it must still promote — otherwise the
+        // trip start strands in UNKNOWN (AR is edge-triggered and may not fire).
+        val actions = feed(0, fix = fix(0, lat = 40.02, speed = 8f, state = DevicePhysicalState.WALKING, accuracy = 120f))
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "fix_departure" })
+        assertEquals(RecorderState.MOVING, policy.state)
     }
 
     // ---- coarse-fix drift guard on UNKNOWN/MOVING promotion -------------------------------------

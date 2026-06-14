@@ -102,6 +102,11 @@ object Constants {
      *  while waiting. Past this, the request is cancelled and callers fall back to no-fix paths. */
     const val CURRENT_FIX_TIMEOUT_MS = 8_000L
 
+    /** Tighter fix wait for the geofence-EXIT confirmation: it runs inside the geofence broadcast's
+     *  goAsync() budget (~10s) alongside an IMU burst, so it must not spend the whole window. On
+     *  timeout the policy falls back to the IMU verdict / AR / significant-motion. */
+    const val GEOFENCE_CONFIRM_FIX_TIMEOUT_MS = 5_000L
+
     /**
      * Accelerometer motion-energy (variance) at or above which the phone is physically moving, so a
      * near-anchor fix is a real walk rather than GPS drift (which happens while the device sits still).

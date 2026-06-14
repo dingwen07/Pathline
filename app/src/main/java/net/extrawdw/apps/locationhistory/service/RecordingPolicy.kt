@@ -159,20 +159,27 @@ internal class RecordingPolicy(
      * confirm the displacement is real before committing: trust [freshFix] only if it carries motion
      * the geofence can't see (GPS speed, or a shaking phone via [motionVariance]) or is positionally
      * trustworthy AND genuinely outside the stay. A coarse, motionless outlier near the anchor is
-     * drift -> keep the stay (the controller re-arms the geofence). No fresh fix -> can't confirm, so
-     * treat as drift too: a real departure keeps generating AR / motion / Doze-exit signals.
+     * drift -> keep the stay (the controller re-arms the geofence). A missing fix is NOT auto-drift: a
+     * shaking phone still confirms (below), and a still phone with no fix falls back to the slower
+     * AR / significant-motion / Doze-exit signals rather than bursting GPS on every spurious exit.
      */
     fun onGeofenceExit(freshFix: RecentFix?, motionVariance: Float, nowMs: Long): List<RecordingAction> {
         // A stale exit while already moving (geofences are only armed at a stay) just commits.
         if (state != RecorderState.STATIONARY) return toMoving("geofence_exit")
+        // A physically shaking phone is real motion the geofence can't see — and, crucially, it
+        // confirms even when the confirmatory fix request failed (GPS-hostile departure). Check it
+        // BEFORE the null-fix bailout so a real walk out of a dead zone is not discarded as drift.
+        if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return toMoving("geofence_exit")
         val f = freshFix ?: return emptyList()
         val speed = f.speedMps ?: 0f
-        val realMotion = speed >= Constants.DRIFT_MOVING_SPEED_MPS ||
-            motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING
         val trustedDisplacement =
             (f.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
                 !heuristics.isWithinStay(f.lat, f.lon, speed, motionVariance)
-        return if (realMotion || trustedDisplacement) toMoving("geofence_exit") else emptyList()
+        return if (speed >= Constants.DRIFT_MOVING_SPEED_MPS || trustedDisplacement) {
+            toMoving("geofence_exit")
+        } else {
+            emptyList()
+        }
     }
 
     /**
@@ -271,15 +278,22 @@ internal class RecordingPolicy(
             motionVariance < Constants.DRIFT_MOTION_VARIANCE_CEILING
 
     /**
-     * A delivered fix that credibly shows motion: positionally trustworthy (accuracy within the
-     * sample gate, so 100-200 m indoor multipath scatter can't fake a departure) AND either carrying
-     * GPS speed or a confident non-stationary classification. The accuracy gate is the drift guard for
-     * the UNKNOWN -> MOVING promotion and the MOVING -> STATIONARY demotion, mirroring what
-     * [RecordingHeuristics.isDriftAt] does for the STATIONARY branch: a single coarse outlier can no
-     * longer claim movement and pin the costly high-accuracy cadence (the 06-13 idle drain).
+     * A delivered fix that credibly shows motion, used to gate the UNKNOWN -> MOVING promotion and the
+     * MOVING -> STATIONARY demotion (the STATIONARY branch adds [RecordingHeuristics.isDriftAt] on top).
+     * Two independent signals:
+     *  - **Real GPS speed** (Doppler) is a separate measurement from horizontal position and stays
+     *    trustworthy when accuracy is coarse, so it always counts. Gating it by accuracy would strand a
+     *    trip that *starts* already moving in a GPS-hostile place (AR is edge-triggered and may not fire,
+     *    leaving only the fix path) in the costly UNKNOWN cadence. The threshold matches the drift guard
+     *    ([Constants.DRIFT_MOVING_SPEED_MPS]); field data shows indoor-drift "speed" stays below it.
+     *  - A **classifier verdict** with no speed, by contrast, can be faked by 100-200 m indoor multipath
+     *    scatter (a still phone labelled WALKING), so it must be positionally trustworthy — accuracy
+     *    within the sample gate. This is the guard that stops a single coarse outlier from pinning the
+     *    high-accuracy cadence (the 06-13 idle drain).
      */
-    private fun ClassifiedFix.indicatesMotion(): Boolean =
-        classifiedState != DevicePhysicalState.STATIONARY &&
-            (fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-            (isConfident || (fix.speedMps ?: 0f) >= 1.0f)
+    private fun ClassifiedFix.indicatesMotion(): Boolean {
+        if (classifiedState == DevicePhysicalState.STATIONARY) return false
+        if ((fix.speedMps ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS) return true
+        return isConfident && (fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS
+    }
 }
