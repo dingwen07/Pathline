@@ -52,10 +52,11 @@ sealed interface RecordingAction {
  *  - **State is decoupled from AR.** The four AR moving activities collapse to one [RecorderState.MOVING];
  *    transport mode stays in per-sample evidence for the timeline layer.
  *  - **Stationary entry is authoritative and quality-ordered.** Doze-idle (platform-confirmed) and the
- *    fix-cluster detector enter STATIONARY directly; when neither fires but the device has clearly
- *    been parked (UNKNOWN for [Constants.UNKNOWN_IDLE_TIMEOUT_MS] with no AR motion, no GPS speed and a
- *    quiet IMU) it self-demotes anyway — so noisy indoor GPS can no longer pin the recorder in the
- *    costly UNKNOWN cadence for hours.
+ *    fix-cluster detector enter STATIONARY directly; when neither fires, the recorder self-demotes from
+ *    UNKNOWN/MOVING once it has gone quiet (no net displacement and no steps) for the state's idle
+ *    budget — keyed on real translation, NOT on raw IMU energy or stale, lossy AR-moving edges (review
+ *    findings #1/#2). No departure hint can hold the costly high cadence indefinitely; only continuous
+ *    movement does.
  *  - **Ambiguous departures verify before committing.** AR-walking / significant-motion from a stay go
  *    to [RecorderState.VERIFYING_DEPARTURE] and decide from a short burst of fixes, not one fresh fix.
  *
@@ -111,13 +112,22 @@ internal class RecordingPolicy(
         }
     }
 
-    /** A batch of classified fixes. Pushes them into the buffer, then re-decides the state. */
-    fun onFixes(fixes: List<ClassifiedFix>, motionVariance: Float, nowMs: Long): List<RecordingAction> {
+    /** A batch of classified fixes. Pushes them into the buffer, then re-decides the state.
+     *  [stepDelta] is steps counted in this batch — motion evidence that holds off the self-demote. */
+    fun onFixes(
+        fixes: List<ClassifiedFix>,
+        motionVariance: Float,
+        nowMs: Long,
+        stepDelta: Int = 0,
+    ): List<RecordingAction> {
         if (fixes.isEmpty()) return emptyList()
         for (cf in fixes) heuristics.pushFix(cf.fix)
         if (state != RecorderState.STATIONARY && quietSinceMs == null) quietSinceMs = nowMs
 
         val movingFix = fixes.firstOrNull { it.indicatesMotion() }
+        // Real translation (a moving fix) or steps restart the quiet budget — motion evidence that,
+        // unlike raw IMU energy, is not faked by a vibrating-but-stationary surface (an idling car).
+        if (movingFix != null || stepDelta > 0) quietSinceMs = nowMs
         return when (state) {
             RecorderState.STATIONARY -> {
                 // Leave only when a delivered fix shows real motion AND isn't drift. Scan the whole
@@ -139,21 +149,25 @@ internal class RecordingPolicy(
             // deadline reverts instead); a slow, speed-less departure confirms once it clears the radius.
             RecorderState.VERIFYING_DEPARTURE ->
                 if (fixes.any {
-                        !heuristics.isWithinStay(
-                            it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
-                        )
+                        // A coarse outlier (often later excluded as low_accuracy) is indoor multipath,
+                        // not a departure — only a positionally-trustworthy fix may confirm.
+                        (it.fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
+                            !heuristics.isWithinStay(
+                                it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
+                            )
                     }
                 ) toMoving("verify_confirmed") else emptyList()
 
-            // High-power MOVING is not self-sustaining: it must be continuously justified by a fix that
-            // actually shows motion. A real motion fix restarts the quiet clock; otherwise we try to
-            // settle (cluster) and, failing that, self-demote once the device has been quiet for
-            // MOVING_IDLE_TIMEOUT_MS -- so a departure hint or a phantom-speed / AR-jitter spell can no
-            // longer pin the costly cadence for hours (06-13), AR-silent or not.
+            // High-power MOVING is not self-sustaining: it must be continuously justified by real
+            // motion (a moving fix or steps — both reset the quiet clock above). Otherwise we try to
+            // settle (cluster) and, failing that, self-demote once quiet for MOVING_IDLE_TIMEOUT_MS --
+            // so a departure hint, a phantom-speed/AR-jitter spell, or mere IMU vibration can no longer
+            // pin the costly cadence for hours (06-13), AR-silent or not. The demote keys off the quiet
+            // clock (net displacement + steps), NOT a stale AR-moving edge or raw IMU energy.
             RecorderState.MOVING -> when {
-                movingFix != null -> { quietSinceMs = nowMs; emptyList() }
+                movingFix != null || stepDelta > 0 -> emptyList()
                 else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
-                    ?: if (idleElapsed(nowMs, Constants.MOVING_IDLE_TIMEOUT_MS) && isQuiet(nowMs, motionVariance))
+                    ?: if (idleElapsed(nowMs, Constants.MOVING_IDLE_TIMEOUT_MS))
                         toStationary(null, "moving_idle_timeout")
                     else emptyList()
             }
@@ -161,7 +175,7 @@ internal class RecordingPolicy(
             RecorderState.UNKNOWN -> when {
                 movingFix != null -> toMoving("fix_departure")
                 else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
-                    ?: if (idleElapsed(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS) && isQuiet(nowMs, motionVariance))
+                    ?: if (idleElapsed(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS))
                         toStationary(null, "unknown_idle_timeout")
                     else emptyList()
             }
@@ -286,29 +300,21 @@ internal class RecordingPolicy(
     private fun idleElapsed(nowMs: Long, timeoutMs: Long): Boolean =
         quietSinceMs?.let { nowMs - it >= timeoutMs } ?: false
 
-    /** No AR motion recently, no real translation, and a still IMU -> the device is just parked. */
-    private fun isQuiet(nowMs: Long, motionVariance: Float): Boolean =
-        !arTimeline.anyMovingActiveWithin(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS) &&
-            !heuristics.recentlyMoving() &&
-            motionVariance < Constants.DRIFT_MOTION_VARIANCE_CEILING
-
     /**
      * A delivered fix that credibly shows motion, used to gate the UNKNOWN -> MOVING promotion, the
      * STATIONARY departure (which adds [RecordingHeuristics.isDriftAt]) and the MOVING-stay decision.
-     * Two signals, both deliberately skeptical of bare GPS:
-     *  - **GPS speed corroborated by real translation.** Doppler speed is faked by indoor multipath on
-     *    a motionless phone (the 06-13 drain: speeds up to 31 m/s with the centroid fixed at home), so
-     *    a speed reading counts only when [RecordingHeuristics.recentlyMoving] confirms the position is
-     *    actually progressing. Bare speed alone no longer promotes -- that is what pinned the high-power
-     *    cadence on a still phone. (Slower to catch a GPS-only trip start, but the explicit priority is
-     *    avoiding drain over avoiding the occasional manual reclassification.)
-     *  - A **confident classifier verdict** (in practice an AR-strong moving activity) that is also
-     *    positionally trustworthy -- accuracy within the sample gate -- so a single coarse outlier
-     *    can't promote on its own.
+     * Two signals, deliberately skeptical of bare GPS:
+     *  - **Real translation** ([RecordingHeuristics.recentlyMoving]) -- the position actually progressed
+     *    beyond the noise radius. This is the honest movement signal and the override: it counts even
+     *    when AR/the classifier says STILL (a smooth ride AR mislabels STILL), and is never faked by
+     *    indoor multipath, which oscillates in place (the 06-13 phantom: 31 m/s with a fixed centroid).
+     *  - A **confident moving classifier verdict** (in practice an AR-strong moving activity) that is
+     *    positionally trustworthy -- accuracy within the sample gate -- for the trip start before net
+     *    displacement has accumulated. Bare GPS speed and a STILL verdict do NOT promote.
      */
     private fun ClassifiedFix.indicatesMotion(): Boolean {
+        if (heuristics.recentlyMoving()) return true
         if (classifiedState == DevicePhysicalState.STATIONARY) return false
-        if ((fix.speedMps ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS && heuristics.recentlyMoving()) return true
         return isConfident && (fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS
     }
 }

@@ -27,6 +27,8 @@ data class StateFeatureInput(
     val networkTransport: NetworkTransport?,
     val hasCellService: Boolean?,
     val cellSignalDbm: Int?,
+    /** Whether recent fixes show real net translation — corroborates (or overrides) an AR STILL. */
+    val translating: Boolean = false,
 )
 
 /**
@@ -43,11 +45,31 @@ data class StateFeatureInput(
 class HeuristicClassifier @Inject constructor() {
 
     fun classifyState(input: StateFeatureInput): StateClassification {
-        val speed = input.speedMps ?: input.speedMeanMps
         val arStrong = (input.arConfidence ?: 0) >= 70
         val ar = input.arActivity?.uppercase()
         val accuracyTrust = accuracyTrust(input.horizontalAccuracyMeters)
 
+        // AR is the movement authority (debounced + motion-trained), so a strong AR verdict wins BEFORE
+        // GPS speed -- indoor multipath Doppler must not override a correct STILL (the 06-13 phantom
+        // that stamped WALKING/CYCLING on a motionless phone). But STILL is corroborated with net
+        // displacement: on a slow/smooth ride AR mislabels STILL, so when the position is actually
+        // progressing ([input.translating]) we fall through to the speed branch instead of stamping
+        // STATIONARY on a moving vehicle. A poor radius only lowers STILL *confidence*. Speed/IMU are
+        // the fallback below, for when AR is weak/absent (permission off, cold-start silence, no-AR OEM).
+        if (arStrong) {
+            when (ar) {
+                "STILL" -> if (!input.translating) {
+                    return StateClassification(DevicePhysicalState.STATIONARY, 0.8f * accuracyTrust)
+                }
+
+                "WALKING", "ON_FOOT" -> return StateClassification(DevicePhysicalState.WALKING, 0.72f)
+                "RUNNING" -> return StateClassification(DevicePhysicalState.RUNNING, 0.72f)
+                "ON_BICYCLE" -> return StateClassification(DevicePhysicalState.CYCLING, 0.7f)
+                "IN_VEHICLE" -> return StateClassification(DevicePhysicalState.IN_VEHICLE, 0.75f)
+            }
+        }
+
+        val speed = input.speedMps ?: input.speedMeanMps
         if (speed >= 1.0f || input.speedMaxMps >= 1.4f) {
             return when {
                 speed < 2.8f -> StateClassification(DevicePhysicalState.WALKING, 0.72f)
@@ -59,37 +81,12 @@ class HeuristicClassifier @Inject constructor() {
             }
         }
 
-        // Trust a strong Activity Recognition signal first, but don't let a poor location radius
-        // turn an uncertain walking fix into a confident stationary sample.
-        if (arStrong) {
-            when (ar) {
-                "STILL" -> return StateClassification(
-                    DevicePhysicalState.STATIONARY,
-                    0.8f * accuracyTrust,
-                )
-
-                "WALKING", "ON_FOOT" -> return StateClassification(
-                    DevicePhysicalState.WALKING,
-                    0.72f
-                )
-
-                "RUNNING" -> return StateClassification(DevicePhysicalState.RUNNING, 0.72f)
-                "ON_BICYCLE" -> return StateClassification(DevicePhysicalState.CYCLING, 0.7f)
-                "IN_VEHICLE" -> return StateClassification(DevicePhysicalState.IN_VEHICLE, 0.75f)
-            }
-        }
-
-        // Otherwise fall back to speed + motion energy.
-        return when {
-            speed < 0.5f && input.motionVariance < 1.5f ->
-                StateClassification(DevicePhysicalState.STATIONARY, 0.7f * accuracyTrust)
-
-            speed < 2.5f -> StateClassification(DevicePhysicalState.WALKING, 0.55f)
-            speed < 6.0f && input.motionVariance > 4f ->
-                StateClassification(DevicePhysicalState.RUNNING, 0.5f)
-
-            speed < 8.0f -> StateClassification(DevicePhysicalState.CYCLING, 0.45f)
-            else -> StateClassification(DevicePhysicalState.IN_VEHICLE, 0.6f)
+        // AR weak/absent (or AR-STILL-while-translating with no GPS speed): only still vs slow on-foot
+        // is left at sub-walking speed -- faster modes always carry speed >= 1.0 and are handled above.
+        return if (speed < 0.5f && input.motionVariance < 1.5f) {
+            StateClassification(DevicePhysicalState.STATIONARY, 0.7f * accuracyTrust)
+        } else {
+            StateClassification(DevicePhysicalState.WALKING, 0.55f)
         }
     }
 

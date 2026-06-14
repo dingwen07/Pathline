@@ -38,8 +38,8 @@ class RecordingPolicyTest {
         isConfident = confident,
     )
 
-    private fun feed(atSec: Long, motionVariance: Float = 0f, fix: ClassifiedFix) =
-        policy.onFixes(listOf(fix), motionVariance, t0 + atSec * 1000)
+    private fun feed(atSec: Long, motionVariance: Float = 0f, stepDelta: Int = 0, fix: ClassifiedFix) =
+        policy.onFixes(listOf(fix), motionVariance, t0 + atSec * 1000, stepDelta)
 
     /** A bare confirming fix for the geofence-exit check (no classification needed). */
     private fun freshFix(lat: Double = 40.0, lon: Double = -74.0, accuracy: Float? = 10f, speed: Float? = 0f) =
@@ -79,10 +79,47 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun idleTimeoutSuppressedWhileImuActive() {
-        // A shaking phone (high motion variance) is not "parked", so no self-demotion.
-        for (sec in 0L..300L step 30) feed(sec, motionVariance = 5f, fix = fix(sec, accuracy = 120f))
+    fun idleTimeoutFiresOnVibrationWithoutSteps() {
+        // Review #2: vibration alone (a phone on an idling-car seat / a washing machine) is NOT travel.
+        // High IMU energy with no steps and no net displacement must still self-demote, not pin the
+        // cadence — raw motionVariance is no longer treated as "moving".
+        var sawDemote = false
+        for (sec in 0L..300L step 30) {
+            val actions = feed(sec, motionVariance = 5f, fix = fix(sec, accuracy = 120f))
+            if (actions.any { it is RecordingAction.EnterStationary }) sawDemote = true
+        }
+        assertTrue("vibration without steps/displacement must self-demote", sawDemote)
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun idleTimeoutSuppressedWhileStepping() {
+        // Real walking (steps) holds off the self-demote even when GPS is too coarse to show net
+        // displacement — steps are motion evidence that vibration is not.
+        for (sec in 0L..300L step 30) feed(sec, motionVariance = 5f, stepDelta = 10, fix = fix(sec, accuracy = 120f))
         assertEquals(RecorderState.UNKNOWN, policy.state)
+    }
+
+    @Test
+    fun arMovingOscillationDoesNotPinMoving() {
+        // Review #1: AR oscillating between moving activities (WALKING<->VEHICLE) without ever emitting
+        // STILL must NOT pin MOVING. AR-moving no longer resets the quiet clock, so a still phone still
+        // self-demotes on the budget despite continuous AR jitter — the precise drain it exists to kill.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)
+        var demoted = false
+        var sec = 10L
+        while (sec * 1000 <= Constants.MOVING_IDLE_TIMEOUT_MS + 60_000) {
+            if (sec % 60 == 10L) {  // a spurious AR-moving ENTER every minute, never a STILL
+                val act = if ((sec / 60) % 2 == 0L) ArActivity.WALKING else ArActivity.IN_VEHICLE
+                policy.onArTransitions(listOf(act to true), t0 + sec * 1000)
+            }
+            val actions = feed(sec, motionVariance = 0f, fix = fix(sec, accuracy = 120f, speed = null, state = DevicePhysicalState.STATIONARY))
+            if (actions.any { it is RecordingAction.EnterStationary && it.reason == "moving_idle_timeout" }) demoted = true
+            if (policy.state == RecorderState.STATIONARY) break
+            sec += 20
+        }
+        assertTrue("AR-moving oscillation must not block the self-demote", demoted)
+        assertEquals(RecorderState.STATIONARY, policy.state)
     }
 
     @Test
@@ -223,6 +260,18 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
         val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.0001, speed = 8f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun verifyDoesNotConfirmOnCoarseOutlier() {
+        // Review #A: a coarse fix far from the anchor (200 m accuracy, often later excluded as
+        // low_accuracy) is indoor multipath, not a departure — it must NOT confirm verification.
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.02, accuracy = 200f, speed = 0f))
+        assertTrue("a coarse outlier must not confirm a departure", actions.isEmpty())
         assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
     }
 

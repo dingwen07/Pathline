@@ -469,11 +469,15 @@ class RecordingController @Inject constructor(
             true // phone is shaking — a real walk; let the burst confirm vs. mere handling
         } else {
             // Still phone: confirm a possible smooth departure against one fresh fix before bursting.
+            // The fix must be positionally trustworthy — a coarse outlier (often later excluded as
+            // low_accuracy) is indoor multipath, not a departure, and must not ramp the cadence.
             val fresh = getCurrentLocation()
-            fresh != null && !heuristics.isWithinStay(
-                fresh.latitude, fresh.longitude,
-                if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
-            )
+            fresh != null &&
+                (if (fresh.hasAccuracy()) fresh.accuracy else Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
+                !heuristics.isWithinStay(
+                    fresh.latitude, fresh.longitude,
+                    if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
+                )
         }
         if (movingHint) {
             AppLog.i(TAG, "significant motion — verifying departure")
@@ -577,6 +581,9 @@ class RecordingController @Inject constructor(
                     networkTransport = context.networkTransport,
                     hasCellService = context.hasCellService,
                     cellSignalDbm = context.cellSignalDbm,
+                    // Net translation corroborates/overrides an AR STILL: don't stamp STATIONARY on a
+                    // slow/smooth ride AR mislabels STILL. (Reflects the buffer before this batch.)
+                    translating = heuristics.recentlyMoving(),
                 ),
             )
             if (classification.state != DevicePhysicalState.STATIONARY) {
@@ -608,7 +615,11 @@ class RecordingController @Inject constructor(
         locationRepository.recordAll(toPersist)
 
         // The policy buffers the fixes and decides the state (stay/leave/settle/idle-timeout).
-        executeActions(policy.onFixes(classifiedFixes, motionVariance, System.currentTimeMillis()))
+        // stepDelta is motion evidence (real walking) the policy uses to hold off the self-demote —
+        // unlike raw IMU energy, steps don't fire on a vibrating-but-stationary surface.
+        executeActions(
+            policy.onFixes(classifiedFixes, motionVariance, System.currentTimeMillis(), stepDelta ?: 0),
+        )
         // Keep the FGS notification + cadence in sync even when no transition fired (e.g. the
         // movement badge was refined while staying MOVING).
         refreshServiceState()
@@ -665,6 +676,15 @@ class RecordingController @Inject constructor(
         if (locationRepository.mostRecent() == null) {
             getCurrentLocation()?.let { handleLocationsCore(listOf(it)) }
         }
+        if (action.armSigMotion) {
+            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence. Armed BEFORE the
+            // anchor bail-out below — significant motion needs no position, so a cold-start STILL with
+            // no fix yet still gets departure wakeups (the geofence does need an anchor). One-shot; a
+            // genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
+            cancelSigMotionRearm()
+            resetSigMotionBackoff()
+            significantMotionManager.arm { handleSignificantMotion() }
+        }
         val anchor = action.candidate ?: locationRepository.mostRecent()?.let {
             VisitCandidate(
                 startMs = it.timestampMs,
@@ -679,13 +699,6 @@ class RecordingController @Inject constructor(
         // (Doze / idle-timeout) seed it from the resolved anchor here.
         if (action.candidate == null) {
             heuristics.stationaryAnchor = anchor.centroidLatitude to anchor.centroidLongitude
-        }
-        if (action.armSigMotion) {
-            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence. One-shot; a
-            // genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
-            cancelSigMotionRearm()
-            resetSigMotionBackoff()
-            significantMotionManager.arm { handleSignificantMotion() }
         }
         workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.startMs), action.reason)
     }
