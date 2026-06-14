@@ -86,9 +86,10 @@ internal class RecordingPolicy(
 
     /**
      * Activity Recognition transitions (most-recent last). Each is recorded on the AR timeline; the
-     * latest ENTER drives the decision. STILL is trusted only when recent fixes have settled (a
-     * smooth light-rail ride makes AR flap STILL); unambiguous motion (run/cycle/vehicle) leaves the
-     * stay immediately; walking from a stay is verified first (it can be in-place dwell jitter).
+     * latest ENTER drives the decision. STILL is trusted only when recent fixes have settled and no
+     * departure verification is in flight (a smooth light-rail ride makes AR flap STILL); unambiguous
+     * motion (run/cycle/vehicle) leaves the stay immediately; walking from a stay is verified first
+     * (it can be in-place dwell jitter).
      */
     fun onArTransitions(transitions: List<Pair<ArActivity, Boolean>>, nowMs: Long): List<RecordingAction> {
         for ((activity, isEnter) in transitions) {
@@ -100,7 +101,7 @@ internal class RecordingPolicy(
         if (!last.second) return emptyList()
         return when (last.first) {
             ArActivity.STILL ->
-                if (heuristics.recentlyMoving()) emptyList()
+                if (state == RecorderState.VERIFYING_DEPARTURE || heuristics.recentlyMoving()) emptyList()
                 else toStationary(heuristics.stationaryClusterCandidate(), "ar_still")
 
             ArActivity.WALKING ->

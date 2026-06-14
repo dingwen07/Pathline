@@ -80,13 +80,9 @@ class RecordingController @Inject constructor(
     @Volatile
     private var latestMovingClassification: DevicePhysicalState? = null
 
-    /** The most recent AR activity + a nominal confidence, fed to the per-sample classifier. Kept as
-     *  the raw AR name (e.g. ON_BICYCLE) the classifier matches; the policy uses its own AR timeline. */
-    @Volatile
-    private var lastArActivity: String? = null
-
-    @Volatile
-    private var lastArConfidence: Int? = null
+    /** Latest active AR activity evidence for the per-sample classifier. Kept as the raw AR name
+     *  (e.g. ON_BICYCLE) the classifier matches; the policy uses its own AR timeline. */
+    private val arEvidence = LatestArEvidence()
 
     /** Mirror of the (state, display) last pushed to the service, so we only retune on real change. */
     @Volatile
@@ -397,18 +393,24 @@ class RecordingController @Inject constructor(
             AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
             return@withLock
         }
-        // Feed the per-sample classifier the raw name of the latest ENTER (it matches names like
+        val nowMs = System.currentTimeMillis()
+        // Feed the per-sample classifier the raw active AR name (it matches names like
         // ON_BICYCLE/ON_FOOT), while the policy gets the de-Android-ised ArActivity transitions.
-        events.lastOrNull { it.second == ActivityTransition.ACTIVITY_TRANSITION_ENTER }?.let { (type, _) ->
-            lastArActivity = arName(type)
-            lastArConfidence = 90
-            AppLog.i(TAG, "AR transition ENTER ${arName(type)}")
+        for ((type, transitionType) in events) {
+            val name = arName(type)
+            if (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) {
+                arEvidence.enter(name, confidence = 90)
+                AppLog.i(TAG, "AR transition ENTER $name")
+            } else {
+                arEvidence.exit(name)
+                AppLog.i(TAG, "AR transition EXIT $name")
+            }
         }
         val transitions = events.mapNotNull { (type, transitionType) ->
             arActivityOf(type)?.let { it to (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) }
         }
         if (transitions.isEmpty()) return@withLock
-        executeActions(policy.onArTransitions(transitions, System.currentTimeMillis()))
+        executeActions(policy.onArTransitions(transitions, nowMs))
     }
 
     /**
@@ -568,6 +570,7 @@ class RecordingController @Inject constructor(
             // Pass the fix time (speed-bearing or not) so stale speeds age out even when Doppler stalls.
             val (mean, max, variance) = heuristics.speedStats(location.time)
 
+            val ar = arEvidence.current()
             val classification = classifier.classifyState(
                 StateFeatureInput(
                     speedMps = speed,
@@ -576,8 +579,8 @@ class RecordingController @Inject constructor(
                     speedVariance = variance,
                     motionVariance = motionVariance,
                     horizontalAccuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
-                    arActivity = lastArActivity,
-                    arConfidence = lastArConfidence,
+                    arActivity = ar.activity,
+                    arConfidence = ar.confidence,
                     networkTransport = context.networkTransport,
                     hasCellService = context.hasCellService,
                     cellSignalDbm = context.cellSignalDbm,
@@ -652,8 +655,17 @@ class RecordingController @Inject constructor(
 
     /** The VERIFYING_DEPARTURE deadline fired: ask the policy to revert if still unconfirmed. */
     private suspend fun onVerifyDeadline() = stateMutex.withLock {
-        if (!recorderService.isRecording) return@withLock
-        executeActions(policy.onVerifyDeadline(System.currentTimeMillis()))
+        val actions = policy.onVerifyDeadline(System.currentTimeMillis())
+        if (actions.isEmpty()) return@withLock
+        if (!settingsRepository.settings.first().trackingEnabled) {
+            AppLog.i(TAG, "verify deadline — policy reverted while tracking disabled; side effects skipped")
+            return@withLock
+        }
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "verify deadline — policy reverted while autostart suppressed; side effects skipped")
+            return@withLock
+        }
+        executeActions(actions)
     }
 
     // --- action interpreter -------------------------------------------------------------------
@@ -766,7 +778,7 @@ class RecordingController @Inject constructor(
         // "Moving" for a moving cadence. This is display only — persisted samples use the per-fix
         // classifier verdict, never this value.
         RecorderState.MOVING ->
-            latestMovingClassification?.takeUnless { lastArActivity == AR_STILL }
+            latestMovingClassification?.takeUnless { arEvidence.isActivity(AR_STILL) }
                 ?: DevicePhysicalState.UNKNOWN
         RecorderState.VERIFYING_DEPARTURE, RecorderState.UNKNOWN -> DevicePhysicalState.UNKNOWN
     }
@@ -868,41 +880,44 @@ class RecordingController @Inject constructor(
         state: DevicePhysicalState,
         confidence: Float,
         stepDelta: Int?,
-    ): LocationSampleEntity = LocationSampleEntity(
-        timestampMs = location.time,
-        dayEpoch = TimeBuckets.dayEpoch(location.time),
-        latitude = location.latitude,
-        longitude = location.longitude,
-        altitude = if (location.hasAltitude()) location.altitude else null,
-        accuracy = if (location.hasAccuracy()) location.accuracy else null,
-        verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
-        bearing = if (location.hasBearing()) location.bearing else null,
-        bearingAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees else null,
-        speed = if (location.hasSpeed()) location.speed else null,
-        speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond else null,
-        provider = location.provider,
-        isMock = location.isMock,
-        elapsedRealtimeNanos = location.elapsedRealtimeNanos,
-        satelliteCount = location.extras?.getInt("satellites")?.takeIf { it > 0 },
-        batteryPct = context.batteryPct,
-        isCharging = context.isCharging,
-        networkTransport = context.networkTransport,
-        networkTypeName = context.networkTypeName,
-        cellSignalDbm = context.cellSignalDbm,
-        hasCellService = context.hasCellService,
-        wifiSsid = context.wifiSsid,
-        wifiBssid = context.wifiBssid,
-        screenOn = context.screenOn,
-        arActivity = lastArActivity,
-        arConfidence = lastArConfidence,
-        devicePhysicalState = state,
-        devicePhysicalStateConfidence = confidence,
-        motionVariance = burst.accelVariance,
-        stepCadenceHz = burst.stepCadenceHz,
-        gravityAngleDeltaDeg = burst.gravityAngleDeltaDeg,
-        pressureHpa = burst.pressureHpa,
-        stepDelta = stepDelta,
-    )
+    ): LocationSampleEntity {
+        val ar = arEvidence.current()
+        return LocationSampleEntity(
+            timestampMs = location.time,
+            dayEpoch = TimeBuckets.dayEpoch(location.time),
+            latitude = location.latitude,
+            longitude = location.longitude,
+            altitude = if (location.hasAltitude()) location.altitude else null,
+            accuracy = if (location.hasAccuracy()) location.accuracy else null,
+            verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
+            bearing = if (location.hasBearing()) location.bearing else null,
+            bearingAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees else null,
+            speed = if (location.hasSpeed()) location.speed else null,
+            speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond else null,
+            provider = location.provider,
+            isMock = location.isMock,
+            elapsedRealtimeNanos = location.elapsedRealtimeNanos,
+            satelliteCount = location.extras?.getInt("satellites")?.takeIf { it > 0 },
+            batteryPct = context.batteryPct,
+            isCharging = context.isCharging,
+            networkTransport = context.networkTransport,
+            networkTypeName = context.networkTypeName,
+            cellSignalDbm = context.cellSignalDbm,
+            hasCellService = context.hasCellService,
+            wifiSsid = context.wifiSsid,
+            wifiBssid = context.wifiBssid,
+            screenOn = context.screenOn,
+            arActivity = ar.activity,
+            arConfidence = ar.confidence,
+            devicePhysicalState = state,
+            devicePhysicalStateConfidence = confidence,
+            motionVariance = burst.accelVariance,
+            stepCadenceHz = burst.stepCadenceHz,
+            gravityAngleDeltaDeg = burst.gravityAngleDeltaDeg,
+            pressureHpa = burst.pressureHpa,
+            stepDelta = stepDelta,
+        )
+    }
 
     /** Map a GMS `DetectedActivity` to the policy's [ArActivity], or null for untracked activities. */
     private fun arActivityOf(activityType: Int): ArActivity? = when (activityType) {

@@ -213,6 +213,18 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
     }
 
+    @Test
+    fun arStillDoesNotAbortDepartureVerification() {
+        enterStationary()
+        assertTrue(policy.onSignificantMotion(t0 + 250_000).any { it is RecordingAction.BeginVerifying })
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+
+        val actions = policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 251_000)
+
+        assertTrue("STILL must not abort the in-flight verify burst", actions.isEmpty())
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+    }
+
     // ---- departure verification -----------------------------------------------------------------
 
     @Test
