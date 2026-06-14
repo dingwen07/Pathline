@@ -166,15 +166,15 @@ class TimelineMerger @Inject constructor(
             // The no-trip bridge is capped like the trip side's MERGE_GAP_MS: beyond
             // MAX_EVIDENCE_GAP_MS with no samples, presence is no longer assumed, so a recording
             // outage between two real same-place stays must not weld them into one.
-            // A pair the user confirmed on BOTH sides relaxes the cap from *quality* to *presence*:
-            // sample quality becomes irrelevant (the gap cap guards the automated pipeline against
-            // poor evidence, and the user has overridden that judgment), but samples consistent
-            // with the place must still EXIST through the gap — confirming "morning at home" and
-            // "evening at home" around a recording-off hole asserts two valid rows, not continuity,
-            // and must not weld into a fabricated all-day stay. The no-trip-between requirement
-            // always applies, so a confirmed round trip never welds either.
+            // A pair the user confirmed to the same saved place bypasses the automated evidence-gap
+            // cap. Confirmed candidate-name pairs are still presence-strict: they need consistent
+            // samples through the gap. The no-trip-between requirement always applies, so a confirmed
+            // round trip never welds either.
             val bothConfirmed = a.confirmed && b.confirmed
-            val bridgeableGap = b.startMs - a.endMs <= Constants.MAX_EVIDENCE_GAP_MS ||
+            val confirmedSameSavedPlace =
+                bothConfirmed && a.placeId != null && a.placeId == b.placeId
+            val bridgeableGap = confirmedSameSavedPlace ||
+                    b.startMs - a.endMs <= Constants.MAX_EVIDENCE_GAP_MS ||
                     (bothConfirmed && evidenceBridges(a, b.startMs))
             if (overlapsOrTouches || (bridgeableGap && !tripExistsBetween(
                     spanStartMs,

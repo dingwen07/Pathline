@@ -159,26 +159,55 @@ class TimelineMergerTest {
     }
 
     @Test
-    fun confirmedPair_recordingOffGap_staysSplit() {
-        // No samples at all through the 64-min hole: confirming both rows asserts two valid
-        // visits, not continuity — a fabricated all-day weld must not happen.
+    fun confirmedSameSavedPlacePair_recordingOffGap_merges() {
+        // The user confirmed both rows to the same saved place. With no trip between them, that
+        // explicit place confirmation wins over the automated evidence-gap cap.
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
             visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = true),
         )
         merge()
-        assertEquals(2, visitDao.visits.size)
+        val v = visitDao.visits.single()
+        assertEquals(1L, v.id)
+        assertEquals(t0 + 4 * hour, v.endMs)
+        assertTrue(v.confirmed)
     }
 
     @Test
-    fun confirmedPair_gapEvidenceElsewhere_staysSplit() {
-        // Samples exist through the gap but ~1.1 km from the place: that's evidence of absence,
-        // not presence — the confirmed pair stays split.
+    fun confirmedSameSavedPlacePair_gapEvidenceElsewhere_merges() {
+        // The raw gap evidence is inconsistent, but both visits are explicitly confirmed to the same
+        // saved place and no trip was recorded between them.
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
             visit(id = 2, start = t0 + hour + 64 * 60_000L, end = t0 + 4 * hour, confirmed = true),
         )
         gapSample(t0 + hour + 30 * 60_000L, lat = 1.01)
+        merge()
+        assertEquals(listOf(1L), visitDao.visits.map { it.id })
+    }
+
+    @Test
+    fun confirmedCandidateNamePair_recordingOffGap_staysSplit() {
+        // The unbounded bypass is only for saved places. A candidate-name match still needs
+        // continuity evidence so two confirmed free-text/suggested rows don't fabricate presence.
+        visitDao.seed(
+            visit(
+                id = 1,
+                start = t0,
+                end = t0 + hour,
+                placeId = null,
+                candidateName = "Cafe X",
+                confirmed = true,
+            ),
+            visit(
+                id = 2,
+                start = t0 + hour + 64 * 60_000L,
+                end = t0 + 4 * hour,
+                placeId = null,
+                candidateName = "Cafe X",
+                confirmed = true,
+            ),
+        )
         merge()
         assertEquals(2, visitDao.visits.size)
     }
@@ -251,7 +280,7 @@ class TimelineMergerTest {
         // No trip between them, but the 2h sample-free gap exceeds MAX_EVIDENCE_GAP_MS: presence
         // across the gap is not assumed, so the two real stays must not be welded into one.
         // One row unconfirmed: the cap binds whenever the pairing isn't a double user
-        // confirmation (a confirmed PAIR overrides it — see confirmedSamePlacePair_mergesAcrossAnyGap).
+        // confirmation to the same saved place.
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour, confirmed = true),
             visit(id = 2, start = t0 + 3 * hour, end = t0 + 4 * hour, confirmed = false),

@@ -125,6 +125,9 @@
     <string name="search_places_label">搜索地点</string>
     <string name="search_results_header">搜索结果（由近到远）</string>
     <string name="saved_places_nearest_header">已保存的地点（由近到远）</string>
+    <string name="nearby_show">显示附近地点</string>
+    <string name="nearby_loading">正在加载附近地点...</string>
+    <string name="nearby_empty">未找到附近地点。</string>
     <string name="nearby_header">附近（由近到远）</string>
     <string name="custom_places_header">自定义地点</string>
     <string name="custom_place_name_label">自定义地点名称</string>

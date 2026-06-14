@@ -20,12 +20,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import android.content.Context
 import androidx.compose.ui.Alignment
@@ -35,6 +37,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
@@ -65,16 +68,26 @@ fun ConfirmPlaceSheet(
     val anchor = remember(visit.id) {
         PlaceSearchAnchor(visit.centroidLatitude, visit.centroidLongitude)
     }
-    var nearby by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var nearby by remember(anchor) { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var nearbyRequested by remember(anchor) { mutableStateOf(false) }
+    var nearbyLoading by remember(anchor) { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var newName by remember { mutableStateOf(visit.candidateName ?: "") }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(visit.id) {
-        nearby = loadNearby(anchor.latitude, anchor.longitude)
+    fun requestNearby() {
+        if (nearbyRequested || nearbyLoading) return
+        nearbyRequested = true
+        nearbyLoading = true
+        scope.launch {
+            nearby = runCatching { loadNearby(anchor.latitude, anchor.longitude) }
+                .getOrDefault(emptyList())
+            nearbyLoading = false
+        }
     }
     // Debounced text search against the Maps API.
-    LaunchedEffect(query) {
+    LaunchedEffect(query, anchor) {
         if (query.isBlank()) {
             results = emptyList(); return@LaunchedEffect
         }
@@ -122,6 +135,12 @@ fun ConfirmPlaceSheet(
                     .padding(top = 8.dp),
             )
 
+            NearbyPlacesButton(
+                visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
+                loading = nearbyLoading,
+                onClick = ::requestNearby,
+            )
+
             LazyColumn(
                 Modifier
                     .heightIn(max = 380.dp)
@@ -152,13 +171,24 @@ fun ConfirmPlaceSheet(
                         ) { onConfirm(PlaceChoice.Existing(place.id)) }
                     }
                 }
-                if (query.isBlank() && nearby.isNotEmpty()) {
-                    item { SectionLabel(stringResource(R.string.nearby_header)) }
-                    items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) {
-                            onConfirm(
-                                PlaceChoice.Google(c)
+                if (query.isBlank() && nearbyRequested) {
+                    if (nearbyLoading) {
+                        item { SectionLabel(stringResource(R.string.nearby_loading)) }
+                    } else if (nearby.isEmpty()) {
+                        item {
+                            Text(
+                                stringResource(R.string.nearby_empty),
+                                modifier = Modifier.padding(top = 8.dp),
                             )
+                        }
+                    } else {
+                        item { SectionLabel(stringResource(R.string.nearby_header)) }
+                        items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
+                            PlaceRow(c.name, candidateSubtitle(context, anchor, c)) {
+                                onConfirm(
+                                    PlaceChoice.Google(c)
+                                )
+                            }
                         }
                     }
                 }
@@ -202,12 +232,22 @@ fun AddGooglePlaceSheet(
     onAdd: (PlaceCandidate) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var nearby by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var nearby by remember(anchor) { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var nearbyRequested by remember(anchor) { mutableStateOf(false) }
+    var nearbyLoading by remember(anchor) { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(anchor) {
-        nearby = loadNearby(anchor.latitude, anchor.longitude)
+    fun requestNearby() {
+        if (nearbyRequested || nearbyLoading) return
+        nearbyRequested = true
+        nearbyLoading = true
+        scope.launch {
+            nearby = runCatching { loadNearby(anchor.latitude, anchor.longitude) }
+                .getOrDefault(emptyList())
+            nearbyLoading = false
+        }
     }
     LaunchedEffect(query, anchor) {
         if (query.isBlank()) {
@@ -242,6 +282,12 @@ fun AddGooglePlaceSheet(
                     .padding(top = 8.dp),
             )
 
+            NearbyPlacesButton(
+                visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
+                loading = nearbyLoading,
+                onClick = ::requestNearby,
+            )
+
             LazyColumn(
                 Modifier
                     .heightIn(max = 380.dp)
@@ -253,14 +299,49 @@ fun AddGooglePlaceSheet(
                         PlaceRow(c.name, candidateSubtitle(context, anchor, c)) { onAdd(c) }
                     }
                 }
-                if (query.isBlank() && nearby.isNotEmpty()) {
-                    item { SectionLabel(stringResource(R.string.nearby_header)) }
-                    items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
-                        PlaceRow(c.name, candidateSubtitle(context, anchor, c)) { onAdd(c) }
+                if (query.isBlank() && nearbyRequested) {
+                    if (nearbyLoading) {
+                        item { SectionLabel(stringResource(R.string.nearby_loading)) }
+                    } else if (nearby.isEmpty()) {
+                        item {
+                            Text(
+                                stringResource(R.string.nearby_empty),
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    } else {
+                        item { SectionLabel(stringResource(R.string.nearby_header)) }
+                        items(nearby, key = { "g${it.googlePlaceId ?: it.name}" }) { c ->
+                            PlaceRow(c.name, candidateSubtitle(context, anchor, c)) { onAdd(c) }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NearbyPlacesButton(
+    visible: Boolean,
+    loading: Boolean,
+    onClick: () -> Unit,
+) {
+    if (!visible) return
+    OutlinedButton(
+        onClick = onClick,
+        enabled = !loading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+    ) {
+        Icon(Icons.Filled.Place, contentDescription = null)
+        Text(
+            stringResource(
+                if (loading) R.string.nearby_loading else R.string.nearby_show
+            ),
+            modifier = Modifier.padding(start = 8.dp),
+        )
     }
 }
 

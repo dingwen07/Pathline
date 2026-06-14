@@ -129,6 +129,9 @@
     <string name="search_places_label">Search places</string>
     <string name="search_results_header">Search results (nearest first)</string>
     <string name="saved_places_nearest_header">Saved places (nearest first)</string>
+    <string name="nearby_show">Show nearby places</string>
+    <string name="nearby_loading">Loading nearby places...</string>
+    <string name="nearby_empty">No nearby places found.</string>
     <string name="nearby_header">Nearby (nearest first)</string>
     <string name="custom_places_header">Custom places</string>
     <string name="custom_place_name_label">Custom place name</string>
