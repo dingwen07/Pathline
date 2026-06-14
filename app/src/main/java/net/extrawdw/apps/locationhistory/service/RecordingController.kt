@@ -560,8 +560,9 @@ class RecordingController @Inject constructor(
         val sorted = locations.sortedBy { it.time }
         for (location in sorted) {
             val speed = if (location.hasSpeed()) location.speed else null
-            speed?.let { heuristics.pushSpeed(it) }
-            val (mean, max, variance) = heuristics.speedStats()
+            speed?.let { heuristics.pushSpeed(it, location.time) }
+            // Pass the fix time (speed-bearing or not) so stale speeds age out even when Doppler stalls.
+            val (mean, max, variance) = heuristics.speedStats(location.time)
 
             val classification = classifier.classifyState(
                 StateFeatureInput(

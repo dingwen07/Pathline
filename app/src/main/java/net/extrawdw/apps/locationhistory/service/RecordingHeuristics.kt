@@ -32,7 +32,12 @@ internal class RecordingHeuristics {
 
     private val recentFixes = ArrayDeque<RecentFix>()
     private val fixLock = Any()
-    private val recentSpeeds = ArrayDeque<Float>()
+    // (timestamp, speed) pairs, pruned by BOTH time ([SPEED_WINDOW_MS]) and count ([SPEED_WINDOW]).
+    // Time pruning is essential: a still phone whose fused provider stops reporting Doppler speed
+    // (network/WiFi fixes) would otherwise FREEZE this window with whatever was last in it -- one
+    // stale speed spike then pinned the classifier to a moving verdict for hours (the 06-13 4h
+    // drain). Pruning by the latest fix's time lets the window drain to empty when speeds stop.
+    private val recentSpeeds = ArrayDeque<Pair<Long, Float>>()
     private val speedLock = Any()
 
     /** Centroid of the stay being guarded, or null when not stationary-anchored. */
@@ -58,48 +63,71 @@ internal class RecordingHeuristics {
         recentFixes.lastOrNull()?.let { it.lat to it.lon }
     }
 
-    fun pushSpeed(speed: Float) = synchronized(speedLock) {
-        recentSpeeds.addLast(speed)
+    fun pushSpeed(speed: Float, atMs: Long) = synchronized(speedLock) {
+        recentSpeeds.addLast(atMs to speed)
+        pruneSpeeds(atMs)
+    }
+
+    private fun pruneSpeeds(nowMs: Long) {
+        val cutoff = nowMs - SPEED_WINDOW_MS
+        while (recentSpeeds.isNotEmpty() && recentSpeeds.first().first < cutoff) recentSpeeds.removeFirst()
         while (recentSpeeds.size > SPEED_WINDOW) recentSpeeds.removeFirst()
     }
 
-    /** (mean, max, variance) over the recent speed window; zeros when empty. */
-    fun speedStats(): Triple<Float, Float, Float> = synchronized(speedLock) {
+    /**
+     * (mean, max, variance) over the recent speed window as of [nowMs]; zeros when empty. Prunes by
+     * [nowMs] FIRST so speeds that have aged past [SPEED_WINDOW_MS] stop counting even when no new
+     * speed has arrived to push them out -- the caller passes every fix's time (speed-bearing or not),
+     * so a stalled Doppler stream drains the window instead of freezing a stale moving verdict.
+     */
+    fun speedStats(nowMs: Long): Triple<Float, Float, Float> = synchronized(speedLock) {
+        pruneSpeeds(nowMs)
         if (recentSpeeds.isEmpty()) return Triple(0f, 0f, 0f)
-        val mean = recentSpeeds.average().toFloat()
-        val max = recentSpeeds.max()
-        val variance = recentSpeeds.map { (it - mean) * (it - mean) }.average().toFloat()
+        val speeds = recentSpeeds.map { it.second }
+        val mean = speeds.average().toFloat()
+        val max = speeds.max()
+        val variance = speeds.map { (it - mean) * (it - mean) }.average().toFloat()
         Triple(mean, max, variance)
     }
 
     /**
-     * True when fixes in the last [RECENT_MOTION_WINDOW_MS] show real movement (GPS speed or a spread
-     * beyond the stay radius) — used to reject a premature AR STILL while travelling, e.g. a light-rail
-     * ride that AR keeps mislabelling as STILL. Looks at a short recent window (not the full fix buffer)
-     * so a genuine stop still flips this false within ~the window once the device settles.
-     *
-     * Spread is *positional* evidence, so only positionally-trustworthy fixes may contribute:
-     * indoors, 100-200 m-accuracy fixes scatter far beyond the stay radius while the phone sits
-     * still, and counting them kept this true forever — every AR STILL was rejected, the recorder
-     * never dropped to the stationary cadence, and idle days recorded at a moving cadence (the
-     * June 2026 sample-volume explosion). The threshold is the noise-widened stay radius for the
-     * same reason. GPS speed (Doppler) is not position-derived and keeps using every fix.
+     * True when recent fixes show the device actually TRANSLATED across space -- the GPS corroborator
+     * that overrides a false AR STILL during a smooth ride (which AR mislabels STILL) and keeps a real
+     * trip out of the stationary cadence. GPS speed alone is deliberately NOT trusted: indoor multipath
+     * fakes Doppler speed AND scatters position far beyond the stay while the phone sits still (the
+     * 06-13 phantom-speed drain, GPS reporting up to 31 m/s with the centroid fixed at home), and raw
+     * spread is fooled the same way -- both kept this true forever, pinning the moving cadence on idle
+     * days. Net displacement (see [recentNetDisplacementMeters]) cancels that zero-mean scatter, so
+     * only genuine progress beyond the noise-widened stay radius counts as movement.
      */
-    fun recentlyMoving(): Boolean = synchronized(fixLock) {
-        if (recentFixes.isEmpty()) return false
-        val cutoff = recentFixes.last().t - RECENT_MOTION_WINDOW_MS
-        val recent = recentFixes.filter { it.t >= cutoff }
-        if (recent.size < 2) return false
-        val maxSpeed = recent.mapNotNull { it.speedMps }.maxOrNull() ?: 0f
-        if (maxSpeed >= 1.5f) return true
-        val trusted = recent.filter {
-            (it.accuracyMeters ?: 30f) <= Constants.SAMPLE_ACCURACY_GATE_METERS
+    fun recentlyMoving(): Boolean =
+        recentNetDisplacementMeters(RECENT_MOTION_WINDOW_MS) > stationaryNoiseRadius()
+
+    /**
+     * Net displacement (m) over the last [windowMs]: distance between the centroid of the first half
+     * and the centroid of the last half of the positionally-trustworthy fixes in the window. Averaging
+     * each half cancels zero-mean GPS multipath scatter (which inflates raw spread to hundreds of
+     * metres on a still phone -- the 06-13 drain saw centroid-fixed scatter while GPS reported 31 m/s),
+     * so only a real, progressing translation registers. GPS speed is deliberately NOT consulted here:
+     * indoor multipath fakes Doppler on a motionless phone, so position progress is the only honest
+     * movement evidence. 0 when too few trustworthy fixes to judge -- which reads as "not moving",
+     * biasing toward low power (avoiding drain matters more than catching every slow departure).
+     */
+    fun recentNetDisplacementMeters(windowMs: Long): Double = synchronized(fixLock) {
+        if (recentFixes.isEmpty()) return 0.0
+        val cutoff = recentFixes.last().t - windowMs
+        val trusted = recentFixes.filter {
+            it.t >= cutoff && (it.accuracyMeters ?: 30f) <= Constants.SAMPLE_ACCURACY_GATE_METERS
         }
-        if (trusted.size < 2) return false
-        val spread = trusted.maxOf { a ->
-            trusted.maxOf { b -> Geo.distanceMeters(a.lat, a.lon, b.lat, b.lon) }
-        }
-        spread > stationaryNoiseRadius()
+        if (trusted.size < 2) return 0.0
+        val half = maxOf(trusted.size / 2, 1)
+        val a = trusted.subList(0, half)
+        val b = trusted.subList(half, trusted.size)
+        val aLat = a.sumOf { it.lat } / a.size
+        val aLon = a.sumOf { it.lon } / a.size
+        val bLat = b.sumOf { it.lat } / b.size
+        val bLon = b.sumOf { it.lon } / b.size
+        Geo.distanceMeters(aLat, aLon, bLat, bLon)
     }
 
     /**
@@ -175,11 +203,19 @@ internal class RecordingHeuristics {
      * stay to be within, so this is false (a departure is never suppressed for lack of an anchor).
      */
     fun isWithinStay(lat: Double, lon: Double, speedMps: Float, motionVariance: Float): Boolean {
-        if (speedMps >= Constants.DRIFT_MOVING_SPEED_MPS) return false
+        // A physically shaking phone has really left -- IMU energy can't be faked by GPS multipath.
         if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return false
         val anchor = stationaryAnchor ?: return false
         val d = Geo.distanceMeters(anchor.first, anchor.second, lat, lon)
-        return d < stationaryNoiseRadius()
+        // Positionally outside the (noise-widened) stay -> left.
+        if (d >= stationaryNoiseRadius()) return false
+        // Near the anchor with a quiet IMU: still here even when GPS reports speed. Bare Doppler is
+        // phantom indoors, so only believe a speed-driven departure when the position is ACTUALLY
+        // progressing (net displacement), not oscillating in place (the 06-13 phantom-speed exits).
+        if (speedMps >= Constants.DRIFT_MOVING_SPEED_MPS &&
+            recentNetDisplacementMeters(RECENT_MOTION_WINDOW_MS) >= stationaryNoiseRadius()
+        ) return false
+        return true
     }
 
     /**
@@ -207,6 +243,7 @@ internal class RecordingHeuristics {
 
     companion object {
         const val SPEED_WINDOW = 10
+        const val SPEED_WINDOW_MS = 90_000L  // time bound on the speed window (drains when Doppler stalls)
         const val FIX_WINDOW_MS = 6 * 60_000L
         const val RECENT_MOTION_WINDOW_MS = 90_000L
         const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius

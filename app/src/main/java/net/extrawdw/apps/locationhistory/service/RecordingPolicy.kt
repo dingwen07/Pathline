@@ -70,8 +70,16 @@ internal class RecordingPolicy(
 
     private val arTimeline = ArActivityTimeline()
 
-    /** When the current UNKNOWN spell began (first event seen while UNKNOWN), for the idle timeout. */
-    private var unknownSinceMs: Long? = null
+    /**
+     * When the current quiet spell began -- the first fix seen in a non-STATIONARY state with no
+     * confirmed motion since. Drives the idle-timeout self-demote that returns the recorder to low
+     * power when a departure hint (geofence / significant-motion) or an AR-jitter / phantom-speed
+     * spell is not sustained by real movement. Reset to the current time whenever a fix actually shows
+     * motion, and cleared on entering STATIONARY. This is the architectural backstop behind
+     * AR-as-authority: NO hint can hold the high-power cadence indefinitely -- only continuous
+     * AR-moving or net displacement keeps it alive (the 06-13 multi-hour drains).
+     */
+    private var quietSinceMs: Long? = null
 
     // --- events ---------------------------------------------------------------------------------
 
@@ -107,7 +115,7 @@ internal class RecordingPolicy(
     fun onFixes(fixes: List<ClassifiedFix>, motionVariance: Float, nowMs: Long): List<RecordingAction> {
         if (fixes.isEmpty()) return emptyList()
         for (cf in fixes) heuristics.pushFix(cf.fix)
-        if (state == RecorderState.UNKNOWN && unknownSinceMs == null) unknownSinceMs = nowMs
+        if (state != RecorderState.STATIONARY && quietSinceMs == null) quietSinceMs = nowMs
 
         val movingFix = fixes.firstOrNull { it.indicatesMotion() }
         return when (state) {
@@ -137,15 +145,23 @@ internal class RecordingPolicy(
                     }
                 ) toMoving("verify_confirmed") else emptyList()
 
-            RecorderState.MOVING ->
-                if (movingFix != null) emptyList()
-                else heuristics.stationaryClusterCandidate()
-                    ?.let { toStationary(it, "fix_cluster") } ?: emptyList()
+            // High-power MOVING is not self-sustaining: it must be continuously justified by a fix that
+            // actually shows motion. A real motion fix restarts the quiet clock; otherwise we try to
+            // settle (cluster) and, failing that, self-demote once the device has been quiet for
+            // MOVING_IDLE_TIMEOUT_MS -- so a departure hint or a phantom-speed / AR-jitter spell can no
+            // longer pin the costly cadence for hours (06-13), AR-silent or not.
+            RecorderState.MOVING -> when {
+                movingFix != null -> { quietSinceMs = nowMs; emptyList() }
+                else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
+                    ?: if (idleElapsed(nowMs, Constants.MOVING_IDLE_TIMEOUT_MS) && isQuiet(nowMs, motionVariance))
+                        toStationary(null, "moving_idle_timeout")
+                    else emptyList()
+            }
 
             RecorderState.UNKNOWN -> when {
                 movingFix != null -> toMoving("fix_departure")
                 else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
-                    ?: if (unknownIdleElapsed(nowMs) && isQuiet(nowMs, motionVariance))
+                    ?: if (idleElapsed(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS) && isQuiet(nowMs, motionVariance))
                         toStationary(null, "unknown_idle_timeout")
                     else emptyList()
             }
@@ -171,15 +187,14 @@ internal class RecordingPolicy(
         // BEFORE the null-fix bailout so a real walk out of a dead zone is not discarded as drift.
         if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return toMoving("geofence_exit")
         val f = freshFix ?: return emptyList()
-        val speed = f.speedMps ?: 0f
+        // A single GPS-speed reading is NOT enough to confirm -- indoor multipath fakes Doppler on a
+        // still phone (the 06-13 phantom-speed exits). Confirm only on a positionally-trustworthy fix
+        // that has actually left the stay: outside the noise radius, or a speed corroborated by net
+        // displacement (both via the net-aware isWithinStay). Otherwise stay put and re-arm the fence.
         val trustedDisplacement =
             (f.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                !heuristics.isWithinStay(f.lat, f.lon, speed, motionVariance)
-        return if (speed >= Constants.DRIFT_MOVING_SPEED_MPS || trustedDisplacement) {
-            toMoving("geofence_exit")
-        } else {
-            emptyList()
-        }
+                !heuristics.isWithinStay(f.lat, f.lon, f.speedMps ?: 0f, motionVariance)
+        return if (trustedDisplacement) toMoving("geofence_exit") else emptyList()
     }
 
     /**
@@ -236,7 +251,7 @@ internal class RecordingPolicy(
     ): List<RecordingAction> {
         if (state == RecorderState.STATIONARY) return emptyList()
         state = RecorderState.STATIONARY
-        unknownSinceMs = null
+        quietSinceMs = null
         // Anchor the drift guard. Prefer the cluster centroid; otherwise the latest buffered fix
         // (Doze/idle-timeout paths); null leaves drift undecidable, which never *suppresses* a departure.
         heuristics.stationaryAnchor =
@@ -247,7 +262,7 @@ internal class RecordingPolicy(
     private fun toMoving(reason: String): List<RecordingAction> {
         if (state == RecorderState.MOVING) return emptyList()
         state = RecorderState.MOVING
-        unknownSinceMs = null
+        quietSinceMs = null
         heuristics.stationaryAnchor = null
         return listOf(RecordingAction.EnterMoving(reason))
     }
@@ -255,45 +270,45 @@ internal class RecordingPolicy(
     private fun toVerifying(reason: String): List<RecordingAction> {
         if (state == RecorderState.VERIFYING_DEPARTURE) return emptyList()
         state = RecorderState.VERIFYING_DEPARTURE
-        unknownSinceMs = null
+        quietSinceMs = null
         return listOf(RecordingAction.BeginVerifying(reason))
     }
 
     private fun revertToStationary(reason: String): List<RecordingAction> {
         state = RecorderState.STATIONARY
-        unknownSinceMs = null
+        quietSinceMs = null
         heuristics.stationaryAnchor = heuristics.lastFixLatLon()
         return listOf(RecordingAction.RevertToStationary(reason))
     }
 
     // --- predicates -----------------------------------------------------------------------------
 
-    private fun unknownIdleElapsed(nowMs: Long): Boolean =
-        unknownSinceMs?.let { nowMs - it >= Constants.UNKNOWN_IDLE_TIMEOUT_MS } ?: false
+    private fun idleElapsed(nowMs: Long, timeoutMs: Long): Boolean =
+        quietSinceMs?.let { nowMs - it >= timeoutMs } ?: false
 
-    /** No AR motion recently, no GPS-derived movement, and a still IMU -> the device is just parked. */
+    /** No AR motion recently, no real translation, and a still IMU -> the device is just parked. */
     private fun isQuiet(nowMs: Long, motionVariance: Float): Boolean =
         !arTimeline.anyMovingActiveWithin(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS) &&
             !heuristics.recentlyMoving() &&
             motionVariance < Constants.DRIFT_MOTION_VARIANCE_CEILING
 
     /**
-     * A delivered fix that credibly shows motion, used to gate the UNKNOWN -> MOVING promotion and the
-     * MOVING -> STATIONARY demotion (the STATIONARY branch adds [RecordingHeuristics.isDriftAt] on top).
-     * Two independent signals:
-     *  - **Real GPS speed** (Doppler) is a separate measurement from horizontal position and stays
-     *    trustworthy when accuracy is coarse, so it always counts. Gating it by accuracy would strand a
-     *    trip that *starts* already moving in a GPS-hostile place (AR is edge-triggered and may not fire,
-     *    leaving only the fix path) in the costly UNKNOWN cadence. The threshold matches the drift guard
-     *    ([Constants.DRIFT_MOVING_SPEED_MPS]); field data shows indoor-drift "speed" stays below it.
-     *  - A **classifier verdict** with no speed, by contrast, can be faked by 100-200 m indoor multipath
-     *    scatter (a still phone labelled WALKING), so it must be positionally trustworthy — accuracy
-     *    within the sample gate. This is the guard that stops a single coarse outlier from pinning the
-     *    high-accuracy cadence (the 06-13 idle drain).
+     * A delivered fix that credibly shows motion, used to gate the UNKNOWN -> MOVING promotion, the
+     * STATIONARY departure (which adds [RecordingHeuristics.isDriftAt]) and the MOVING-stay decision.
+     * Two signals, both deliberately skeptical of bare GPS:
+     *  - **GPS speed corroborated by real translation.** Doppler speed is faked by indoor multipath on
+     *    a motionless phone (the 06-13 drain: speeds up to 31 m/s with the centroid fixed at home), so
+     *    a speed reading counts only when [RecordingHeuristics.recentlyMoving] confirms the position is
+     *    actually progressing. Bare speed alone no longer promotes -- that is what pinned the high-power
+     *    cadence on a still phone. (Slower to catch a GPS-only trip start, but the explicit priority is
+     *    avoiding drain over avoiding the occasional manual reclassification.)
+     *  - A **confident classifier verdict** (in practice an AR-strong moving activity) that is also
+     *    positionally trustworthy -- accuracy within the sample gate -- so a single coarse outlier
+     *    can't promote on its own.
      */
     private fun ClassifiedFix.indicatesMotion(): Boolean {
         if (classifiedState == DevicePhysicalState.STATIONARY) return false
-        if ((fix.speedMps ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS) return true
+        if ((fix.speedMps ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS && heuristics.recentlyMoving()) return true
         return isConfident && (fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS
     }
 }

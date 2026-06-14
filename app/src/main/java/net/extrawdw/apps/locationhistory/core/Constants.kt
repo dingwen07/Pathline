@@ -174,6 +174,18 @@ object Constants {
     const val UNKNOWN_IDLE_TIMEOUT_MS = 4 * 60_000L
 
     /**
+     * Budget for how long the high-power MOVING cadence may persist without being justified by real
+     * movement (a fix that shows motion, AR-moving, or net displacement) before the recorder
+     * self-demotes to the stationary cadence. The architectural backstop behind AR-as-authority: a
+     * departure hint (geofence / significant-motion) or a phantom-speed / AR-jitter spell can ramp the
+     * cadence for responsiveness, but NONE may hold it indefinitely -- only continuous movement does.
+     * A real motion fix restarts the clock, so genuine trips (even with brief stops) are unaffected;
+     * a still phone whose GPS is lying reverts within this budget instead of draining for hours
+     * (the 06-13 multi-hour drains, where AR reported STILL the entire time).
+     */
+    const val MOVING_IDLE_TIMEOUT_MS = 5 * 60_000L
+
+    /**
      * How long [net.extrawdw.apps.locationhistory.core.RecorderState.VERIFYING_DEPARTURE] burst-samples
      * before giving up on an unconfirmed departure hint and reverting to STATIONARY. Replaces the old
      * "bet on one fresh fix while holding the mutex" check: a real departure shows movement in the

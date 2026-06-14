@@ -39,9 +39,35 @@ class RecordingHeuristicsTest {
     }
 
     @Test
-    fun recentlyMoving_trueOnGpsSpeed() {
+    fun recentlyMoving_falseOnGpsSpeedWithoutDisplacement() {
+        // The 06-13 phantom: GPS reports speed while the phone sits still (indoor multipath Doppler).
+        // Speed alone is no longer trusted -- without net displacement this reads as NOT moving, so a
+        // correct AR STILL is accepted instead of being rejected for hours.
         h.pushFix(fix(atSec = 0, speed = 0.5f))
-        h.pushFix(fix(atSec = 10, speed = 2.0f))
+        h.pushFix(fix(atSec = 10, speed = 5f))
+        h.pushFix(fix(atSec = 20, speed = 3f))
+        assertFalse(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_falseOnPhantomScatterAroundFixedCentroid() {
+        // Wave C: position oscillates ~130 m around a FIXED home centroid (multipath) with high
+        // reported speed. Raw spread would read as movement; the half-vs-half net displacement cancels
+        // the zero-mean scatter, so this stays NOT moving.
+        for (i in 0 until 12) {
+            val jitter = if (i % 2 == 0) 0.0 else 0.0012  // ~133 m swing, oscillating in place
+            h.pushFix(fix(atSec = i * 7L, lat = 40.0 + jitter, speed = 8f))
+        }
+        assertFalse(h.recentlyMoving())
+    }
+
+    @Test
+    fun recentlyMoving_trueOnProgressingTranslation() {
+        // A real trip: the centroid actually advances across the window (no GPS speed needed). Moving
+        // fixes are classified non-stationary, so they don't inflate the noise radius.
+        for (i in 0 until 12) {
+            h.pushFix(fix(atSec = i * 7L, lat = 40.0 + i * 0.0002, speed = null, stationary = false))
+        }
         assertTrue(h.recentlyMoving())
     }
 
@@ -55,9 +81,10 @@ class RecordingHeuristicsTest {
 
     @Test
     fun recentlyMoving_ignoresMovementOlderThanTheWindow() {
-        // A fast fix 5 minutes ago must not block a genuine stop now: only the last 90 s count.
-        h.pushFix(fix(atSec = 0, speed = 20f))
-        repeat(4) { h.pushFix(fix(atSec = 300 + it * 10L, speed = 0.1f)) }
+        // A real displacement minutes ago must not block a genuine stop now: only the last 90 s count.
+        // The far fix ages out of the motion window, leaving a settled cluster -> not moving.
+        h.pushFix(fix(atSec = 0, lat = 40.005, speed = null))  // ~550 m away, long ago
+        repeat(6) { h.pushFix(fix(atSec = 300 + it * 10L, lat = 40.0, speed = null)) }
         assertFalse(h.recentlyMoving())
     }
 
@@ -186,7 +213,8 @@ class RecordingHeuristicsTest {
 
     @Test
     fun drift_neverWithoutAnchor_evenAtGpsSpeed() {
-        // The speed override applies before the anchor check: anchorless + moving is a departure.
+        // Anchorless: nothing to measure displacement against, so even a speed reading can't be called
+        // drift -- a departure is never suppressed for lack of an anchor.
         assertFalse(
             h.isDriftAt(
                 RecorderState.STATIONARY, 40.0, -74.0,
@@ -196,10 +224,11 @@ class RecordingHeuristicsTest {
     }
 
     @Test
-    fun drift_overriddenByGpsSpeed_orPhysicalMotion() {
+    fun drift_overriddenByPhysicalMotion_notByBareGpsSpeed() {
         h.stationaryAnchor = 40.0 to -74.0
-        // At the anchor, but the phone is moving per GPS -> not drift.
-        assertFalse(
+        // At the anchor with bare GPS speed but NO net displacement: phantom Doppler -> STILL drift
+        // (the 06-13 phantom-speed false departures). Speed alone no longer ejects the stay.
+        assertTrue(
             h.isDriftAt(
                 RecorderState.STATIONARY, 40.0, -74.0,
                 Constants.DRIFT_MOVING_SPEED_MPS, 0f,
@@ -248,15 +277,24 @@ class RecordingHeuristicsTest {
 
     @Test
     fun speedStats_meanMaxVariance_overCappedWindow() {
-        assertEquals(Triple(0f, 0f, 0f), h.speedStats())
-        // 12 pushes; the window keeps the last 10 (all 2f after the first two are evicted).
-        h.pushSpeed(100f)
-        h.pushSpeed(50f)
-        repeat(10) { h.pushSpeed(2f) }
-        val (mean, max, variance) = h.speedStats()
+        assertEquals(Triple(0f, 0f, 0f), h.speedStats(t0))
+        // 12 pushes within the time window; the count cap keeps the last 10 (first two evicted).
+        h.pushSpeed(100f, t0)
+        h.pushSpeed(50f, t0 + 1000)
+        repeat(10) { h.pushSpeed(2f, t0 + 2000 + it * 1000L) }
+        val (mean, max, variance) = h.speedStats(t0 + 12_000)
         assertEquals(2f, mean)
         assertEquals(2f, max)
         assertEquals(0f, variance)
+    }
+
+    @Test
+    fun speedStats_drainsWhenSpeedStops() {
+        // The 06-13 4h drain: one speed spike, then the Doppler stream stalls (speed-less network
+        // fixes). The window must drain by time so the spike stops counting -- speedStats is queried
+        // with each fix's time even when no new speed arrives, draining it past SPEED_WINDOW_MS.
+        h.pushSpeed(8f, t0)
+        assertEquals(Triple(0f, 0f, 0f), h.speedStats(t0 + 120_000))
     }
 
     @Test

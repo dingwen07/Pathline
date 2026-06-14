@@ -133,12 +133,28 @@ class RecordingPolicyTest {
 
     @Test
     fun arStillIgnoredWhileRecentlyMoving() {
-        feed(0, motionVariance = 1f, fix = fix(0, speed = 5f, state = DevicePhysicalState.WALKING))
-        feed(10, motionVariance = 1f, fix = fix(10, speed = 5f, state = DevicePhysicalState.WALKING))
+        // A smooth ride AR briefly mislabels STILL: the fixes are genuinely TRANSLATING, so STILL must
+        // be rejected. Real net displacement -- not bare GPS speed -- is what blocks it now.
+        for (i in 0 until 8) {
+            feed(i * 5L, motionVariance = 5f, fix = fix(i * 5L, lat = 40.0 + i * 0.0005, speed = 5f, state = DevicePhysicalState.WALKING))
+        }
         assertEquals(RecorderState.MOVING, policy.state)
-        val actions = policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 11_000)
-        assertTrue("STILL must be ignored while fixes still show motion", actions.isEmpty())
+        val actions = policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 40_000)
+        assertTrue("STILL must be ignored while fixes still show real translation", actions.isEmpty())
         assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun arStillAcceptedDespitePhantomSpeed() {
+        // The 06-13 wave C: AR reports STILL while GPS fakes speed on a motionless phone (centroid
+        // fixed). With bare speed no longer trusted, the correct STILL is accepted -> low power.
+        for (i in 0 until 8) {
+            val jitter = if (i % 2 == 0) 0.0 else 0.0012  // oscillating in place, no net progress
+            feed(i * 5L, motionVariance = 0f, fix = fix(i * 5L, lat = 40.0 + jitter, speed = 8f, state = DevicePhysicalState.WALKING))
+        }
+        val actions = policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 40_000)
+        assertTrue(actions.any { it is RecordingAction.EnterStationary && it.reason == "ar_still" })
+        assertEquals(RecorderState.STATIONARY, policy.state)
     }
 
     @Test
@@ -196,6 +212,49 @@ class RecordingPolicyTest {
         val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.0001, speed = 0.5f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.isEmpty())
         assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun verifyDoesNotConfirmOnPhantomSpeedAtAnchor() {
+        // Phantom Doppler at the anchor (near, high reported speed, still, no net displacement) must
+        // NOT confirm a departure -- bare GPS speed no longer ejects the stay (the 06-13 phantom exits).
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.0001, speed = 8f, state = DevicePhysicalState.WALKING))
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun movingSelfDemotesWhenQuietPastTimeout() {
+        // The 06-13 drain: stuck in MOVING with AR silent (no STILL edge) while the phone sits still.
+        // High power is not self-sustaining -- after MOVING_IDLE_TIMEOUT_MS of no real motion the
+        // recorder reverts to the stationary cadence on its own. Coarse fixes keep the cluster detector
+        // from firing first, isolating the idle-timeout path.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)  // -> MOVING
+        assertEquals(RecorderState.MOVING, policy.state)
+        var reason: String? = null
+        var sec = 10L
+        while (sec * 1000 <= Constants.MOVING_IDLE_TIMEOUT_MS + 60_000) {
+            val actions = feed(sec, motionVariance = 0f, fix = fix(sec, accuracy = 120f, speed = null, state = DevicePhysicalState.STATIONARY))
+            (actions.firstOrNull { it is RecordingAction.EnterStationary } as? RecordingAction.EnterStationary)
+                ?.let { reason = it.reason }
+            if (policy.state == RecorderState.STATIONARY) break
+            sec += 20
+        }
+        assertEquals("moving_idle_timeout", reason)
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun movingStaysWhileTranslating() {
+        // A real trip must NOT self-demote: each progressing fix restarts the quiet clock.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)
+        for (i in 0 until 40) {  // ~6.5 min of motion, past the timeout
+            feed(i * 10L, motionVariance = 3f, fix = fix(i * 10L, lat = 40.0 + i * 0.0008, speed = 8f, state = DevicePhysicalState.WALKING, accuracy = 20f))
+        }
+        assertEquals(RecorderState.MOVING, policy.state)
     }
 
     @Test
@@ -266,6 +325,17 @@ class RecordingPolicyTest {
     }
 
     @Test
+    fun geofenceExitIgnoresPhantomSpeedNearAnchor() {
+        enterStationary()
+        // Trustworthy accuracy AND high reported speed, but still at the anchor with no net
+        // displacement: phantom Doppler, not a departure. Speed alone must not confirm the exit -- this
+        // is the row that fails if bare GPS speed is trusted again (the 06-13 phantom-speed bursts).
+        val actions = policy.onGeofenceExit(freshFix(lat = 40.0001, accuracy = 12f, speed = 8f), motionVariance = 0f, nowMs = t0 + 250_000)
+        assertTrue("phantom speed at the anchor must not confirm a geofence exit", actions.isEmpty())
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
     fun geofenceExitWithoutFreshFixButImuMotionConfirms() {
         enterStationary()
         // The confirming fix request failed (GPS-hostile departure) but the phone is shaking — a real
@@ -285,12 +355,25 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun coarseButFastFixPromotesFromUnknown() {
-        // Start a trip already moving in a GPS-hostile place: coarse accuracy but real Doppler speed.
-        // Speed is a separate signal from horizontal position, so it must still promote — otherwise the
-        // trip start strands in UNKNOWN (AR is edge-triggered and may not fire).
+    fun coarseFastSingleFixDoesNotPromoteFromUnknown() {
+        // The 06-13 phantom: a single coarse fix with high reported speed is indoor multipath, not a
+        // trip start (GPS reported up to 31 m/s with the centroid fixed at home). Bare Doppler no
+        // longer promotes -- it must be corroborated by real translation (see the sustained case).
         val actions = feed(0, fix = fix(0, lat = 40.02, speed = 8f, state = DevicePhysicalState.WALKING, accuracy = 120f))
-        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "fix_departure" })
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.UNKNOWN, policy.state)
+    }
+
+    @Test
+    fun sustainedFastTrackPromotesFromUnknown() {
+        // A real GPS-hostile trip: trustworthy fixes whose position genuinely advances. Net displacement
+        // corroborates the speed within the motion window, so it promotes (just not on the first fix).
+        var promoted = false
+        for (i in 0 until 8) {
+            val actions = feed(i * 10L, fix = fix(i * 10L, lat = 40.0 + i * 0.0008, speed = 8f, state = DevicePhysicalState.WALKING, accuracy = 55f))
+            if (actions.any { it is RecordingAction.EnterMoving }) promoted = true
+        }
+        assertTrue("a sustained, progressing track must promote to MOVING", promoted)
         assertEquals(RecorderState.MOVING, policy.state)
     }
 
