@@ -66,9 +66,12 @@ android {
         generateLocaleConfig = true
     }
     testOptions {
-        // TimelineDryRunTest
+        // TimelineDryRunTest: forward -DdryRun* (dir/since/until) and the dump zone into the forked
+        // unit-test JVM (it doesn't inherit -D otherwise). See scripts/timeline-dryrun.sh.
         unitTests.all { test ->
-            System.getProperty("dryRunDir")?.let { test.systemProperty("dryRunDir", it) }
+            System.getProperties().stringPropertyNames()
+                .filter { it.startsWith("dryRun") }
+                .forEach { test.systemProperty(it, System.getProperty(it)) }
             System.getProperty("user.timezone")?.let { test.systemProperty("user.timezone", it) }
         }
     }

@@ -17,22 +17,46 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import java.time.Instant
-import java.time.ZoneOffset
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * NOT a CI test — a **dry run** of the real timeline builder over the user's exported sample/place
- * data. Skipped unless `-DdryRunDir=<path>` points at a folder of CSVs (places/samples/visits/trips)
- * produced from a Pathline dump. Wires the production [TimelineRebuilder] + [TimelineMerger] +
- * [VisitDetector] + [TripSegmenter] + [HeuristicClassifier] with the in-memory fakes and an offline
- * place matcher (nearest saved place — same rule as [PlaceMatcher], no Google), then writes a
- * confirmed-vs-rebuilt report to `<dir>/report.txt`.
+ * NOT a CI test — a **dry run** of the real timeline builder over an exported Pathline backup.
+ * Skipped unless `-DdryRunDir=<dir>` points at a folder of CSVs (places/samples/visits/trips). The
+ * `scripts/timeline-dryrun.sh` wrapper unpacks a backup dir/zip into those CSVs, forwards the dump's
+ * zone and an optional window, and runs this. Wires the production [TimelineRebuilder] +
+ * [TimelineMerger] + [VisitDetector] + [TripSegmenter] + [HeuristicClassifier] with the in-memory
+ * fakes and an offline place matcher (nearest saved place — same rule as [PlaceMatcher], no Google),
+ * annotates every unconfirmed trip with the Doppler drift-vs-walk verdict, and writes a report to
+ * `<dir>/report.txt`.
+ *
+ * System properties: `-DdryRunDir` (CSV dir), `-Duser.timezone` (the dump's zone — used for day
+ * bucketing AND display), `-DdryRunSince` / `-DdryRunUntil` (optional `yyyy-MM-dd` in that zone, or
+ * epoch ms — restrict the REPORT to that window; the rebuild always runs over the full data so
+ * lookback/confirmed context is intact).
  */
 class TimelineDryRunTest {
 
-    private val zone = ZoneOffset.ofHours(-4) // device tz in the dump (EDT)
+    private val zone: ZoneId = ZoneId.systemDefault() // set via -Duser.timezone (the dump's zone)
     private val fmt = DateTimeFormatter.ofPattern("MM-dd HH:mm")
-    private fun lt(ms: Long) = Instant.ofEpochMilli(ms).atOffset(zone).format(fmt)
+    private fun lt(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).format(fmt)
+
+    /** A report-window bound from a system property: epoch-ms, or a `yyyy-MM-dd` local date (with
+     *  [plusDays] added so an `until` date covers its whole day). Absent -> [default]. */
+    private fun bound(prop: String, plusDays: Long, default: Long): Long {
+        val v = System.getProperty(prop)?.trim().orEmpty()
+        if (v.isEmpty()) return default
+        v.toLongOrNull()?.let { return it }
+        return runCatching {
+            LocalDate.parse(v).plusDays(plusDays).atStartOfDay(zone).toInstant().toEpochMilli()
+        }.getOrDefault(default)
+    }
+
+    private val since get() = bound("dryRunSince", 0, Long.MIN_VALUE)
+    private val until get() = bound("dryRunUntil", 1, Long.MAX_VALUE)
+    private fun TripEntity.inRange() = startMs < until && endMs > since
+    private fun VisitEntity.inRange() = startMs < until && endMs > since
 
     private fun dir(): File? =
         (System.getProperty("dryRunDir") ?: "/tmp/pathline-dryrun").let(::File).takeIf { it.isDirectory }
@@ -98,17 +122,9 @@ class TimelineDryRunTest {
         )
     }
 
-    // --- harness ----------------------------------------------------------------------------------
+    // --- drift-vs-walk probe ----------------------------------------------------------------------
 
-    private fun placeName(places: List<PlaceEntity>, lat: Double, lon: Double): String? {
-        val box = Geo.boundingBox(lat, lon, Constants.PLACE_MATCH_RADIUS_METERS)
-        return places.filter { it.latitude in box[0]..box[2] && it.longitude in box[1]..box[3] }
-            .map { it to Geo.distanceMeters(lat, lon, it.latitude, it.longitude) }
-            .filter { it.second <= maxOf(Constants.PLACE_MATCH_RADIUS_METERS, it.first.radiusMeters) }
-            .minByOrNull { it.second }?.first?.name
-    }
-
-    /** Fraction of a window's included fixes within the nearest place's radius — the drift signal. */
+    /** Fraction of a window's included fixes within the nearest place's radius — the geometry signal. */
     private fun inPlaceFrac(samples: List<LocationSampleEntity>, places: List<PlaceEntity>, s: Long, e: Long): Pair<Double, String?> {
         val fixes = samples.filter { it.timestampMs in s until e && it.includedInComputation }
         if (fixes.isEmpty()) return 0.0 to null
@@ -118,6 +134,23 @@ class TimelineDryRunTest {
         val within = fixes.count { Geo.distanceMeters(place.latitude, place.longitude, it.latitude, it.longitude) <= radius }
         return within.toDouble() / fixes.size to place.name
     }
+
+    /** GPS-Doppler statistics over a span's included fixes — the speed half of the drift-vs-walk test.
+     *  Drift reads ~0 moving; a real near-place walk 0.5-0.7 (the signal the geometry-only in-place flag
+     *  misses). A null speed is never "moving" (never folded to 0). [n] exposes sparse spans (the "too
+     *  few fixes" caveat: a sparse gap-fill can read high-Doppler off a handful of noisy fixes). */
+    private data class Dop(val n: Int, val validPct: Int, val ge08: Int, val ge12: Int)
+
+    private fun dopplerStats(samples: List<LocationSampleEntity>, s: Long, e: Long): Dop {
+        val fixes = samples.filter { it.timestampMs in s until e && it.includedInComputation }
+        if (fixes.isEmpty()) return Dop(0, 0, 0, 0)
+        val valid = fixes.count { it.speed != null }
+        val ge08 = fixes.count { (it.speed ?: 0f) >= Constants.WALK_SPEED_FLOOR_MPS }
+        val ge12 = fixes.count { (it.speed ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS }
+        return Dop(fixes.size, 100 * valid / fixes.size, 100 * ge08 / fixes.size, 100 * ge12 / fixes.size)
+    }
+
+    // --- harness ----------------------------------------------------------------------------------
 
     private class Harness(val places: List<PlaceEntity>, val samples: List<LocationSampleEntity>) {
         val visitDao = FakeVisitDao()
@@ -151,18 +184,27 @@ class TimelineDryRunTest {
             inTransaction = { block -> block() }, now = { nowMs }, log = {},
         )
 
-        fun run() = runBlocking {
-            placeDao.seed(*places.toTypedArray())
-            sampleDao.insertAll(samples)
+        fun rebuildAllDays() = runBlocking {
             val days = samples.map { TimeBuckets.dayEpoch(it.timestampMs) }.distinct().sorted()
             for (d in days) rebuilder.rebuildDay(d)
+        }
+
+        fun fromScratch() = apply { runBlocking { placeDao.seed(*places.toTypedArray()); sampleDao.insertAll(samples) }; rebuildAllDays() }
+
+        fun realistic(visits: List<VisitEntity>, trips: List<TripEntity>) = apply {
+            runBlocking {
+                placeDao.seed(*places.toTypedArray()); sampleDao.insertAll(samples)
+                visits.filter { it.confirmed }.forEach { visitDao.seed(it) }
+                trips.filter { it.confirmed }.forEach { tripDao.seed(it) }
+            }
+            rebuildAllDays()
         }
     }
 
     @Test
     fun dryRun_realData_confirmedVsRebuilt() {
         val d = dir()
-        assumeTrue("set -DdryRunDir=<dump-csv-dir> to run", d != null)
+        assumeTrue("set -DdryRunDir=<dump-csv-dir> to run (see scripts/timeline-dryrun.sh)", d != null)
         d!!
         val places = loadPlaces(d)
         val samples = loadSamples(d)
@@ -171,89 +213,82 @@ class TimelineDryRunTest {
         val sb = StringBuilder()
         fun line(s: String) = sb.appendLine(s)
 
+        val window = when {
+            since == Long.MIN_VALUE && until == Long.MAX_VALUE -> "full"
+            else -> "${if (since == Long.MIN_VALUE) "(start)" else lt(since)} -> " +
+                    (if (until == Long.MAX_VALUE) "(end)" else lt(until))
+        }
         line("=== Pathline timeline dry-run (real data) ===")
-        line("samples=${samples.size}  places=${places.size}  window ${lt(samples.first().timestampMs)} -> ${lt(samples.last().timestampMs)}")
+        line("samples=${samples.size}  places=${places.size}  data ${lt(samples.first().timestampMs)} -> ${lt(samples.last().timestampMs)}  zone=$zone")
+        line("report window: $window")
         line("dump: visits=${allVisits.size} (confirmed ${allVisits.count { it.confirmed }})  trips=${allTrips.size} (confirmed ${allTrips.count { it.confirmed }})")
+
+        val walkMovingPct = (Constants.WALK_MOVING_FIX_FRACTION * 100).toInt()
+
+        // Drift = the device never actually translated: few valid-Doppler-moving fixes (< the walk
+        // gate) AND a near-zero along-path speed. True whether the coarse fixes sat INSIDE the place
+        // radius (in-place drift) or fanned out PAST it (wide-scatter drift — 100 m Wi-Fi spikes, which
+        // the geometry-only in-place flag can't see). A real trip clears this on EITHER signal (real
+        // Doppler, or real ground covered), so it is never called drift. Doppler speed is primary; the
+        // along-path average is a corroborating floor (both must be ~0). See docs/doppler-timeline-findings.md.
+        fun isDrift(t: TripEntity, dop: Dop): Boolean {
+            if (t.confirmed || dop.n < Constants.MIN_MOVING_WINDOW_FIXES) return false
+            val secs = (t.endMs - t.startMs) / 1000.0
+            val avgMps = if (secs > 0) t.distanceMeters / secs else 0.0
+            return dop.ge08 < walkMovingPct && avgMps < 0.5
+        }
+
+        fun truePhantom(t: TripEntity) = isDrift(t, dopplerStats(samples, t.startMs, t.endMs))
 
         fun tripLine(t: TripEntity, tag: String): String {
             val (frac, pname) = inPlaceFrac(samples, places, t.startMs, t.endMs)
+            val dop = dopplerStats(samples, t.startMs, t.endMs)
             val mins = (t.endMs - t.startMs) / 60000.0
-            val flag = if (!t.confirmed && frac >= Constants.DRIFT_TRIP_INPLACE_FRACTION) "  <-- PHANTOM(in-place ${(frac * 100).toInt()}% @${pname})" else ""
+            val inPlace = frac >= Constants.DRIFT_TRIP_INPLACE_FRACTION
+            val probe = "dop ${dop.ge08}%>=0.8/${dop.ge12}%>=1.2 valid=${dop.validPct}% n=${dop.n}"
+            val pct = (frac * 100).toInt()
+            val flag = when {
+                t.confirmed -> ""
+                isDrift(t, dop) && inPlace -> "  <-- in-place $pct% @$pname; $probe => PHANTOM(in-place drift)"
+                isDrift(t, dop) -> "  <-- scatters past @$pname (in-place $pct%); $probe => PHANTOM(wide-scatter drift)"
+                inPlace -> "  <-- in-place $pct% @$pname; $probe => real WALK (near place)"
+                else -> ""
+            }
             return "  [$tag] ${lt(t.startMs)}->${lt(t.endMs)} ${"%.0f".format(mins)}m ${t.mode} ${"%.0f".format(t.distanceMeters)}m conf=${t.confirmed}$flag"
         }
 
-        // Visits overlapping a focus window — prints what the rebuild thinks you were doing there.
-        // Default window brackets the 06-14 near-home walk (~04:40-05:04 EDT) under investigation.
-        fun visitLines(visits: List<VisitEntity>, tag: String, from: Long = 1781420000000L, to: Long = 1781428000000L) {
-            visits.filter { it.startMs < to && it.endMs > from }.sortedBy { it.startMs }.forEach {
+        fun visitLines(visits: List<VisitEntity>, tag: String) {
+            visits.filter { it.inRange() }.sortedBy { it.startMs }.forEach {
                 line("  [$tag] ${lt(it.startMs)}->${lt(it.endMs)} \"${it.candidateName}\" conf=${it.confirmed} ongoing=${it.isOngoing} n=${it.sampleCount} r=${"%.0f".format(it.radiusMeters)}m")
             }
         }
 
+        fun reportTrips(label: String, all: List<TripEntity>, tag: String) {
+            val inRange = all.filter { !it.confirmed && it.inRange() }.sortedBy { it.startMs }
+            val phantoms = inRange.count { truePhantom(it) }
+            line("$label: ${inRange.size} builder trips in window; Doppler-confirmed drift phantoms (in-place + wide-scatter): $phantoms")
+            inRange.forEach { line(tripLine(it, tag)) }
+        }
+
         // ---- Section A: build from scratch (samples + places only) -------------------------------
         line("\n--- A) FROM SCRATCH (no seeded visits/trips) ---")
-        val a = Harness(places, samples).apply { run() }
-        val aVisits = a.visitDao.visits.sortedBy { it.startMs }
-        val aTrips = a.tripDao.trips.sortedBy { it.startMs }
-        line("rebuilt: visits=${aVisits.size}  trips=${aTrips.size}")
-        line("rebuilt trips:")
-        aTrips.forEach { line(tripLine(it, "new")) }
-        val aPhantom = aTrips.count { val (f, _) = inPlaceFrac(samples, places, it.startMs, it.endMs); f >= Constants.DRIFT_TRIP_INPLACE_FRACTION }
-        line("from-scratch in-place(phantom) trips: $aPhantom")
-        line("rebuilt visits overlapping the 06-14 walk window:")
-        visitLines(aVisits, "Avisit")
+        val a = Harness(places, samples).fromScratch()
+        reportTrips("from-scratch", a.tripDao.trips, "new")
+        line("visits in window:")
+        visitLines(a.visitDao.visits.sortedBy { it.startMs }, "Avisit")
 
         // ---- Section B: realistic (seed confirmed ground truth, rebuild fills gaps) --------------
         line("\n--- B) REALISTIC (seed confirmed visits+trips, then rebuild) ---")
-        val b = Harness(places, samples)
-        runBlocking {
-            b.placeDao.seed(*places.toTypedArray())
-            b.sampleDao.insertAll(samples)
-            allVisits.filter { it.confirmed }.forEach { b.visitDao.seed(it) }
-            allTrips.filter { it.confirmed }.forEach { b.tripDao.seed(it) }
-            val days = samples.map { TimeBuckets.dayEpoch(it.timestampMs) }.distinct().sorted()
-            for (day in days) b.rebuilder.rebuildDay(day)
-        }
-        val bUnconfirmedTrips = b.tripDao.trips.filter { !it.confirmed }.sortedBy { it.startMs }
-        line("after rebuild: total trips=${b.tripDao.trips.size}, builder-generated (unconfirmed)=${bUnconfirmedTrips.size}")
-        line("builder-generated trips:")
-        bUnconfirmedTrips.forEach { line(tripLine(it, "gen")) }
-        val bPhantom = bUnconfirmedTrips.count { val (f, _) = inPlaceFrac(samples, places, it.startMs, it.endMs); f >= Constants.DRIFT_TRIP_INPLACE_FRACTION }
-        line("realistic in-place(phantom) trips remaining: $bPhantom")
-        line("visits overlapping the 06-14 walk window (seeded confirmed + rebuilt):")
+        val b = Harness(places, samples).realistic(allVisits, allTrips)
+        reportTrips("realistic", b.tripDao.trips, "gen")
+        line("visits in window (seeded confirmed + rebuilt):")
         visitLines(b.visitDao.visits, "Bvisit")
 
-        // ---- Section C: GOING-FORWARD (home visit still ongoing, ending just before the walk) -----
-        // Section B can't show the fix on this dump: the on-device build already welded the home visit
-        // across the walk (to 04:58) and finalized it, so it's frozen ground truth. This re-seeds that
-        // same confirmed home visit as it was the instant BEFORE the buggy post-walk rebuild — still
-        // ongoing, ending pre-walk (04:40) — and rebuilds. With the Doppler fix the walk must surface
-        // as its own trip instead of being absorbed.
-        line("\n--- C) GOING-FORWARD (confirmed home ongoing, ends pre-walk 04:40) ---")
-        val preWalkEnd = 1781426400000L // 06-14 04:40:00 EDT, just before the 04:41 walk
-        val c = Harness(places, samples)
-        runBlocking {
-            c.placeDao.seed(*places.toTypedArray())
-            c.sampleDao.insertAll(samples)
-            allVisits.filter { it.confirmed }.forEach { v ->
-                c.visitDao.seed(if (v.id == 2176L) v.copy(endMs = preWalkEnd, isOngoing = true) else v)
-            }
-            allTrips.filter { it.confirmed }.forEach { c.tripDao.seed(it) }
-            val days = samples.map { TimeBuckets.dayEpoch(it.timestampMs) }.distinct().sorted()
-            for (day in days) c.rebuilder.rebuildDay(day)
-        }
-        line("06-14 builder-generated trips in the walk window:")
-        c.tripDao.trips.filter { !it.confirmed && it.startMs in (preWalkEnd - 600_000L)..(preWalkEnd + 90 * 60_000L) }
-            .sortedBy { it.startMs }.forEach { line(tripLine(it, "C")) }
-        line("06-14 visits in the walk window:")
-        visitLines(c.visitDao.visits, "Cvisit")
-
-        // ---- The dump's own unconfirmed trips, for old-vs-new contrast ---------------------------
-        line("\n--- dump's unconfirmed trips (the on-device builder's output) ---")
-        allTrips.filter { !it.confirmed }.sortedBy { it.startMs }.forEach { line(tripLine(it, "dump")) }
-
-        line("\n--- confirmed trips (ground truth) ---")
-        allTrips.filter { it.confirmed }.sortedBy { it.startMs }.forEach { line(tripLine(it, "GT")) }
+        // ---- The dump's own output + ground truth, for contrast ----------------------------------
+        line("\n--- dump's unconfirmed trips in window (the on-device builder's output) ---")
+        allTrips.filter { !it.confirmed && it.inRange() }.sortedBy { it.startMs }.forEach { line(tripLine(it, "dump")) }
+        line("\n--- confirmed trips in window (ground truth) ---")
+        allTrips.filter { it.confirmed && it.inRange() }.sortedBy { it.startMs }.forEach { line(tripLine(it, "GT")) }
 
         File(d, "report.txt").writeText(sb.toString())
         println(sb.toString())
