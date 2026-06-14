@@ -167,7 +167,7 @@ object AppLog {
             description?.limitedSingleLine(MAX_EXIT_DESCRIPTION_CHARS)?.takeIf { it.isNotBlank() }
                 ?.let {
                     append(" description=\"").append(it).append("\"")
-            }
+                }
             processStateSummaryText()?.let { append(" processStateSummary=").append(it) }
             traceFile?.let { append(" traceFile=").append(it.name) }
         }
@@ -244,6 +244,7 @@ object AppLog {
             ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND -> "FOREGROUND"
             ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE ->
                 "FOREGROUND_SERVICE"
+
             ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE -> "VISIBLE"
             ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE -> "PERCEPTIBLE"
             ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE -> "SERVICE"

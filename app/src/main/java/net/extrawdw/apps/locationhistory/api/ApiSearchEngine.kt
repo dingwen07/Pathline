@@ -33,7 +33,11 @@ internal class ApiSearchEngine(
     // ---- Field validation ------------------------------------------------------------------------
 
     /** The validated place-search field list — defaults to everything the caller may match. */
-    fun placeSearchFields(caller: Caller, rawFields: String?, deny: (String) -> Nothing): List<String> {
+    fun placeSearchFields(
+        caller: Caller,
+        rawFields: String?,
+        deny: (String) -> Nothing
+    ): List<String> {
         val fields = ApiSearch.parseFields(rawFields)
             ?: return PLACE_DETAIL_FIELDS +
                     if (caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) ANNOTATION_FIELDS else emptyList()
@@ -48,7 +52,11 @@ internal class ApiSearchEngine(
     }
 
     /** The validated visit/trip-search field list — defaults to everything the caller may match. */
-    fun timelineSearchFields(caller: Caller, rawFields: String?, deny: (String) -> Nothing): List<String> {
+    fun timelineSearchFields(
+        caller: Caller,
+        rawFields: String?,
+        deny: (String) -> Nothing
+    ): List<String> {
         val fields = ApiSearch.parseFields(rawFields)
             ?: return listOf(PathlineContract.SearchFields.PLACE_NAME) +
                     if (caller.holds(PathlineContract.Permissions.READ_ANNOTATIONS)) TIMELINE_ANNOTATION_FIELDS

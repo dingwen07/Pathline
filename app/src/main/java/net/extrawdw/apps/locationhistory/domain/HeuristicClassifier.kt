@@ -62,7 +62,11 @@ class HeuristicClassifier @Inject constructor() {
                     return StateClassification(DevicePhysicalState.STATIONARY, 0.8f * accuracyTrust)
                 }
 
-                "WALKING", "ON_FOOT" -> return StateClassification(DevicePhysicalState.WALKING, 0.72f)
+                "WALKING", "ON_FOOT" -> return StateClassification(
+                    DevicePhysicalState.WALKING,
+                    0.72f
+                )
+
                 "RUNNING" -> return StateClassification(DevicePhysicalState.RUNNING, 0.72f)
                 "ON_BICYCLE" -> return StateClassification(DevicePhysicalState.CYCLING, 0.7f)
                 "IN_VEHICLE" -> return StateClassification(DevicePhysicalState.IN_VEHICLE, 0.75f)

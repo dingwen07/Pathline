@@ -187,7 +187,11 @@ internal object ApiCursors {
     /** [PathlineContract.Tags] rows. [attachedBy] is the per-link writer map of a per-target
      *  listing (tagId -> link createdBy), or null on the global `tags` collection where
      *  ATTACHED_BY_ME is always null. */
-    fun tags(caller: Caller, tags: List<TagEntity>, attachedBy: Map<Long, String?>? = null): Cursor {
+    fun tags(
+        caller: Caller,
+        tags: List<TagEntity>,
+        attachedBy: Map<Long, String?>? = null
+    ): Cursor {
         val cursor = MatrixCursor(PathlineContract.Tags.COLUMNS, tags.size)
         for (t in tags) {
             cursor.addRow(
@@ -244,7 +248,13 @@ internal object ApiCursors {
     }
 
     /** The 0/1-row [PathlineContract.Annotations.Notes] cursor for one target's note. */
-    fun note(caller: Caller, id: Long?, content: String?, updatedAtMs: Long?, updatedBy: String?): Cursor {
+    fun note(
+        caller: Caller,
+        id: Long?,
+        content: String?,
+        updatedAtMs: Long?,
+        updatedBy: String?
+    ): Cursor {
         val cursor = MatrixCursor(PathlineContract.Annotations.Notes.COLUMNS, 1)
         if (id != null) {
             cursor.addRow(arrayOf<Any?>(id, content, updatedAtMs, caller.byMe(updatedBy)))

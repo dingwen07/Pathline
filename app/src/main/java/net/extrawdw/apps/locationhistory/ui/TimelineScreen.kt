@@ -194,6 +194,7 @@ fun TimelineScreen(
     fun fineLocationGranted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
+
     var hasFineLocation by remember { mutableStateOf(fineLocationGranted()) }
     // Both can change while the process stays alive (settings toggle, day rollover in background):
     // re-read whenever the screen returns to the foreground.

@@ -129,9 +129,15 @@ class RoutesGateway @Inject constructor(
 
         // arrivalTime is only valid for transit; the provider rejects it for other modes.
         if (transit && request.arrivalTimeMs != null) {
-            put("arrivalTime", JsonPrimitive(Instant.ofEpochMilli(request.arrivalTimeMs).toString()))
+            put(
+                "arrivalTime",
+                JsonPrimitive(Instant.ofEpochMilli(request.arrivalTimeMs).toString())
+            )
         } else if (request.departureTimeMs != null) {
-            put("departureTime", JsonPrimitive(Instant.ofEpochMilli(request.departureTimeMs).toString()))
+            put(
+                "departureTime",
+                JsonPrimitive(Instant.ofEpochMilli(request.departureTimeMs).toString())
+            )
         } else if (transit) {
             // Transit needs an anchor time; default to now. Other modes are left time-free so a
             // traffic-unaware estimate is returned without a (rejected) past departureTime.
@@ -155,7 +161,12 @@ class RoutesGateway @Inject constructor(
                         request.transitModes.forEach { add(JsonPrimitive(it)) }
                     })
                 }
-                request.transitRoutingPreference?.let { put("routingPreference", JsonPrimitive(it)) }
+                request.transitRoutingPreference?.let {
+                    put(
+                        "routingPreference",
+                        JsonPrimitive(it)
+                    )
+                }
             })
         }
 
@@ -214,10 +225,12 @@ class RoutesGateway @Inject constructor(
         }.getOrNull() ?: return emptyList()
         return routes.mapIndexedNotNull { index, routeElement ->
             val route = routeElement.jsonObject
-            val durationSeconds = route["duration"]?.stringContent()?.durationSeconds() ?: return@mapIndexedNotNull null
+            val durationSeconds = route["duration"]?.stringContent()?.durationSeconds()
+                ?: return@mapIndexedNotNull null
             val baseDepartureMs = when {
                 request.travelMode == "TRANSIT" && request.arrivalTimeMs != null ->
                     request.arrivalTimeMs - durationSeconds * 1000L
+
                 request.departureTimeMs != null -> request.departureTimeMs
                 else -> nowMs
             }
@@ -269,7 +282,8 @@ class RoutesGateway @Inject constructor(
         this["localizedValues"]?.jsonObject?.get(key)?.jsonObject?.get("text")?.stringContent()
 
     private fun JsonObject.moneyText(): String? {
-        val money = this["travelAdvisory"]?.jsonObject?.get("transitFare")?.jsonObject ?: return null
+        val money =
+            this["travelAdvisory"]?.jsonObject?.get("transitFare")?.jsonObject ?: return null
         val currency = money["currencyCode"]?.stringContent() ?: return null
         val units = money["units"]?.stringContent()?.toLongOrNull() ?: 0L
         val nanos = money["nanos"]?.stringContent()?.toIntOrNull() ?: 0

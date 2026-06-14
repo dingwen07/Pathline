@@ -65,7 +65,8 @@ class PlacesViewModel @Inject constructor(
         timelineRepository.searchPlaces(query, lat, lon)
 
     suspend fun placeSearchAnchor(): LatLng? =
-        currentLatLng() ?: locationRepository.mostRecent()?.let { LatLng(it.latitude, it.longitude) }
+        currentLatLng() ?: locationRepository.mostRecent()
+            ?.let { LatLng(it.latitude, it.longitude) }
 
     fun addGooglePlace(candidate: PlaceCandidate) = viewModelScope.launch {
         placeRepository.confirmPlace(

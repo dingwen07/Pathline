@@ -326,7 +326,9 @@ class AnnotationStore @Inject constructor(
             getMemories(target, id) +
                     (
                             key to MemoryEntry(
-                                value, confidence.coerceIn(0f, 1f), source?.trim()?.ifEmpty { null },
+                                value,
+                                confidence.coerceIn(0f, 1f),
+                                source?.trim()?.ifEmpty { null },
                                 updatedAtMs = now(),
                                 updatedBy = writer,
                             )

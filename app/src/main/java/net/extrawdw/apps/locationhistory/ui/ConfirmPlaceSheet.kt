@@ -265,7 +265,11 @@ fun AddGooglePlaceSheet(
 }
 
 /** "<distance> away · <address/type>" relative to the search hint location. */
-private fun candidateSubtitle(context: Context, anchor: PlaceSearchAnchor, c: PlaceCandidate): String {
+private fun candidateSubtitle(
+    context: Context,
+    anchor: PlaceSearchAnchor,
+    c: PlaceCandidate
+): String {
     val dist =
         Geo.distanceMeters(anchor.latitude, anchor.longitude, c.latitude, c.longitude)
     val detail = c.address ?: c.primaryType ?: context.getString(R.string.place_default_name)

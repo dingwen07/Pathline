@@ -388,30 +388,31 @@ class RecordingController @Inject constructor(
     // --- event entry points (delegate to the policy, then execute its actions) -----------------
 
     /** Handle a batch of Activity Recognition transitions. */
-    suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>): Unit = stateMutex.withLock {
-        if (isAutostartSuppressed()) {
-            AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
-            return@withLock
-        }
-        val nowMs = System.currentTimeMillis()
-        // Feed the per-sample classifier the raw active AR name (it matches names like
-        // ON_BICYCLE/ON_FOOT), while the policy gets the de-Android-ised ArActivity transitions.
-        for ((type, transitionType) in events) {
-            val name = arName(type)
-            if (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) {
-                arEvidence.enter(name, confidence = 90)
-                AppLog.i(TAG, "AR transition ENTER $name")
-            } else {
-                arEvidence.exit(name)
-                AppLog.i(TAG, "AR transition EXIT $name")
+    suspend fun handleActivityTransitions(events: List<Pair<Int, Int>>): Unit =
+        stateMutex.withLock {
+            if (isAutostartSuppressed()) {
+                AppLog.i(TAG, "AR transition ignored — recording paused (app removed from Recents)")
+                return@withLock
             }
+            val nowMs = System.currentTimeMillis()
+            // Feed the per-sample classifier the raw active AR name (it matches names like
+            // ON_BICYCLE/ON_FOOT), while the policy gets the de-Android-ised ArActivity transitions.
+            for ((type, transitionType) in events) {
+                val name = arName(type)
+                if (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) {
+                    arEvidence.enter(name, confidence = 90)
+                    AppLog.i(TAG, "AR transition ENTER $name")
+                } else {
+                    arEvidence.exit(name)
+                    AppLog.i(TAG, "AR transition EXIT $name")
+                }
+            }
+            val transitions = events.mapNotNull { (type, transitionType) ->
+                arActivityOf(type)?.let { it to (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) }
+            }
+            if (transitions.isEmpty()) return@withLock
+            executeActions(policy.onArTransitions(transitions, nowMs))
         }
-        val transitions = events.mapNotNull { (type, transitionType) ->
-            arActivityOf(type)?.let { it to (transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) }
-        }
-        if (transitions.isEmpty()) return@withLock
-        executeActions(policy.onArTransitions(transitions, nowMs))
-    }
 
     /**
      * A dwell-geofence EXIT fired. The geofence triggers on a single boundary-crossing fix, so before
@@ -432,12 +433,16 @@ class RecordingController @Inject constructor(
         // cap the fix wait tighter than the foreground path. The pure policy gets both for the verdict.
         val (motionVariance, freshFix) = coroutineScope {
             val mv = async { motionSensorReader.motionVariance() }
-            val ff = async { getCurrentLocation(Constants.GEOFENCE_CONFIRM_FIX_TIMEOUT_MS)?.toRecentFix() }
+            val ff =
+                async { getCurrentLocation(Constants.GEOFENCE_CONFIRM_FIX_TIMEOUT_MS)?.toRecentFix() }
             mv.await() to ff.await()
         }
         val actions = policy.onGeofenceExit(freshFix, motionVariance, System.currentTimeMillis())
         if (actions.isEmpty()) {
-            AppLog.i(TAG, "geofence EXIT — unconfirmed (drift); keeping stay, re-arming dwell geofence")
+            AppLog.i(
+                TAG,
+                "geofence EXIT — unconfirmed (drift); keeping stay, re-arming dwell geofence"
+            )
             rearmDwellGeofenceAtAnchor()
         } else {
             executeActions(actions) // EnterMoving clears the geofence itself
@@ -475,17 +480,20 @@ class RecordingController @Inject constructor(
             // low_accuracy) is indoor multipath, not a departure, and must not ramp the cadence.
             val fresh = getCurrentLocation()
             fresh != null &&
-                (if (fresh.hasAccuracy()) fresh.accuracy else Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                !heuristics.isWithinStay(
-                    fresh.latitude, fresh.longitude,
-                    if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
-                )
+                    (if (fresh.hasAccuracy()) fresh.accuracy else Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
+                    !heuristics.isWithinStay(
+                        fresh.latitude, fresh.longitude,
+                        if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
+                    )
         }
         if (movingHint) {
             AppLog.i(TAG, "significant motion — verifying departure")
             executeActions(policy.onSignificantMotion(System.currentTimeMillis()))
         } else {
-            AppLog.i(TAG, "significant motion — transient (no displacement); re-arming with backoff")
+            AppLog.i(
+                TAG,
+                "significant motion — transient (no displacement); re-arming with backoff"
+            )
             rearmSignificantMotionWithBackoff()
         }
     }
@@ -504,7 +512,13 @@ class RecordingController @Inject constructor(
         if (isAutostartSuppressed()) return@withLock
         if (idle) {
             AppLog.i(TAG, "device idle (Doze) — durably stationary; disarming significant motion")
-            executeActions(policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = System.currentTimeMillis()))
+            executeActions(
+                policy.onDozeIdle(
+                    idle = true,
+                    motionVariance = 0f,
+                    nowMs = System.currentTimeMillis()
+                )
+            )
             cancelSigMotionRearm()
             significantMotionManager.disarm()
             return@withLock
@@ -512,7 +526,11 @@ class RecordingController @Inject constructor(
         AppLog.i(TAG, "device exited Doze idle")
         if (policy.state != RecorderState.STATIONARY) return@withLock
         val motionVariance = motionSensorReader.motionVariance()
-        val actions = policy.onDozeIdle(idle = false, motionVariance = motionVariance, nowMs = System.currentTimeMillis())
+        val actions = policy.onDozeIdle(
+            idle = false,
+            motionVariance = motionVariance,
+            nowMs = System.currentTimeMillis()
+        )
         if (actions.isEmpty()) {
             // Likely a maintenance-window / screen-on exit, not a departure. Restore the fast sensor.
             resetSigMotionBackoff()
@@ -621,7 +639,12 @@ class RecordingController @Inject constructor(
         // stepDelta is motion evidence (real walking) the policy uses to hold off the self-demote —
         // unlike raw IMU energy, steps don't fire on a vibrating-but-stationary surface.
         executeActions(
-            policy.onFixes(classifiedFixes, motionVariance, System.currentTimeMillis(), stepDelta ?: 0),
+            policy.onFixes(
+                classifiedFixes,
+                motionVariance,
+                System.currentTimeMillis(),
+                stepDelta ?: 0
+            ),
         )
         // Keep the FGS notification + cadence in sync even when no transition fired (e.g. the
         // movement badge was refined while staying MOVING).
@@ -658,11 +681,17 @@ class RecordingController @Inject constructor(
         val actions = policy.onVerifyDeadline(System.currentTimeMillis())
         if (actions.isEmpty()) return@withLock
         if (!settingsRepository.settings.first().trackingEnabled) {
-            AppLog.i(TAG, "verify deadline — policy reverted while tracking disabled; side effects skipped")
+            AppLog.i(
+                TAG,
+                "verify deadline — policy reverted while tracking disabled; side effects skipped"
+            )
             return@withLock
         }
         if (isAutostartSuppressed()) {
-            AppLog.i(TAG, "verify deadline — policy reverted while autostart suppressed; side effects skipped")
+            AppLog.i(
+                TAG,
+                "verify deadline — policy reverted while autostart suppressed; side effects skipped"
+            )
             return@withLock
         }
         executeActions(actions)
@@ -712,7 +741,10 @@ class RecordingController @Inject constructor(
         if (action.candidate == null) {
             heuristics.stationaryAnchor = anchor.centroidLatitude to anchor.centroidLongitude
         }
-        workScheduler.enqueueTimelineMaintenanceNow(TimeBuckets.dayEpoch(anchor.startMs), action.reason)
+        workScheduler.enqueueTimelineMaintenanceNow(
+            TimeBuckets.dayEpoch(anchor.startMs),
+            action.reason
+        )
     }
 
     private suspend fun execEnterMoving(action: RecordingAction.EnterMoving) {
@@ -727,7 +759,10 @@ class RecordingController @Inject constructor(
     }
 
     private suspend fun execBeginVerifying(action: RecordingAction.BeginVerifying) {
-        AppLog.i(TAG, "verifying departure (${action.reason}) — burst cadence for ${Constants.DEPARTURE_VERIFY_WINDOW_MS}ms")
+        AppLog.i(
+            TAG,
+            "verifying departure (${action.reason}) — burst cadence for ${Constants.DEPARTURE_VERIFY_WINDOW_MS}ms"
+        )
         refreshServiceState()
         cancelVerify()
         verifyDeadlineJob = controllerScope.launch {
@@ -765,7 +800,11 @@ class RecordingController @Inject constructor(
         if (policy.state == serviceState && display == serviceDisplay) return
         serviceState = policy.state
         serviceDisplay = display
-        recorderService.start(policy.state, display, settingsRepository.settings.first().powerProfile)
+        recorderService.start(
+            policy.state,
+            display,
+            settingsRepository.settings.first().powerProfile
+        )
     }
 
     /** The movement shown to the user: the precise mode while travelling, plain Stationary at a stay. */
@@ -780,6 +819,7 @@ class RecordingController @Inject constructor(
         RecorderState.MOVING ->
             latestMovingClassification?.takeUnless { arEvidence.isActivity(AR_STILL) }
                 ?: DevicePhysicalState.UNKNOWN
+
         RecorderState.VERIFYING_DEPARTURE, RecorderState.UNKNOWN -> DevicePhysicalState.UNKNOWN
     }
 
@@ -857,8 +897,12 @@ class RecordingController @Inject constructor(
      * so a pathological place can't open a dead zone where a real departure goes unnoticed.
      */
     private suspend fun armDwellGeofenceAdaptive(latitude: Double, longitude: Double) {
-        val radius = (heuristics.stationaryNoiseRadius().toFloat() + Constants.DWELL_GEOFENCE_MARGIN_METERS)
-            .coerceIn(Constants.DWELL_GEOFENCE_RADIUS_METERS, Constants.DWELL_GEOFENCE_MAX_RADIUS_METERS)
+        val radius =
+            (heuristics.stationaryNoiseRadius().toFloat() + Constants.DWELL_GEOFENCE_MARGIN_METERS)
+                .coerceIn(
+                    Constants.DWELL_GEOFENCE_RADIUS_METERS,
+                    Constants.DWELL_GEOFENCE_MAX_RADIUS_METERS
+                )
         geofenceManager.armDwellGeofence(latitude, longitude, radius)
     }
 

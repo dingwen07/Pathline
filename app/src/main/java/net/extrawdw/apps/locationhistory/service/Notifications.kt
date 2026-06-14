@@ -241,6 +241,7 @@ object Notifications {
             display != DevicePhysicalState.UNKNOWN -> res.getString(display.labelRes)
             cadence == RecorderState.MOVING || cadence == RecorderState.VERIFYING_DEPARTURE ->
                 res.getString(R.string.state_moving)
+
             else -> res.getString(display.labelRes)
         }
         return NotificationCompat.Builder(context, RECORDING_CHANNEL_ID)

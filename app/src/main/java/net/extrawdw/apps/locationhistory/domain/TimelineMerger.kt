@@ -83,7 +83,8 @@ class TimelineMerger @Inject constructor(
         // One visit fetch for the whole pass, kept in step with every fuse below so later trips see
         // the merged bounds, not the pre-fuse rows. The fused visit keeps the earlier start, so the
         // in-place replacement preserves the startMs ordering.
-        val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
+        val visits =
+            visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
             val before = visits.lastOrNull { it.startMs <= trip.startMs } ?: continue

@@ -70,7 +70,8 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                             scope.launch {
                                 val anchor = viewModel.placeSearchAnchor()
                                 if (anchor != null) {
-                                    addPlaceAnchor = PlaceSearchAnchor(anchor.latitude, anchor.longitude)
+                                    addPlaceAnchor =
+                                        PlaceSearchAnchor(anchor.latitude, anchor.longitude)
                                 } else {
                                     showNoLocation = true
                                 }

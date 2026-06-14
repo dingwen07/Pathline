@@ -57,7 +57,10 @@ object SqlCipherSupport {
         } catch (t: Throwable) {
             // Delete only the partial encrypted copy; the plaintext DB stays untouched so the
             // migration can retry next launch.
-            AppLog.w(TAG, "plaintext migration failed (${t.message}); keeping plaintext DB for retry")
+            AppLog.w(
+                TAG,
+                "plaintext migration failed (${t.message}); keeping plaintext DB for retry"
+            )
             encryptedTmp.delete()
             throw t
         }

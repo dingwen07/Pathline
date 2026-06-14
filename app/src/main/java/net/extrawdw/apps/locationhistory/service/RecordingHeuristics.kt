@@ -32,6 +32,7 @@ internal class RecordingHeuristics {
 
     private val recentFixes = ArrayDeque<RecentFix>()
     private val fixLock = Any()
+
     // (timestamp, speed) pairs, pruned by BOTH time ([SPEED_WINDOW_MS]) and count ([SPEED_WINDOW]).
     // Time pruning is essential: a still phone whose fused provider stops reporting Doppler speed
     // (network/WiFi fixes) would otherwise FREEZE this window with whatever was last in it -- one
@@ -243,7 +244,8 @@ internal class RecordingHeuristics {
 
     companion object {
         const val SPEED_WINDOW = 10
-        const val SPEED_WINDOW_MS = 90_000L  // time bound on the speed window (drains when Doppler stalls)
+        const val SPEED_WINDOW_MS =
+            90_000L  // time bound on the speed window (drains when Doppler stalls)
         const val FIX_WINDOW_MS = 6 * 60_000L
         const val RECENT_MOTION_WINDOW_MS = 90_000L
         const val NOISE_RMS_FACTOR = 2.5    // stationary-fix RMS spread -> drift radius

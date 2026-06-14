@@ -231,7 +231,15 @@ class PathlineClient(private val resolver: ContentResolver) {
         limit: Int? = null,
         group: Long? = null,
     ): List<Visit> = withContext(Dispatchers.IO) {
-        query(windowUri(PathlineContract.Visits.CONTENT_URI, startMs, endMs, group, limit)) { c -> visit(c) }
+        query(
+            windowUri(
+                PathlineContract.Visits.CONTENT_URI,
+                startMs,
+                endMs,
+                group,
+                limit
+            )
+        ) { c -> visit(c) }
     }
 
     /** ONE visit by id — the resolver for stored `visit:<id>` references. Null when invisible
@@ -241,14 +249,20 @@ class PathlineClient(private val resolver: ContentResolver) {
     }
 
     /** Batch-resolve visible visits by stable id. Missing, invisible or out-of-window ids are omitted. */
-    suspend fun visitsByIds(ids: List<Long>, group: Long? = null): List<Visit> = withContext(Dispatchers.IO) {
-        if (ids.isEmpty()) return@withContext emptyList()
-        val uri = PathlineContract.Visits.CONTENT_URI.buildUpon()
-            .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
-            .apply { if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString()) }
-            .build()
-        query(uri) { c -> visit(c) }
-    }
+    suspend fun visitsByIds(ids: List<Long>, group: Long? = null): List<Visit> =
+        withContext(Dispatchers.IO) {
+            if (ids.isEmpty()) return@withContext emptyList()
+            val uri = PathlineContract.Visits.CONTENT_URI.buildUpon()
+                .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
+                .apply {
+                    if (group != null) appendQueryParameter(
+                        PathlineContract.QueryParams.GROUP,
+                        group.toString()
+                    )
+                }
+                .build()
+            query(uri) { c -> visit(c) }
+        }
 
     suspend fun trips(
         startMs: Long,
@@ -256,7 +270,15 @@ class PathlineClient(private val resolver: ContentResolver) {
         limit: Int? = null,
         group: Long? = null,
     ): List<Trip> = withContext(Dispatchers.IO) {
-        query(windowUri(PathlineContract.Trips.CONTENT_URI, startMs, endMs, group, limit)) { c -> trip(c) }
+        query(
+            windowUri(
+                PathlineContract.Trips.CONTENT_URI,
+                startMs,
+                endMs,
+                group,
+                limit
+            )
+        ) { c -> trip(c) }
     }
 
     /** ONE trip by id — same visibility rules as [visitById]. */
@@ -265,14 +287,20 @@ class PathlineClient(private val resolver: ContentResolver) {
     }
 
     /** Batch-resolve visible trips by stable id. Missing, invisible or out-of-window ids are omitted. */
-    suspend fun tripsByIds(ids: List<Long>, group: Long? = null): List<Trip> = withContext(Dispatchers.IO) {
-        if (ids.isEmpty()) return@withContext emptyList()
-        val uri = PathlineContract.Trips.CONTENT_URI.buildUpon()
-            .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
-            .apply { if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString()) }
-            .build()
-        query(uri) { c -> trip(c) }
-    }
+    suspend fun tripsByIds(ids: List<Long>, group: Long? = null): List<Trip> =
+        withContext(Dispatchers.IO) {
+            if (ids.isEmpty()) return@withContext emptyList()
+            val uri = PathlineContract.Trips.CONTENT_URI.buildUpon()
+                .appendQueryParameter(PathlineContract.QueryParams.IDS, ids.joinToString(","))
+                .apply {
+                    if (group != null) appendQueryParameter(
+                        PathlineContract.QueryParams.GROUP,
+                        group.toString()
+                    )
+                }
+                .build()
+            query(uri) { c -> trip(c) }
+        }
 
     /** Raw samples in the window (point-in-window semantics). Needs READ_LOCATION_HISTORY. */
     suspend fun samples(
@@ -335,7 +363,15 @@ class PathlineClient(private val resolver: ContentResolver) {
         limit: Int? = null,
         group: Long? = null,
     ): List<Place> = withContext(Dispatchers.IO) {
-        query(searchUri(PathlineContract.Places.CONTENT_URI, q, fields, group, limit = limit)) { c -> place(c) }
+        query(
+            searchUri(
+                PathlineContract.Places.CONTENT_URI,
+                q,
+                fields,
+                group,
+                limit = limit
+            )
+        ) { c -> place(c) }
     }
 
     /**
@@ -377,7 +413,13 @@ class PathlineClient(private val resolver: ContentResolver) {
     ): List<Visit> = withContext(Dispatchers.IO) {
         val h = PathlineContract.Places.VisitHistory
         query(
-            windowUri(PathlineContract.Places.visitHistoryUri(placeId), startMs, endMs, group, limit),
+            windowUri(
+                PathlineContract.Places.visitHistoryUri(placeId),
+                startMs,
+                endMs,
+                group,
+                limit
+            ),
         ) { c ->
             Visit(
                 id = c.reqLong(h.ID),
@@ -456,10 +498,19 @@ class PathlineClient(private val resolver: ContentResolver) {
             .appendQueryParameter(t.DESTINATION_PLACE_ID, destinationPlaceId.toString())
             .apply {
                 if (travelMode != null) appendQueryParameter(t.TRAVEL_MODE, travelMode)
-                if (departureTimeMs != null) appendQueryParameter(t.DEPARTURE_TIME_MS, departureTimeMs.toString())
-                if (arrivalTimeMs != null) appendQueryParameter(t.ARRIVAL_TIME_MS, arrivalTimeMs.toString())
+                if (departureTimeMs != null) appendQueryParameter(
+                    t.DEPARTURE_TIME_MS,
+                    departureTimeMs.toString()
+                )
+                if (arrivalTimeMs != null) appendQueryParameter(
+                    t.ARRIVAL_TIME_MS,
+                    arrivalTimeMs.toString()
+                )
                 if (!modes.isNullOrEmpty()) appendQueryParameter(t.MODES, modes.joinToString(","))
-                if (routingPreference != null) appendQueryParameter(t.ROUTING_PREFERENCE, routingPreference)
+                if (routingPreference != null) appendQueryParameter(
+                    t.ROUTING_PREFERENCE,
+                    routingPreference
+                )
                 if (traffic != null) appendQueryParameter(t.TRAFFIC, traffic)
                 if (avoidTolls) appendQueryParameter(t.AVOID_TOLLS, "1")
                 if (avoidHighways) appendQueryParameter(t.AVOID_HIGHWAYS, "1")
@@ -467,7 +518,10 @@ class PathlineClient(private val resolver: ContentResolver) {
                 if (alternatives) appendQueryParameter(t.ALTERNATIVES, "1")
                 if (languageCode != null) appendQueryParameter(t.LANGUAGE_CODE, languageCode)
                 if (regionCode != null) appendQueryParameter(t.REGION_CODE, regionCode)
-                if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString())
+                if (group != null) appendQueryParameter(
+                    PathlineContract.QueryParams.GROUP,
+                    group.toString()
+                )
             }
             .build()
         query(uri) { c ->
@@ -538,7 +592,13 @@ class PathlineClient(private val resolver: ContentResolver) {
             val uri =
                 if (q == null) PathlineContract.Tags.CONTENT_URI.buildUpon()
                     .apply { appendLimitAndGroup(limit, group) }.build()
-                else searchUri(PathlineContract.Tags.CONTENT_URI, q, fields = null, group = group, limit = limit)
+                else searchUri(
+                    PathlineContract.Tags.CONTENT_URI,
+                    q,
+                    fields = null,
+                    group = group,
+                    limit = limit
+                )
             query(uri) { c -> tag(c) }
         }
 
@@ -548,12 +608,16 @@ class PathlineClient(private val resolver: ContentResolver) {
 
     suspend fun tagsFor(target: AnnotationTarget, id: Long, group: Long? = null): List<Tag> =
         withContext(Dispatchers.IO) {
-            query(PathlineContract.Annotations.tagsUri(target.collection, id).withGroup(group)) { c -> tag(c) }
+            query(
+                PathlineContract.Annotations.tagsUri(target.collection, id).withGroup(group)
+            ) { c -> tag(c) }
         }
 
     suspend fun noteFor(target: AnnotationTarget, id: Long, group: Long? = null): Note? =
         withContext(Dispatchers.IO) {
-            query(PathlineContract.Annotations.notesUri(target.collection, id).withGroup(group)) { c ->
+            query(
+                PathlineContract.Annotations.notesUri(target.collection, id).withGroup(group)
+            ) { c ->
                 Note(
                     content = c.reqString(PathlineContract.Annotations.Notes.CONTENT),
                     updatedAtMs = c.reqLong(PathlineContract.Annotations.Notes.UPDATED_AT_MS),
@@ -565,7 +629,9 @@ class PathlineClient(private val resolver: ContentResolver) {
     /** The target's whole memory map — one call, one row per key. */
     suspend fun memoriesFor(target: AnnotationTarget, id: Long, group: Long? = null): List<Memory> =
         withContext(Dispatchers.IO) {
-            query(PathlineContract.Annotations.memoriesUri(target.collection, id).withGroup(group)) { c ->
+            query(
+                PathlineContract.Annotations.memoriesUri(target.collection, id).withGroup(group)
+            ) { c ->
                 Memory(
                     key = c.reqString(PathlineContract.Annotations.Memories.KEY),
                     value = c.reqString(PathlineContract.Annotations.Memories.VALUE),
@@ -578,33 +644,44 @@ class PathlineClient(private val resolver: ContentResolver) {
         }
 
     /** Apply [name] as a tag (any spelling; re-applying refreshes the spelling). */
-    suspend fun applyTag(target: AnnotationTarget, id: Long, name: String) = withContext(Dispatchers.IO) {
-        resolver.insert(
-            PathlineContract.Annotations.tagsUri(target.collection, id),
-            ContentValues().apply { put(PathlineContract.Tags.NAME, name) },
-        )
-        Unit
-    }
+    suspend fun applyTag(target: AnnotationTarget, id: Long, name: String) =
+        withContext(Dispatchers.IO) {
+            resolver.insert(
+                PathlineContract.Annotations.tagsUri(target.collection, id),
+                ContentValues().apply { put(PathlineContract.Tags.NAME, name) },
+            )
+            Unit
+        }
 
     /** Remove the [name] tag from the target; true when a link was actually removed. */
     suspend fun removeTag(target: AnnotationTarget, id: Long, name: String): Boolean =
         withContext(Dispatchers.IO) {
-            resolver.delete(PathlineContract.Annotations.tagUri(target.collection, id, name), null, null) > 0
+            resolver.delete(
+                PathlineContract.Annotations.tagUri(target.collection, id, name),
+                null,
+                null
+            ) > 0
         }
 
     /** Replace the target's note (blank clears it). */
-    suspend fun setNote(target: AnnotationTarget, id: Long, content: String) = withContext(Dispatchers.IO) {
-        resolver.insert(
-            PathlineContract.Annotations.notesUri(target.collection, id),
-            ContentValues().apply { put(PathlineContract.Annotations.Notes.CONTENT, content) },
-        )
-        Unit
-    }
+    suspend fun setNote(target: AnnotationTarget, id: Long, content: String) =
+        withContext(Dispatchers.IO) {
+            resolver.insert(
+                PathlineContract.Annotations.notesUri(target.collection, id),
+                ContentValues().apply { put(PathlineContract.Annotations.Notes.CONTENT, content) },
+            )
+            Unit
+        }
 
     /** Clear the target's note; true when there was one to remove. */
-    suspend fun clearNote(target: AnnotationTarget, id: Long): Boolean = withContext(Dispatchers.IO) {
-        resolver.delete(PathlineContract.Annotations.notesUri(target.collection, id), null, null) > 0
-    }
+    suspend fun clearNote(target: AnnotationTarget, id: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            resolver.delete(
+                PathlineContract.Annotations.notesUri(target.collection, id),
+                null,
+                null
+            ) > 0
+        }
 
     /** Put one memory entry; [confidence] in [0,1] (omit for 1.0 — stated as fact); [source] is
      *  the writer's optional provenance note. */
@@ -621,7 +698,10 @@ class PathlineClient(private val resolver: ContentResolver) {
             ContentValues().apply {
                 put(PathlineContract.Annotations.Memories.KEY, key)
                 put(PathlineContract.Annotations.Memories.VALUE, value)
-                if (confidence != null) put(PathlineContract.Annotations.Memories.CONFIDENCE, confidence)
+                if (confidence != null) put(
+                    PathlineContract.Annotations.Memories.CONFIDENCE,
+                    confidence
+                )
                 if (source != null) put(PathlineContract.Annotations.Memories.SOURCE, source)
             },
         )
@@ -631,13 +711,22 @@ class PathlineClient(private val resolver: ContentResolver) {
     /** Remove one memory entry; true when the key existed. */
     suspend fun removeMemory(target: AnnotationTarget, id: Long, key: String): Boolean =
         withContext(Dispatchers.IO) {
-            resolver.delete(PathlineContract.Annotations.memoryUri(target.collection, id, key), null, null) > 0
+            resolver.delete(
+                PathlineContract.Annotations.memoryUri(target.collection, id, key),
+                null,
+                null
+            ) > 0
         }
 
     /** Clear the target's whole memory map; returns how many keys were removed. */
-    suspend fun clearMemories(target: AnnotationTarget, id: Long): Int = withContext(Dispatchers.IO) {
-        resolver.delete(PathlineContract.Annotations.memoriesUri(target.collection, id), null, null)
-    }
+    suspend fun clearMemories(target: AnnotationTarget, id: Long): Int =
+        withContext(Dispatchers.IO) {
+            resolver.delete(
+                PathlineContract.Annotations.memoriesUri(target.collection, id),
+                null,
+                null
+            )
+        }
 
     // ---- Concepts (reads need READ_ANNOTATIONS only; writes need WRITE_ANNOTATIONS) -------------
 
@@ -654,7 +743,13 @@ class PathlineClient(private val resolver: ContentResolver) {
         val base =
             if (q == null) PathlineContract.Concepts.CONTENT_URI.buildUpon()
                 .apply { appendLimitAndGroup(limit, group) }.build()
-            else searchUri(PathlineContract.Concepts.CONTENT_URI, q, fields = null, group = group, limit = limit)
+            else searchUri(
+                PathlineContract.Concepts.CONTENT_URI,
+                q,
+                fields = null,
+                group = group,
+                limit = limit
+            )
         var uri =
             if (kind == null) base
             else base.buildUpon()
@@ -667,7 +762,9 @@ class PathlineClient(private val resolver: ContentResolver) {
     }
 
     suspend fun conceptById(id: Long, group: Long? = null): Concept? = withContext(Dispatchers.IO) {
-        query(PathlineContract.Concepts.itemUri(id).withGroup(group)) { c -> concept(c) }.firstOrNull()
+        query(
+            PathlineContract.Concepts.itemUri(id).withGroup(group)
+        ) { c -> concept(c) }.firstOrNull()
     }
 
     /** The concept's members (typed id pointers; resolve them via the regular collections). */
@@ -703,7 +800,11 @@ class PathlineClient(private val resolver: ContentResolver) {
         }
 
     /** Create a concept; returns its id. A canonical-name collision throws with the existing id. */
-    suspend fun createConcept(name: String, kind: String? = null, description: String? = null): Long =
+    suspend fun createConcept(
+        name: String,
+        kind: String? = null,
+        description: String? = null
+    ): Long =
         withContext(Dispatchers.IO) {
             val uri = resolver.insert(
                 PathlineContract.Concepts.CONTENT_URI,
@@ -767,7 +868,11 @@ class PathlineClient(private val resolver: ContentResolver) {
         }
 
     /** Detach a member; true when it was attached. */
-    suspend fun removeConceptMember(conceptId: Long, target: AnnotationTarget, targetId: Long): Boolean =
+    suspend fun removeConceptMember(
+        conceptId: Long,
+        target: AnnotationTarget,
+        targetId: Long
+    ): Boolean =
         withContext(Dispatchers.IO) {
             resolver.delete(
                 PathlineContract.Concepts.memberUri(conceptId, target.name.lowercase(), targetId),
@@ -800,7 +905,13 @@ class PathlineClient(private val resolver: ContentResolver) {
         return out
     }
 
-    private fun windowUri(base: Uri, startMs: Long, endMs: Long, group: Long?, limit: Int? = null): Uri =
+    private fun windowUri(
+        base: Uri,
+        startMs: Long,
+        endMs: Long,
+        group: Long?,
+        limit: Int? = null
+    ): Uri =
         base.buildUpon()
             .appendQueryParameter(PathlineContract.QueryParams.START, startMs.toString())
             .appendQueryParameter(PathlineContract.QueryParams.END, endMs.toString())
@@ -822,20 +933,33 @@ class PathlineClient(private val resolver: ContentResolver) {
             if (!fields.isNullOrEmpty()) {
                 appendQueryParameter(PathlineContract.QueryParams.FIELDS, fields.joinToString(","))
             }
-            if (startMs != null) appendQueryParameter(PathlineContract.QueryParams.START, startMs.toString())
-            if (endMs != null) appendQueryParameter(PathlineContract.QueryParams.END, endMs.toString())
+            if (startMs != null) appendQueryParameter(
+                PathlineContract.QueryParams.START,
+                startMs.toString()
+            )
+            if (endMs != null) appendQueryParameter(
+                PathlineContract.QueryParams.END,
+                endMs.toString()
+            )
             appendLimitAndGroup(limit, group)
         }
         .build()
 
     private fun Uri.Builder.appendLimitAndGroup(limit: Int?, group: Long?): Uri.Builder = apply {
-        if (limit != null) appendQueryParameter(PathlineContract.QueryParams.LIMIT, limit.toString())
-        if (group != null) appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString())
+        if (limit != null) appendQueryParameter(
+            PathlineContract.QueryParams.LIMIT,
+            limit.toString()
+        )
+        if (group != null) appendQueryParameter(
+            PathlineContract.QueryParams.GROUP,
+            group.toString()
+        )
     }
 
     private fun Uri.withGroup(group: Long?): Uri =
         if (group == null) this
-        else buildUpon().appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString()).build()
+        else buildUpon().appendQueryParameter(PathlineContract.QueryParams.GROUP, group.toString())
+            .build()
 
     // -- shared row mappers (plain reads and searches return the same row shapes) --
 

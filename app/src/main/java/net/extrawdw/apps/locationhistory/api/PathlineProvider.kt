@@ -182,7 +182,10 @@ class PathlineProvider : ContentProvider() {
         if (!event.notify) return@AccessLogger
         runCatching {
             entryPoint.workScheduler()
-                .enqueueApiAccessNotification(caller.pkgOrUnknown, denied = event.deniedPermission != null)
+                .enqueueApiAccessNotification(
+                    caller.pkgOrUnknown,
+                    denied = event.deniedPermission != null
+                )
         }
     }
 
@@ -272,7 +275,13 @@ class PathlineProvider : ContentProvider() {
             CODE_CONCEPTS -> return conceptsQuery(caller, uri, now)
             CODE_CONCEPT_ITEM -> return conceptItemQuery(caller, uri, now)
             CODE_CONCEPT_MEMBERS -> return conceptMembersQuery(caller, uri, now)
-            in CONCEPTS_FOR_TARGET_CODES -> return targetConceptsQuery(caller, uri, targetFor(code), now)
+            in CONCEPTS_FOR_TARGET_CODES -> return targetConceptsQuery(
+                caller,
+                uri,
+                targetFor(code),
+                now
+            )
+
             in TAGS_CODES -> return targetTagsQuery(caller, uri, targetFor(code), now)
             in NOTES_CODES -> return targetNotesQuery(caller, uri, targetFor(code), now)
             in MEMORIES_CODES -> return targetMemoriesQuery(caller, uri, targetFor(code), now)
@@ -511,14 +520,18 @@ class PathlineProvider : ContentProvider() {
         }
         val transitPreference = uri.getQueryParameter(t.ROUTING_PREFERENCE)
             ?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
-        require(transitPreference == null ||
-            transitPreference == "LESS_WALKING" || transitPreference == "FEWER_TRANSFERS") {
+        require(
+            transitPreference == null ||
+                    transitPreference == "LESS_WALKING" || transitPreference == "FEWER_TRANSFERS"
+        ) {
             "'${t.ROUTING_PREFERENCE}' must be LESS_WALKING or FEWER_TRANSFERS"
         }
         val traffic = uri.getQueryParameter(t.TRAFFIC)
             ?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
-        require(traffic == null ||
-            traffic == "TRAFFIC_UNAWARE" || traffic == "TRAFFIC_AWARE" || traffic == "TRAFFIC_AWARE_OPTIMAL") {
+        require(
+            traffic == null ||
+                    traffic == "TRAFFIC_UNAWARE" || traffic == "TRAFFIC_AWARE" || traffic == "TRAFFIC_AWARE_OPTIMAL"
+        ) {
             "'${t.TRAFFIC}' must be TRAFFIC_UNAWARE, TRAFFIC_AWARE, or TRAFFIC_AWARE_OPTIMAL"
         }
 
@@ -537,7 +550,8 @@ class PathlineProvider : ContentProvider() {
             avoidHighways = flag(t.AVOID_HIGHWAYS),
             avoidFerries = flag(t.AVOID_FERRIES),
             computeAlternatives = flag(t.ALTERNATIVES),
-            languageCode = uri.getQueryParameter(t.LANGUAGE_CODE)?.trim()?.takeIf { it.isNotEmpty() },
+            languageCode = uri.getQueryParameter(t.LANGUAGE_CODE)?.trim()
+                ?.takeIf { it.isNotEmpty() },
             regionCode = uri.getQueryParameter(t.REGION_CODE)?.trim()?.takeIf { it.isNotEmpty() },
         )
     }
@@ -596,7 +610,8 @@ class PathlineProvider : ContentProvider() {
                     val granted = grantDao.grantedAmong(pkg, nearby.map { it.first.id }).toSet()
                     nearby = nearby.filter { (p, _) -> p.id in granted }
                 }
-                if (requested != null) nearby = nearby.filter { (p, _) -> p.id in requested.toSet() }
+                if (requested != null) nearby =
+                    nearby.filter { (p, _) -> p.id in requested.toSet() }
                 if (q != null) {
                     require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                     val matched = searchEngine.matchedPlaceIds(
@@ -750,7 +765,8 @@ class PathlineProvider : ContentProvider() {
                     .grantedAmong(caller.pkgOrUnknown, all.map { it.placeId }).toSet()
                 all.filter { it.placeId in granted }
             }
-            val filtered = if (requested == null) scoped else scoped.filter { it.placeId in requested }
+            val filtered =
+                if (requested == null) scoped else scoped.filter { it.placeId in requested }
             parseLimit(uri)?.let { return@runBlocking filtered.take(it) }
             filtered
         }
@@ -839,7 +855,12 @@ class PathlineProvider : ContentProvider() {
 
     /** `…/<target>/<id>/tags`: the tags of one place/visit/trip/concept, as [PathlineContract.Tags]
      *  rows — here with the per-link [PathlineContract.Tags.ATTACHED_BY_ME] populated. */
-    private fun targetTagsQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetTagsQuery(
+        caller: Caller,
+        uri: Uri,
+        target: AnnotationTarget,
+        now: Long
+    ): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
         gate.requireAnnotationRead(caller, target, PathlineContract.Tags.PATH, now, groupId)
@@ -869,7 +890,12 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** `…/<target>/<id>/notes`: the target's single note (0/1 rows). */
-    private fun targetNotesQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetNotesQuery(
+        caller: Caller,
+        uri: Uri,
+        target: AnnotationTarget,
+        now: Long
+    ): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
         gate.requireAnnotationRead(caller, target, DATA_TYPE_NOTES, now, groupId)
@@ -898,7 +924,12 @@ class PathlineProvider : ContentProvider() {
     }
 
     /** `…/<target>/<id>/memories`: the target's memory map, one row per key. */
-    private fun targetMemoriesQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetMemoriesQuery(
+        caller: Caller,
+        uri: Uri,
+        target: AnnotationTarget,
+        now: Long
+    ): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
         gate.requireAnnotationRead(caller, target, DATA_TYPE_MEMORIES, now, groupId)
@@ -1061,7 +1092,12 @@ class PathlineProvider : ContentProvider() {
     /** `…/<target>/<id>/concepts`: the concepts a visible target belongs to, with ATTACHED_BY_ME.
      *  Serves places/visits/trips and — for nesting's "which concepts contain this one" — concepts.
      *  Archived containers are filtered per the `archived` param (default: excluded). */
-    private fun targetConceptsQuery(caller: Caller, uri: Uri, target: AnnotationTarget, now: Long): Cursor {
+    private fun targetConceptsQuery(
+        caller: Caller,
+        uri: Uri,
+        target: AnnotationTarget,
+        now: Long
+    ): Cursor {
         val id = targetIdFrom(uri)
         val groupId = parseGroup(uri, now)
         val archivedMode = parseArchivedMode(uri)
@@ -1246,6 +1282,7 @@ class PathlineProvider : ContentProvider() {
         // An `ids` filter is intersected with the matches, like on `places` — never an error.
         val requested = uri.getQueryParameter(PathlineContract.QueryParams.IDS)
             ?.split(',')?.mapNotNull { it.trim().toLongOrNull() }?.toSet()
+
         fun <T> List<T>.onlyRequested(id: (T) -> Long): List<T> =
             if (requested == null) this else filter { id(it) in requested }
 
@@ -1771,7 +1808,12 @@ class PathlineProvider : ContentProvider() {
      *  be visible/writable to the caller (its read tier + [ApiGate.targetVisible]) so ephemeral
      *  unconfirmed ids never enter a concept; a `concept` member that would close a membership
      *  cycle is rejected in the store. */
-    private fun insertConceptMember(caller: Caller, uri: Uri, values: ContentValues?, now: Long): Uri {
+    private fun insertConceptMember(
+        caller: Caller,
+        uri: Uri,
+        values: ContentValues?,
+        now: Long
+    ): Uri {
         val conceptId = targetIdFrom(uri)
         val target = parseMemberType(
             values?.getAsString(PathlineContract.Concepts.Members.TARGET_TYPE),
@@ -1946,7 +1988,12 @@ class PathlineProvider : ContentProvider() {
             CODE_CONCEPT_MEMORY_KEY,
         )
         val CONCEPTS_FOR_TARGET_CODES =
-            setOf(CODE_PLACE_CONCEPTS, CODE_VISIT_CONCEPTS, CODE_TRIP_CONCEPTS, CODE_CONCEPT_CONCEPTS)
+            setOf(
+                CODE_PLACE_CONCEPTS,
+                CODE_VISIT_CONCEPTS,
+                CODE_TRIP_CONCEPTS,
+                CODE_CONCEPT_CONCEPTS
+            )
 
         /** Audit-log `dataType` tokens for the two annotation payload kinds (tags use [PathlineContract.Tags.PATH]). */
         const val DATA_TYPE_NOTES = PathlineContract.Annotations.NOTES_PATH
@@ -1967,6 +2014,7 @@ class PathlineProvider : ContentProvider() {
 
         /** Upper bound for a memory entry's `source` provenance note (a pointer, not a document). */
         const val MAX_MEMORY_SOURCE_LENGTH = 500
+
         /** Small grace for clock skew; departure/arrival times must otherwise not be in the past. */
         const val TRAVEL_PAST_SKEW_MS = 5L * 60 * 1000
         const val TRAVEL_FUTURE_WINDOW_MS = 100L * 24 * 60 * 60 * 1000

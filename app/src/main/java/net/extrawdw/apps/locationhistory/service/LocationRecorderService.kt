@@ -107,7 +107,10 @@ class LocationRecorderService : LifecycleService() {
 
         // A fresh launch (a restart) starts a new log session; re-tunes don't.
         if (isServiceRestart) AppLog.startSession("service-restart")
-        AppLog.i(TAG, "startRecording state=$state display=$display profile=$profile (restart=$isServiceRestart)")
+        AppLog.i(
+            TAG,
+            "startRecording state=$state display=$display profile=$profile (restart=$isServiceRestart)"
+        )
 
         if (!startForeground(state, display)) {
             // Also remove the PI location request: it is system-persistent and would otherwise

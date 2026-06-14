@@ -91,9 +91,15 @@ internal class RecordingPolicy(
      * motion (run/cycle/vehicle) leaves the stay immediately; walking from a stay is verified first
      * (it can be in-place dwell jitter).
      */
-    fun onArTransitions(transitions: List<Pair<ArActivity, Boolean>>, nowMs: Long): List<RecordingAction> {
+    fun onArTransitions(
+        transitions: List<Pair<ArActivity, Boolean>>,
+        nowMs: Long
+    ): List<RecordingAction> {
         for ((activity, isEnter) in transitions) {
-            if (isEnter) arTimeline.recordEnter(activity, nowMs) else arTimeline.recordExit(activity, nowMs)
+            if (isEnter) arTimeline.recordEnter(
+                activity,
+                nowMs
+            ) else arTimeline.recordExit(activity, nowMs)
         }
         // Drive the decision only when the most recent transition is an ENTER (an EXIT just ages the
         // timeline). The transitions are recorded above regardless, so recency stays accurate.
@@ -136,10 +142,10 @@ internal class RecordingPolicy(
                 // in-radius jitter fix (the drift guard still blocks the jitter).
                 val departure = fixes.firstOrNull {
                     it.indicatesMotion() &&
-                        !heuristics.isDriftAt(
-                            RecorderState.STATIONARY,
-                            it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
-                        )
+                            !heuristics.isDriftAt(
+                                RecorderState.STATIONARY,
+                                it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
+                            )
                 }
                 if (departure != null) toMoving("fix_departure") else emptyList()
             }
@@ -152,10 +158,11 @@ internal class RecordingPolicy(
                 if (fixes.any {
                         // A coarse outlier (often later excluded as low_accuracy) is indoor multipath,
                         // not a departure — only a positionally-trustworthy fix may confirm.
-                        (it.fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                            !heuristics.isWithinStay(
-                                it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
-                            )
+                        (it.fix.accuracyMeters
+                            ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
+                                !heuristics.isWithinStay(
+                                    it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
+                                )
                     }
                 ) toMoving("verify_confirmed") else emptyList()
 
@@ -167,7 +174,8 @@ internal class RecordingPolicy(
             // clock (net displacement + steps), NOT a stale AR-moving edge or raw IMU energy.
             RecorderState.MOVING -> when {
                 movingFix != null || stepDelta > 0 -> emptyList()
-                else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
+                else -> heuristics.stationaryClusterCandidate()
+                    ?.let { toStationary(it, "fix_cluster") }
                     ?: if (idleElapsed(nowMs, Constants.MOVING_IDLE_TIMEOUT_MS))
                         toStationary(null, "moving_idle_timeout")
                     else emptyList()
@@ -175,7 +183,8 @@ internal class RecordingPolicy(
 
             RecorderState.UNKNOWN -> when {
                 movingFix != null -> toMoving("fix_departure")
-                else -> heuristics.stationaryClusterCandidate()?.let { toStationary(it, "fix_cluster") }
+                else -> heuristics.stationaryClusterCandidate()
+                    ?.let { toStationary(it, "fix_cluster") }
                     ?: if (idleElapsed(nowMs, Constants.UNKNOWN_IDLE_TIMEOUT_MS))
                         toStationary(null, "unknown_idle_timeout")
                     else emptyList()
@@ -194,7 +203,11 @@ internal class RecordingPolicy(
      * shaking phone still confirms (below), and a still phone with no fix falls back to the slower
      * AR / significant-motion / Doze-exit signals rather than bursting GPS on every spurious exit.
      */
-    fun onGeofenceExit(freshFix: RecentFix?, motionVariance: Float, nowMs: Long): List<RecordingAction> {
+    fun onGeofenceExit(
+        freshFix: RecentFix?,
+        motionVariance: Float,
+        nowMs: Long
+    ): List<RecordingAction> {
         // A stale exit while already moving (geofences are only armed at a stay) just commits.
         if (state != RecorderState.STATIONARY) return toMoving("geofence_exit")
         // A physically shaking phone is real motion the geofence can't see — and, crucially, it
@@ -208,7 +221,7 @@ internal class RecordingPolicy(
         // displacement (both via the net-aware isWithinStay). Otherwise stay put and re-arm the fence.
         val trustedDisplacement =
             (f.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                !heuristics.isWithinStay(f.lat, f.lon, f.speedMps ?: 0f, motionVariance)
+                    !heuristics.isWithinStay(f.lat, f.lon, f.speedMps ?: 0f, motionVariance)
         return if (trustedDisplacement) toMoving("geofence_exit") else emptyList()
     }
 
@@ -231,7 +244,11 @@ internal class RecordingPolicy(
             // to the next fix; entering stationary with no anchor would also force a GPS bootstrap
             // during deep idle, which we must not do.
             if (state == RecorderState.STATIONARY || heuristics.lastFixLatLon() == null) return emptyList()
-            return toStationary(heuristics.stationaryClusterCandidate(), "doze_idle", armSigMotion = false)
+            return toStationary(
+                heuristics.stationaryClusterCandidate(),
+                "doze_idle",
+                armSigMotion = false
+            )
         }
         if (state != RecorderState.STATIONARY) return emptyList()
         return if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING)
@@ -254,7 +271,8 @@ internal class RecordingPolicy(
         // clobber the live fixes with stored ones (this path is also reached from foreground resume).
         if (state == RecorderState.STATIONARY) return emptyList()
         heuristics.replaceFixes(storedFixes)
-        return heuristics.stationaryClusterCandidate()?.let { toStationary(it, "resume_repair") } ?: emptyList()
+        return heuristics.stationaryClusterCandidate()?.let { toStationary(it, "resume_repair") }
+            ?: emptyList()
     }
 
     // --- transitions ----------------------------------------------------------------------------
@@ -270,7 +288,8 @@ internal class RecordingPolicy(
         // Anchor the drift guard. Prefer the cluster centroid; otherwise the latest buffered fix
         // (Doze/idle-timeout paths); null leaves drift undecidable, which never *suppresses* a departure.
         heuristics.stationaryAnchor =
-            candidate?.let { it.centroidLatitude to it.centroidLongitude } ?: heuristics.lastFixLatLon()
+            candidate?.let { it.centroidLatitude to it.centroidLongitude }
+                ?: heuristics.lastFixLatLon()
         return listOf(RecordingAction.EnterStationary(candidate, reason, armSigMotion))
     }
 
@@ -316,6 +335,7 @@ internal class RecordingPolicy(
     private fun ClassifiedFix.indicatesMotion(): Boolean {
         if (heuristics.recentlyMoving()) return true
         if (classifiedState == DevicePhysicalState.STATIONARY) return false
-        return isConfident && (fix.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS
+        return isConfident && (fix.accuracyMeters
+            ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS
     }
 }

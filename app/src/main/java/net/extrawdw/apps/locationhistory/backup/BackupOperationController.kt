@@ -155,7 +155,13 @@ class BackupOperationController @Inject constructor(
                 val reporter = object : BackupReporter {
                     override fun log(message: String) {
                         AppLog.i(TAG, message)
-                        _state.update { s -> s?.copy(logs = (s.logs + message).takeLast(MAX_LOG_LINES)) }
+                        _state.update { s ->
+                            s?.copy(
+                                logs = (s.logs + message).takeLast(
+                                    MAX_LOG_LINES
+                                )
+                            )
+                        }
                     }
 
                     override fun progress(fraction: Float) {

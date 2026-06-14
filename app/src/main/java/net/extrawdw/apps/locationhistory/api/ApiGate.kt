@@ -183,7 +183,12 @@ internal class ApiGate(
      * window — the last 30 days unless the caller holds READ_EXTENDED_HISTORY. An invisible target
      * reads as empty and rejects writes, indistinguishable from a nonexistent one.
      */
-    suspend fun targetVisible(caller: Caller, target: AnnotationTarget, id: Long, nowMs: Long): Boolean =
+    suspend fun targetVisible(
+        caller: Caller,
+        target: AnnotationTarget,
+        id: Long,
+        nowMs: Long
+    ): Boolean =
         when (target) {
             AnnotationTarget.PLACE -> {
                 val inScope = caller.holds(PathlineContract.Permissions.READ_ALL_PLACES) ||

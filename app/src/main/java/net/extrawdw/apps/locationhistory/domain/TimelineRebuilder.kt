@@ -109,7 +109,8 @@ internal class TimelineRebuilder(
         val latest = sampleDao.mostRecent()
         // Detect stays over the full window (true extents), keep those that touch this day, and skip
         // any already covered by a confirmed (ground-truth) visit or a confirmed trip.
-        val detectedStays = visitDetector.detectVisits(samples).filter { it.overlaps(dayStart, dayEnd) }
+        val detectedStays =
+            visitDetector.detectVisits(samples).filter { it.overlaps(dayStart, dayEnd) }
         val candidates = detectedStays
             .filterNot { candidate ->
                 confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } ||
@@ -299,7 +300,12 @@ internal class TimelineRebuilder(
             val walkStart = movingRuns(sampleDao.rangeForComputation(current.endMs, now + 1))
                 .minOfOrNull { it.first }
             if (walkStart != null) {
-                visitDao.update(current.copy(endMs = maxOf(current.endMs, walkStart), isOngoing = false))
+                visitDao.update(
+                    current.copy(
+                        endMs = maxOf(current.endMs, walkStart),
+                        isOngoing = false
+                    )
+                )
                 return
             }
             // Recompute the visit's own center/radius from its (now longer) sample span so the
