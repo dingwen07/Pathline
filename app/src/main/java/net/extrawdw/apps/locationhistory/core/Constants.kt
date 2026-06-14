@@ -111,6 +111,33 @@ object Constants {
      *  merged even when most of its fixes happen to sit inside the home radius. */
     const val DRIFT_TRIP_MOVING_FIX_FRACTION = 0.1
 
+    // --- Speed-aware stay detection (carve a near-home walk out of a stay) ---------------------
+    // See docs/doppler-timeline-findings.md. GPS Doppler speed is the only clean signal that splits a
+    // tight near-home walk from indoor drift when geometry can't (the walk never leaves the radius).
+    // Tuned across the June 2026 dumps: real walks carry valid speed >= [WALK_SPEED_FLOOR_MPS] on
+    // 51-69% of fixes, drift/stillness on 0-3% — a wide, null-safe margin (a null speed is never
+    // "moving", so it just doesn't count; never fold null -> 0).
+
+    /** Per-fix valid-Doppler floor (m/s) above which a fix shows real motion when judging whether a
+     *  *window* is moving. Deliberately BELOW the stricter per-fix [DRIFT_MOVING_SPEED_MPS] "definitely
+     *  moving" line: these near-home walks are slow (~1.0 m/s median), so 1.2 clears only ~24% of their
+     *  fixes (near drift), while 0.8 clears 51-69%. Matches the recorder's `meanSpeed > 0.6` cluster cut. */
+    const val WALK_SPEED_FLOOR_MPS = 0.8f
+
+    /** A window counts as a moving run when at least this fraction of its fixes carry a valid speed
+     *  >= [WALK_SPEED_FLOOR_MPS]. Walks land at 0.51-0.69, drift/stillness at 0.00-0.03 — 0.15 sits in
+     *  the gap with a wide margin either way. Sibling of [DRIFT_TRIP_MOVING_FIX_FRACTION]. */
+    const val WALK_MOVING_FIX_FRACTION = 0.15
+
+    /** Sliding-window width (ms) over which [WALK_MOVING_FIX_FRACTION] is measured per fix. ~one
+     *  [MIN_VISIT_DURATION_MS], long enough to ride out the 0-speed fixes between steps. */
+    const val MOVING_RUN_WINDOW_MS = 3 * 60_000L
+
+    /** Minimum fixes in the window before its moving fraction is trusted, so a sparsely-sampled stay
+     *  (low-power cadence: a fix every few minutes) is never declared "moving" off one or two fixes.
+     *  The dumps' ambiguous case had 4 fixes; require more. */
+    const val MIN_MOVING_WINDOW_FIXES = 5
+
     /** Max gap (ms) from a drift trip to each bounding visit for them to be fused. Looser than
      *  [MERGE_GAP_MS] because the recorder leaves a ~2-min dead zone around the visit split that
      *  creates these trips; still tight enough not to weld a same-place pair across a real outage. */

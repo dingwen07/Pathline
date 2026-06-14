@@ -291,6 +291,17 @@ internal class TimelineRebuilder(
         // assumed — a recording outage must not keep inflating the stay to `now`.
         val freshEvidence = now - latest.timestampMs <= Constants.MAX_EVIDENCE_GAP_MS
         if (stillThere && freshEvidence) {
+            // Speed-aware guard: a sustained valid-Doppler run since this stay was last extended is a
+            // walk the user took and returned from — a near-home loop the geometry path reads as
+            // continuous presence because it never left the radius. Finalize the stay at the walk's
+            // start (which then surfaces as its own trip) instead of welding the confirmed stay across
+            // it. (See docs/doppler-timeline-findings.md; the June 14 tight-walk regression.)
+            val walkStart = movingRuns(sampleDao.rangeForComputation(current.endMs, now + 1))
+                .minOfOrNull { it.first }
+            if (walkStart != null) {
+                visitDao.update(current.copy(endMs = maxOf(current.endMs, walkStart), isOngoing = false))
+                return
+            }
             // Recompute the visit's own center/radius from its (now longer) sample span so the
             // visit circle stays accurate as the stay grows — this also feeds the place's
             // recency-weighted radius/center.

@@ -116,6 +116,19 @@ class TimelineRebuilderTest {
         }
     }
 
+    /** A dense near-home walk: a fix every 12 s carrying real Doppler speed but drifting only ~25 m,
+     *  so it never leaves the stationary radius — only the speed signal can carve it out of a stay. */
+    private fun tightWalk(fromMin: Long, toMin: Long, lat: Double = 40.0) {
+        var t = at(fromMin)
+        val end = at(toMin)
+        var k = 0
+        while (t <= end) {
+            sample(t, lat + k * 0.000004, state = DevicePhysicalState.WALKING, speed = 1.0f)
+            t += 12_000L
+            k++
+        }
+    }
+
     /** The default scenario: a stay at 40.0 (10:00-10:30), a walk, a stay at 40.020 (10:50-11:20). */
     private fun seedTwoStaysWithWalkBetween() {
         stay(600, 630, lat = 40.0)
@@ -391,6 +404,27 @@ class TimelineRebuilderTest {
         assertTrue(current.confirmed)
         // ...and only ONE visit may be ongoing: the stale flag is finalized.
         assertFalse(runBlocking { visitDao.byId(101) }!!.isOngoing)
+    }
+
+    @Test
+    fun confirmedOngoingVisit_finalizesAtAWalk_insteadOfWeldingAcrossIt() {
+        // The June 14 regression: an ongoing confirmed home stay, then a tight near-home walk, then
+        // back home. The geometry path read the walk as continued presence and welded the stay across
+        // it to `now`. With the speed-aware guard the stay must finalize at the walk and the walk must
+        // surface as its own trip. (Contrast confirmedOngoingVisit_keepsTrackingNow, where the tail is
+        // genuinely still — no run — and the clock still tracks now.)
+        stay(540, 600, lat = 40.0)
+        tightWalk(601, 612, lat = 40.0)
+        stay(615, 650, lat = 40.0)
+        visitDao.seed(confirmedVisit(id = 100, startMin = 540, endMin = 600, placeId = 7, ongoing = true))
+        nowMs = at(655)
+
+        rebuild()
+
+        val current = runBlocking { visitDao.byId(100) }!!
+        assertFalse("the stay must not weld across the walk", current.isOngoing)
+        assertTrue("the stay closes around the walk, far short of now", current.endMs < at(615))
+        assertTrue("the carved walk surfaces as a trip", tripDao.trips.any { !it.confirmed })
     }
 
     @Test

@@ -41,6 +41,14 @@ class VisitDetector @Inject constructor() {
         val usable = samples.filter { it.includedInComputation }
         if (usable.isEmpty()) return emptyList()
 
+        // Speed-aware split: a sustained valid-Doppler run is real movement, not a stay — even a
+        // near-home walk too tight to leave [Constants.STATIONARY_RADIUS_METERS], which the geometry
+        // below cannot see (it never exits the radius). Closing the open cluster at such a run and
+        // skipping its fixes leaves a gap the trip filler turns into a trip. Drift reads ~0 Doppler,
+        // forms no run, and still clusters as a stay. See docs/doppler-timeline-findings.md.
+        val runs = movingRuns(usable)
+        fun inMotion(ts: Long) = runs.any { ts in it }
+
         val visits = ArrayList<VisitCandidate>()
         var cluster = ArrayList<LocationSampleEntity>()
         var cLat = 0.0
@@ -67,6 +75,12 @@ class VisitDetector @Inject constructor() {
         }
 
         for (s in usable) {
+            // A fix inside a moving run can neither found nor sustain a stay: close the cluster and
+            // leave the run as a gap (the next still fix seeds the post-walk stay).
+            if (inMotion(s.timestampMs)) {
+                flush()
+                continue
+            }
             val precise = (s.accuracy ?: Constants.SAMPLE_ACCURACY_GATE_METERS) <=
                     Constants.SAMPLE_ACCURACY_GATE_METERS
             if (cluster.isEmpty()) {
@@ -119,3 +133,62 @@ internal fun coarseSustainAllowanceMeters(accuracyMeters: Float?): Double = maxO
     (accuracyMeters ?: Constants.SAMPLE_ACCURACY_GATE_METERS).toDouble()
         .coerceAtMost(Constants.PLACE_MAX_RADIUS_METERS),
 )
+
+/**
+ * Maximal time spans of sustained real movement ("moving runs") within [samples], detected from the
+ * GPS Doppler [LocationSampleEntity.speed] field alone — the one signal that separates a tight
+ * near-home walk (which never leaves [Constants.STATIONARY_RADIUS_METERS], so geometry reads it as a
+ * stay) from indoor drift. A fix is *in motion* when the [Constants.MOVING_RUN_WINDOW_MS] window
+ * centred on it holds at least [Constants.MIN_MOVING_WINDOW_FIXES] fixes AND at least
+ * [Constants.WALK_MOVING_FIX_FRACTION] of them carry a valid speed >= [Constants.WALK_SPEED_FLOOR_MPS].
+ * A null/absent speed is never "moving" (it just isn't counted — never fold null -> 0); a Wi-Fi/cell
+ * anchored stationary phone yields no run. Contiguous in-motion fixes form a run.
+ *
+ * Shared by [VisitDetector] (a run can't be clustered as a stay) and the rebuilder's confirmed-ongoing
+ * extension (a stay can't weld across a run). [samples] must be time-ordered; runs are returned as
+ * inclusive [first..last] timestamp ranges. See docs/doppler-timeline-findings.md.
+ */
+internal fun movingRuns(samples: List<LocationSampleEntity>): List<LongRange> {
+    val usable = samples.filter { it.includedInComputation }
+    if (usable.size < Constants.MIN_MOVING_WINDOW_FIXES) return emptyList()
+
+    fun moving(s: LocationSampleEntity) = (s.speed ?: 0f) >= Constants.WALK_SPEED_FLOOR_MPS
+    val half = Constants.MOVING_RUN_WINDOW_MS / 2
+    val inMotion = BooleanArray(usable.size)
+    // Two pointers sweep the [t-half, t+half] window forward; both advance monotonically, so the
+    // moving count is maintained incrementally in O(n) rather than re-scanned per fix.
+    var lo = 0
+    var hi = 0
+    var movingInWindow = 0
+    for (i in usable.indices) {
+        val t = usable[i].timestampMs
+        while (hi < usable.size && usable[hi].timestampMs <= t + half) {
+            if (moving(usable[hi])) movingInWindow++
+            hi++
+        }
+        while (usable[lo].timestampMs < t - half) {
+            if (moving(usable[lo])) movingInWindow--
+            lo++
+        }
+        val total = hi - lo
+        if (total >= Constants.MIN_MOVING_WINDOW_FIXES &&
+            movingInWindow.toDouble() / total >= Constants.WALK_MOVING_FIX_FRACTION
+        ) {
+            inMotion[i] = true
+        }
+    }
+
+    val runs = ArrayList<LongRange>()
+    var i = 0
+    while (i < usable.size) {
+        if (!inMotion[i]) {
+            i++
+            continue
+        }
+        var j = i
+        while (j + 1 < usable.size && inMotion[j + 1]) j++
+        runs.add(usable[i].timestampMs..usable[j].timestampMs)
+        i = j + 1
+    }
+    return runs
+}

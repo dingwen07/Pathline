@@ -65,6 +65,13 @@ android {
     androidResources {
         generateLocaleConfig = true
     }
+    testOptions {
+        // TimelineDryRunTest
+        unitTests.all { test ->
+            System.getProperty("dryRunDir")?.let { test.systemProperty("dryRunDir", it) }
+            System.getProperty("user.timezone")?.let { test.systemProperty("user.timezone", it) }
+        }
+    }
 }
 
 // Emit Room schemas to a versioned directory so migrations can be validated/tested.

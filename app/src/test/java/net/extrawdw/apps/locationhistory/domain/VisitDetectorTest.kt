@@ -113,6 +113,65 @@ class VisitDetectorTest {
         assertEquals(2, detector.detectVisits(samples).size)
     }
 
+    // --- speed-aware carve (docs/doppler-timeline-findings.md) ---------------------------------
+
+    /** A fix [sec] seconds into the window, with an explicit Doppler [speedV] (null = no GPS speed). */
+    private fun at(
+        sec: Long,
+        lat: Double = 40.0,
+        lon: Double = -74.0,
+        accuracy: Float? = 12f,
+        speedV: Float? = 0f,
+    ) = LocationSampleEntity(
+        id = sec, timestampMs = t0 + sec * 1000, dayEpoch = 0,
+        latitude = lat, longitude = lon, altitude = null, accuracy = accuracy,
+        verticalAccuracyMeters = null, bearing = null, bearingAccuracyDegrees = null,
+        speed = speedV, speedAccuracyMetersPerSecond = null, provider = null, isMock = false,
+        elapsedRealtimeNanos = 0, satelliteCount = null, batteryPct = null, isCharging = null,
+        networkTransport = null, networkTypeName = null, cellSignalDbm = null,
+        hasCellService = null, wifiSsid = null, wifiBssid = null, screenOn = null,
+        arActivity = null, arConfidence = null,
+        devicePhysicalState = DevicePhysicalState.STATIONARY,
+        devicePhysicalStateConfidence = 0.8f, includedInComputation = true,
+    )
+
+    @Test
+    fun sustainedDopplerRunCarvesATightWalkOutOfAStay() {
+        // The June 14 case: a dense run of fixes carrying real Doppler speed but drifting only ~40 m,
+        // so it never leaves the 60 m radius — geometry alone absorbs it. The run must split the stay.
+        val samples = buildList {
+            for (s in 0..6) add(at(s * 60L))                                       // home, still
+            for (k in 0..23) add(at(420L + k * 10, lat = 40.0 + k * 0.000015, speedV = 1.0f)) // walk
+            for (s in 0..7) add(at(780L + s * 60, lat = 40.0))                     // home again
+        }
+        // 2 visits = the walk was carved; with the old geometry-only detector this was 1 (absorbed).
+        assertEquals(2, detector.detectVisits(samples).size)
+    }
+
+    @Test
+    fun denseInPlaceDriftIsNotCarved() {
+        // Same dense cadence and tight geometry, but Doppler ~0 (indoor scatter): no run forms, so it
+        // stays ONE stay — the drift direction of the bug must not regress into a phantom split.
+        val samples = buildList {
+            for (s in 0..6) add(at(s * 60L))
+            for (k in 0..23) add(at(420L + k * 10, lat = 40.0 + k * 0.000015, speedV = 0.2f))
+            for (s in 0..7) add(at(780L + s * 60, lat = 40.0))
+        }
+        assertEquals(1, detector.detectVisits(samples).size)
+    }
+
+    @Test
+    fun movingRuns_needSustainedValidSpeed() {
+        // A dense run of valid >=0.8 m/s fixes is one moving run...
+        assertEquals(1, movingRuns((0..23).map { at(it * 10L, speedV = 1.0f) }).size)
+        // ...null speed never counts as moving (never folded to 0)...
+        assertTrue(movingRuns((0..23).map { at(it * 10L, speedV = null) }).isEmpty())
+        // ...sub-floor speed (<0.8) is not moving...
+        assertTrue(movingRuns((0..23).map { at(it * 10L, speedV = 0.5f) }).isEmpty())
+        // ...and a fast but sparse run (one fix/min) has too few fixes per window to judge.
+        assertTrue(movingRuns((0..9).map { at(it * 60L, speedV = 1.0f) }).isEmpty())
+    }
+
     @Test
     fun sustainExtendsEndToTheLastCoarseFix() {
         // Precise fixes end at minute 9; consistent coarse fixes continue to minute 40: the

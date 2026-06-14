@@ -182,6 +182,14 @@ class TimelineDryRunTest {
             return "  [$tag] ${lt(t.startMs)}->${lt(t.endMs)} ${"%.0f".format(mins)}m ${t.mode} ${"%.0f".format(t.distanceMeters)}m conf=${t.confirmed}$flag"
         }
 
+        // Visits overlapping a focus window — prints what the rebuild thinks you were doing there.
+        // Default window brackets the 06-14 near-home walk (~04:40-05:04 EDT) under investigation.
+        fun visitLines(visits: List<VisitEntity>, tag: String, from: Long = 1781420000000L, to: Long = 1781428000000L) {
+            visits.filter { it.startMs < to && it.endMs > from }.sortedBy { it.startMs }.forEach {
+                line("  [$tag] ${lt(it.startMs)}->${lt(it.endMs)} \"${it.candidateName}\" conf=${it.confirmed} ongoing=${it.isOngoing} n=${it.sampleCount} r=${"%.0f".format(it.radiusMeters)}m")
+            }
+        }
+
         // ---- Section A: build from scratch (samples + places only) -------------------------------
         line("\n--- A) FROM SCRATCH (no seeded visits/trips) ---")
         val a = Harness(places, samples).apply { run() }
@@ -192,6 +200,8 @@ class TimelineDryRunTest {
         aTrips.forEach { line(tripLine(it, "new")) }
         val aPhantom = aTrips.count { val (f, _) = inPlaceFrac(samples, places, it.startMs, it.endMs); f >= Constants.DRIFT_TRIP_INPLACE_FRACTION }
         line("from-scratch in-place(phantom) trips: $aPhantom")
+        line("rebuilt visits overlapping the 06-14 walk window:")
+        visitLines(aVisits, "Avisit")
 
         // ---- Section B: realistic (seed confirmed ground truth, rebuild fills gaps) --------------
         line("\n--- B) REALISTIC (seed confirmed visits+trips, then rebuild) ---")
@@ -210,6 +220,33 @@ class TimelineDryRunTest {
         bUnconfirmedTrips.forEach { line(tripLine(it, "gen")) }
         val bPhantom = bUnconfirmedTrips.count { val (f, _) = inPlaceFrac(samples, places, it.startMs, it.endMs); f >= Constants.DRIFT_TRIP_INPLACE_FRACTION }
         line("realistic in-place(phantom) trips remaining: $bPhantom")
+        line("visits overlapping the 06-14 walk window (seeded confirmed + rebuilt):")
+        visitLines(b.visitDao.visits, "Bvisit")
+
+        // ---- Section C: GOING-FORWARD (home visit still ongoing, ending just before the walk) -----
+        // Section B can't show the fix on this dump: the on-device build already welded the home visit
+        // across the walk (to 04:58) and finalized it, so it's frozen ground truth. This re-seeds that
+        // same confirmed home visit as it was the instant BEFORE the buggy post-walk rebuild — still
+        // ongoing, ending pre-walk (04:40) — and rebuilds. With the Doppler fix the walk must surface
+        // as its own trip instead of being absorbed.
+        line("\n--- C) GOING-FORWARD (confirmed home ongoing, ends pre-walk 04:40) ---")
+        val preWalkEnd = 1781426400000L // 06-14 04:40:00 EDT, just before the 04:41 walk
+        val c = Harness(places, samples)
+        runBlocking {
+            c.placeDao.seed(*places.toTypedArray())
+            c.sampleDao.insertAll(samples)
+            allVisits.filter { it.confirmed }.forEach { v ->
+                c.visitDao.seed(if (v.id == 2176L) v.copy(endMs = preWalkEnd, isOngoing = true) else v)
+            }
+            allTrips.filter { it.confirmed }.forEach { c.tripDao.seed(it) }
+            val days = samples.map { TimeBuckets.dayEpoch(it.timestampMs) }.distinct().sorted()
+            for (day in days) c.rebuilder.rebuildDay(day)
+        }
+        line("06-14 builder-generated trips in the walk window:")
+        c.tripDao.trips.filter { !it.confirmed && it.startMs in (preWalkEnd - 600_000L)..(preWalkEnd + 90 * 60_000L) }
+            .sortedBy { it.startMs }.forEach { line(tripLine(it, "C")) }
+        line("06-14 visits in the walk window:")
+        visitLines(c.visitDao.visits, "Cvisit")
 
         // ---- The dump's own unconfirmed trips, for old-vs-new contrast ---------------------------
         line("\n--- dump's unconfirmed trips (the on-device builder's output) ---")
