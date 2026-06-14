@@ -3,8 +3,13 @@ package net.extrawdw.apps.locationhistory.domain
 import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
+import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
+import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import org.junit.Assert.assertEquals
@@ -29,10 +34,39 @@ class TimelineMergerTest {
     private val visitDao = FakeVisitDao()
     private val tripDao = FakeTripDao(visitDao)
     private val sampleDao = FakeLocationSampleDao()
+    private val placeDao = FakePlaceDao().apply {
+        // The default home place every visit() points at (placeId = 1) — at the visits' centroid,
+        // so place-membership of in-place jitter resolves. Drift tests that seed no samples fall back
+        // to the path/duration/displacement heuristic regardless of this row.
+        seed(
+            PlaceEntity(
+                id = 1, name = "Home", latitude = 1.0, longitude = 1.0, radiusMeters = 40.0,
+                category = null, source = PlaceSource.INFERRED, googlePlaceId = null, address = null,
+                confirmed = true, createdAtMs = 0L,
+            ),
+        )
+    }
     private val store = AnnotationStore(FakeTagDao(), FakeAnnotationDao(), FakeConceptDao())
-    private val merger = TimelineMerger(visitDao, tripDao, sampleDao, store)
+    private val merger = TimelineMerger(visitDao, tripDao, sampleDao, placeDao, store)
 
     private fun merge() = runBlocking { merger.merge(span.first, span.second) }
+
+    /** Seed one computation-eligible fix at ([lat], [lng]) and time [tMs]. */
+    private fun sample(tMs: Long, lat: Double, lng: Double = 1.0) = runBlocking {
+        sampleDao.insert(
+            LocationSampleEntity(
+                timestampMs = tMs, dayEpoch = TimeBuckets.dayEpoch(tMs),
+                latitude = lat, longitude = lng, altitude = null, accuracy = 10f,
+                verticalAccuracyMeters = null, bearing = null, bearingAccuracyDegrees = null,
+                speed = 0f, speedAccuracyMetersPerSecond = null, provider = "fused",
+                isMock = false, elapsedRealtimeNanos = 0, satelliteCount = null, batteryPct = null,
+                isCharging = null, networkTransport = null, networkTypeName = null,
+                cellSignalDbm = null, hasCellService = null, wifiSsid = null, wifiBssid = null,
+                screenOn = null, arActivity = null, arConfidence = null,
+                devicePhysicalState = DevicePhysicalState.WALKING, devicePhysicalStateConfidence = 1f,
+            ),
+        )
+    }
 
     private fun visit(
         id: Long = 0,
@@ -457,7 +491,9 @@ class TimelineMergerTest {
 
     @Test
     fun shortLoopTrip_overDurationCap_isNotDrift() {
-        // Jitter-sized path but a long duration: still not drift (e.g. a slow stroll around the block).
+        // No stored fixes -> the place-membership test can't run, so we fall back to the path/duration
+        // heuristic: a jitter-sized path but a long duration is assumed real (a slow stroll round the
+        // block). With in-place fixes present, the longInPlaceJitterTrip_* test shows it collapses.
         visitDao.seed(
             visit(id = 1, start = t0, end = t0 + hour),
             visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
@@ -504,6 +540,44 @@ class TimelineMergerTest {
                 points = listOf(1.0 to 1.0, 1.0001 to 1.0003),
             ),
         )
+        merge()
+        assertEquals(1, tripDao.trips.size)
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test
+    fun longInPlaceJitterTrip_withSamplesInsidePlace_isCollapsed() {
+        // The 84-min home case: two same-place home visits with a long "walking" trip fabricated
+        // between them, but every computation-eligible fix sits inside the home circle. Place
+        // membership — not duration or path — identifies it as jitter, so the trip is deleted and the
+        // visits fuse into one stay. The trip carries a long recorded path (the default ~1.5 km line),
+        // proving the path cap is bypassed when the fixes are in-place (the 3.7 km in-apartment case).
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
+        )
+        tripDao.seed(trip(id = 1, start = t0 + hour, end = t0 + 2 * hour))
+        // ~12 fixes jittering within ~22 m of the home centroid (1.0, 1.0) across the trip window.
+        for (k in 0..11) sample(t0 + hour + k * 300_000L, lat = 1.0 + if (k % 2 == 0) 0.0002 else -0.0002)
+        merge()
+        assertTrue("in-place jitter trip must be deleted", tripDao.trips.isEmpty())
+        assertEquals(listOf(1L), visitDao.visits.map { it.id })
+        assertEquals(t0 to t0 + 3 * hour, visitDao.visits.single().let { it.startMs to it.endMs })
+    }
+
+    @Test
+    fun loopTrip_withSamplesOutsidePlace_isNotCollapsed() {
+        // A real out-and-back from home: net displacement ~0 and a long duration, but the fixes leave
+        // the home circle — so place membership keeps it a trip, with the two visits intact (the
+        // "5-min walk and come back must not be blindly merged" case).
+        visitDao.seed(
+            visit(id = 1, start = t0, end = t0 + hour),
+            visit(id = 2, start = t0 + 2 * hour, end = t0 + 3 * hour),
+        )
+        tripDao.seed(trip(id = 1, start = t0 + hour, end = t0 + 2 * hour))
+        // Walk out ~330 m and back: most fixes are well outside the 60 m home radius.
+        listOf(1.0, 1.001, 1.002, 1.003, 1.003, 1.002, 1.001, 1.0)
+            .forEachIndexed { k, lat -> sample(t0 + hour + k * 400_000L, lat = lat) }
         merge()
         assertEquals(1, tripDao.trips.size)
         assertEquals(2, visitDao.visits.size)

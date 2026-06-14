@@ -109,13 +109,21 @@ internal class TimelineRebuilder(
         val latest = sampleDao.mostRecent()
         // Detect stays over the full window (true extents), keep those that touch this day, and skip
         // any already covered by a confirmed (ground-truth) visit or a confirmed trip.
-        val candidates = visitDetector.detectVisits(samples)
-            .filter { it.overlaps(dayStart, dayEnd) }
+        val detectedStays = visitDetector.detectVisits(samples).filter { it.overlaps(dayStart, dayEnd) }
+        val candidates = detectedStays
             .filterNot { candidate ->
                 confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } ||
                         confirmedTrips.any { candidate.overlaps(it.startMs, it.endMs + 1) }
             }
             .toMutableList()
+        // Spans the detector judged to be stays — INCLUDING any dropped just above for overlapping a
+        // confirmed visit. A dropped stay's span is still a stay, so the trip filler must not fabricate
+        // movement across it. This is the recorder-split phantom-walk fix: when AR/IMU flips to WALKING
+        // indoors and the recorder splits one home stay into confirmed-home -> "trip" -> confirmed-home,
+        // the re-detected home stay (dropped here for overlap) still masks the gap, so no phantom walk
+        // is built across it. Genuine out-of-home slivers around/between stays still become trips, and a
+        // brief in-walk home touch too short to be a detected stay (< MIN_VISIT_DURATION) is never masked.
+        val stayMasks = detectedStays.map { it.startMs to it.endMs }
 
         ongoingStationaryCandidate(samples, dayStart, dayEnd, latest)?.let { ongoing ->
             val overlapsDetected =
@@ -146,7 +154,7 @@ internal class TimelineRebuilder(
             // (Maintenance otherwise leaves confirmed visits untouched, which froze the end time.)
             extendConfirmedOngoingVisits(confirmedVisits, latest, now())
 
-            rebuildTrips(loadStart, loadEnd, dayStart, dayEnd)
+            rebuildTrips(loadStart, loadEnd, dayStart, dayEnd, stayMasks)
             // Show the trip that is *currently in progress* (you've left a place but not arrived yet).
             // rebuildTrips needs both endpoints, so the tail after the last visit is otherwise invisible
             // until you become stationary.
@@ -419,15 +427,25 @@ internal class TimelineRebuilder(
      * confirmed runs are left in place. A confirmed stub in a gap no longer suppresses the rest of
      * the journey, which is what made hand-edited days silently lose their moving trips.
      */
-    private suspend fun rebuildTrips(loadStart: Long, loadEnd: Long, dayStart: Long, dayEnd: Long) {
+    private suspend fun rebuildTrips(
+        loadStart: Long,
+        loadEnd: Long,
+        dayStart: Long,
+        dayEnd: Long,
+        stayMasks: List<Pair<Long, Long>>,
+    ) {
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         if (visits.size < 2) return
         val confirmedTrips =
             tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+        // A gap is filled with movement only where neither a confirmed trip nor a detected stay covers
+        // it — so an in-home drift span (a stay the detector saw but the rebuilder dropped for
+        // overlapping a confirmed visit) splits the would-be trip instead of being paved over as a walk.
+        val excluded = confirmedTrips + stayMasks
         for (i in 0 until visits.lastIndex) {
             val from = visits[i]
             val to = visits[i + 1]
-            fillMovement(from.endMs, to.startMs, confirmedTrips, dayStart, dayEnd, from.id, to.id)
+            fillMovement(from.endMs, to.startMs, excluded, dayStart, dayEnd, from.id, to.id)
         }
     }
 
@@ -442,14 +460,14 @@ internal class TimelineRebuilder(
     private suspend fun fillMovement(
         gapStart: Long,
         gapEnd: Long,
-        confirmedTripRanges: List<Pair<Long, Long>>,
+        excludedRanges: List<Pair<Long, Long>>,
         dayStart: Long,
         dayEnd: Long,
         fromVisitId: Long,
         toVisitId: Long?,
     ) {
         if (gapEnd <= gapStart) return
-        for ((subStart, subEnd) in subtractRanges(gapStart, gapEnd, confirmedTripRanges)) {
+        for ((subStart, subEnd) in subtractRanges(gapStart, gapEnd, excludedRanges)) {
             if (subEnd <= subStart) continue
             if (subEnd <= dayStart || subStart >= dayEnd) continue // only the part touching this day
             val movingSamples = sampleDao.rangeForComputation(subStart, subEnd)

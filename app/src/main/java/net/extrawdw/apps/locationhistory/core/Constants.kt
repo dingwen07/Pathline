@@ -93,9 +93,28 @@ object Constants {
      *  path — only a jitter-sized path may be deleted as drift. */
     const val DRIFT_TRIP_MAX_PATH_METERS = 300.0
 
-    /** Duration twin (ms) of [DRIFT_TRIP_MAX_PATH_METERS]: GPS jitter is brief, while a long
-     *  out-and-back excursion is real movement even when displacement and path both read low. */
+    /** Duration twin (ms) of [DRIFT_TRIP_MAX_PATH_METERS], used ONLY as the fallback when a drift
+     *  trip has no stored fixes to test place membership: GPS jitter is brief, while a long
+     *  out-and-back excursion is real movement even when displacement and path both read low. When
+     *  fixes ARE available, place membership ([DRIFT_TRIP_INPLACE_FRACTION]) decides instead, so a
+     *  long stationary spell (an hour of indoor jitter) is no longer wrongly spared by this cap. */
     const val DRIFT_TRIP_MAX_DURATION_MS = 10 * 60_000L
+
+    /** A trip is in-place GPS jitter (not real movement) when at least this fraction of its
+     *  computation-eligible fixes sit within the bounding place's radius. A real out-and-back loop
+     *  leaves the radius and stays well under this; indoor jitter sits at ~0.85-1.0. */
+    const val DRIFT_TRIP_INPLACE_FRACTION = 0.75
+
+    /** Doppler safety gate for the in-place drift test: collapse only when FEWER than this fraction of
+     *  the span's fixes carry real GPS speed (>= [DRIFT_MOVING_SPEED_MPS]). A genuine near-home loop
+     *  walk has ~0.2-0.33 of fixes moving; true jitter ~0-0.02 — so this keeps a real walk from being
+     *  merged even when most of its fixes happen to sit inside the home radius. */
+    const val DRIFT_TRIP_MOVING_FIX_FRACTION = 0.1
+
+    /** Max gap (ms) from a drift trip to each bounding visit for them to be fused. Looser than
+     *  [MERGE_GAP_MS] because the recorder leaves a ~2-min dead zone around the visit split that
+     *  creates these trips; still tight enough not to weld a same-place pair across a real outage. */
+    const val DRIFT_TRIP_MERGE_GAP_MS = 5 * 60_000L
 
     /** Upper bound (ms) on a one-shot getCurrentLocation wait. A cold GPS fix indoors can take
      *  20-30s — longer than a broadcast receiver's goAsync window, and the controller mutex is held

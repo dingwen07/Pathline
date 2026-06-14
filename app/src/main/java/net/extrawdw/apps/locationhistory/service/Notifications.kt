@@ -19,6 +19,7 @@ import net.extrawdw.apps.locationhistory.MainActivity
 import net.extrawdw.apps.locationhistory.ui.ApiAccessActivity
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.core.RecorderState
 
 /** Notification channel + builder for the foreground recording session. */
 object Notifications {
@@ -226,16 +227,29 @@ object Notifications {
         )
     }
 
-    fun buildRecordingNotification(context: Context, state: DevicePhysicalState): Notification {
+    fun buildRecordingNotification(
+        context: Context,
+        cadence: RecorderState,
+        display: DevicePhysicalState,
+    ): Notification {
         ensureChannel(context)
         val res = localized(context)
+        // Text: a specific mode when we have one; otherwise a generic "Moving" while the cadence is
+        // moving (a geofence/sig-motion departure with no corroborated transport mode), and the
+        // display's own label otherwise (Stationary at a stay, Unknown on a cold start).
+        val label = when {
+            display != DevicePhysicalState.UNKNOWN -> res.getString(display.labelRes)
+            cadence == RecorderState.MOVING || cadence == RecorderState.VERIFYING_DEPARTURE ->
+                res.getString(R.string.state_moving)
+            else -> res.getString(display.labelRes)
+        }
         return NotificationCompat.Builder(context, RECORDING_CHANNEL_ID)
             .setContentTitle(res.getString(R.string.recording_title))
-            .setContentText(res.getString(state.labelRes))
+            .setContentText(label)
             .setContentIntent(contentIntent(context))
             // Status bar: simplified monochrome pin. Shade large icon: current movement state.
             .setSmallIcon(R.drawable.ic_stat_recording)
-            .setLargeIcon(stateBadge(context, state))
+            .setLargeIcon(stateBadge(context, display))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

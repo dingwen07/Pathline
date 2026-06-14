@@ -35,6 +35,7 @@
     <string name="state_cycling">Cycling</string>
     <string name="state_in_vehicle">In vehicle</string>
     <string name="state_unknown">Unknown</string>
+    <string name="state_moving">Moving</string>
 
     <!-- ============================ Transport mode ============================ -->
     <string name="transport_walking">Walking</string>

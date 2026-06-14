@@ -67,7 +67,7 @@ class TimelineRebuilderTest {
         recordingRepository = RecordingRepository(tripDao),
         placeRepository = PlaceRepository(placeDao, visitDao, store),
         visitDetector = VisitDetector(),
-        merger = TimelineMerger(visitDao, tripDao, sampleDao, store),
+        merger = TimelineMerger(visitDao, tripDao, sampleDao, placeDao, store),
         matchPlace = { lat, lon -> matchPlace(lat, lon) },
         segmentTrips = segmentTrips,
         inTransaction = { block -> block() },
@@ -177,6 +177,32 @@ class TimelineRebuilderTest {
         assertEquals(TransportMode.WALKING, trip.mode)
         assertFalse(trip.confirmed)
         assertTrue(trip.distanceMeters > 1_000)
+    }
+
+    @Test
+    fun inHomeGapBetweenConfirmedVisits_isNotFilledWithAPhantomTrip() {
+        // The recorder split one home stay into confirmed-home -> [gap] -> confirmed-home (AR flipped
+        // WALKING indoors). The gap's fixes are still at home, so the detector re-clusters the whole
+        // span as one stay; dropped for overlapping the confirmed visits, its span must still MASK the
+        // gap so no phantom walk is fabricated across it (the 06-13 in-apartment "trip").
+        visitDao.seed(confirmedVisit(id = 1, startMin = 600, endMin = 630, lat = 40.0))
+        visitDao.seed(confirmedVisit(id = 2, startMin = 690, endMin = 720, lat = 40.0))
+        stay(600, 720, lat = 40.0) // continuous in-home fixes spanning both visits and the gap
+        rebuild()
+        assertTrue("no movement may be fabricated across an in-home gap", tripDao.trips.none { !it.confirmed })
+    }
+
+    @Test
+    fun realWalkGapBetweenConfirmedVisits_isStillFilled() {
+        // Contrast: the gap is a real walk away from home — the detector sees no stay there, nothing
+        // masks it, so the trip is still built. Guards the mask against over-suppressing real movement.
+        visitDao.seed(confirmedVisit(id = 1, startMin = 600, endMin = 630, lat = 40.0))
+        visitDao.seed(confirmedVisit(id = 2, startMin = 690, endMin = 720, lat = 40.05))
+        stay(600, 630, lat = 40.0)
+        walk(631, 689, fromLat = 40.001)
+        stay(690, 720, lat = 40.05)
+        rebuild()
+        assertTrue("a real walk in the gap must still be recorded", tripDao.trips.any { !it.confirmed })
     }
 
     @Test

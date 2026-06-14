@@ -36,8 +36,8 @@ import net.extrawdw.apps.locationhistory.data.enrich.MotionSensorReader
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.domain.VisitCandidate
-import net.extrawdw.apps.locationhistory.ml.HeuristicClassifier
-import net.extrawdw.apps.locationhistory.ml.StateFeatureInput
+import net.extrawdw.apps.locationhistory.domain.HeuristicClassifier
+import net.extrawdw.apps.locationhistory.domain.StateFeatureInput
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -745,7 +745,15 @@ class RecordingController @Inject constructor(
     /** The movement shown to the user: the precise mode while travelling, plain Stationary at a stay. */
     private fun currentDisplayState(): DevicePhysicalState = when (policy.state) {
         RecorderState.STATIONARY -> DevicePhysicalState.STATIONARY
-        RecorderState.MOVING -> latestMovingClassification ?: DevicePhysicalState.UNKNOWN
+        // Show a specific transport mode only when body motion corroborates it. We can enter MOVING
+        // from a geofence exit or significant-motion hint while the user is actually still (indoor
+        // drift): AR then still reads STILL, and a stale WALKING classification would mislabel the
+        // notification. Fall back to UNKNOWN, which the recording notification renders as a generic
+        // "Moving" for a moving cadence. This is display only — persisted samples use the per-fix
+        // classifier verdict, never this value.
+        RecorderState.MOVING ->
+            latestMovingClassification?.takeUnless { lastArActivity == AR_STILL }
+                ?: DevicePhysicalState.UNKNOWN
         RecorderState.VERIFYING_DEPARTURE, RecorderState.UNKNOWN -> DevicePhysicalState.UNKNOWN
     }
 
@@ -905,5 +913,8 @@ class RecordingController @Inject constructor(
 
     private companion object {
         const val TAG = "Recorder"
+
+        /** AR name (see [arName]) for a still device — used to suppress a stale moving badge. */
+        const val AR_STILL = "STILL"
     }
 }

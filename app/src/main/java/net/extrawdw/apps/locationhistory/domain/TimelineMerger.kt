@@ -4,6 +4,7 @@ import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
+import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
@@ -34,6 +35,7 @@ class TimelineMerger @Inject constructor(
     private val visitDao: VisitDao,
     private val tripDao: TripDao,
     private val sampleDao: LocationSampleDao,
+    private val placeDao: PlaceDao,
     private val annotationStore: AnnotationStore,
 ) {
 
@@ -64,10 +66,19 @@ class TimelineMerger @Inject constructor(
         }
     }
 
-    /** Delete trips whose net displacement is below the drift threshold and that are bounded by two
-     *  visits to the same place — these are GPS jitter, not real movement — and fuse the two visits
-     *  (the gap they leave behind is the drift trip's own duration, so the normal gap rule wouldn't
-     *  bridge it). */
+    /**
+     * Delete unconfirmed trips that are really **in-place GPS jitter** — a high fraction of their
+     * computation-eligible fixes sit inside the bounding place's radius (the "home circle") — and fuse
+     * the two same-place visits they sat between. This is what a stationary device left recording for
+     * an hour produces: AR/IMU flips to WALKING indoors, the recorder splits the stay, and the
+     * rebuilder fabricates a "walk" across the gap between the two confirmed halves.
+     *
+     * Place membership, not net displacement, is the test — so a real out-and-back loop (a run or dog
+     * walk whose fixes leave the place and return) is never collapsed, while BOTH slow-cadence jitter
+     * (a short path) and fast-cadence jitter (a long scatter path that blows past the old path cap)
+     * are. The old duration cap is gone: an 84-min stationary spell is exactly the case it wrongly
+     * excluded.
+     */
     private suspend fun removeDriftTrips(spanStartMs: Long, spanEndMs: Long) {
         // One visit fetch for the whole pass, kept in step with every fuse below so later trips see
         // the merged bounds, not the pre-fuse rows. The fused visit keeps the earlier start, so the
@@ -75,35 +86,59 @@ class TimelineMerger @Inject constructor(
         val visits = visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
             if (trip.confirmed) continue
-            // Low net displacement alone is NOT drift: a real loop trip (a run or dog walk from
-            // home) also ends where it started. Drift is jitter — a short, brief recorded path.
-            if (trip.distanceMeters > Constants.DRIFT_TRIP_MAX_PATH_METERS) continue
-            if (trip.endMs - trip.startMs > Constants.DRIFT_TRIP_MAX_DURATION_MS) continue
-            val before = visits.lastOrNull { it.startMs <= trip.startMs }
-            val after = visits.firstOrNull { it.startMs >= trip.endMs }
-            val sameBoundingPlace = before?.placeId != null && before.placeId == after?.placeId
-            // Only fuse visits that actually abut the trip: a same-place pair hours away must not be
-            // welded across the whole span between them just because a jitter trip sits in it.
-            val adjacent = before != null && after != null &&
-                    trip.startMs - before.endMs <= Constants.MERGE_GAP_MS &&
-                    after.startMs - trip.endMs <= Constants.MERGE_GAP_MS
-            if (sameBoundingPlace && adjacent &&
-                netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS
-            ) {
-                tripDao.deleteTrip(trip.id)
-                if (before.id != after.id) {
-                    val merged = mergedVisit(before, after)
-                    visitDao.update(merged)
-                    // before is the older survivor; fold the dying visit's annotations onto it.
-                    if (after.confirmed) {
-                        annotationStore.foldOnMerge(AnnotationTarget.VISIT, before.id, after.id)
-                    }
-                    visitDao.delete(after.id)
-                    visits[visits.indexOfFirst { it.id == before.id }] = merged
-                    visits.removeAll { it.id == after.id }
+            val before = visits.lastOrNull { it.startMs <= trip.startMs } ?: continue
+            val after = visits.firstOrNull { it.startMs >= trip.endMs } ?: continue
+            // Only collapse a trip bounded by two visits to the SAME matched place: that place gives
+            // the radius the jitter must sit inside, and the pair is what we fuse.
+            val placeId = before.placeId ?: continue
+            if (placeId != after.placeId) continue
+            // Relaxed adjacency: the recorder leaves a ~2-min dead zone around the split that creates
+            // these trips, so the 90s visit-merge gap is too tight. Still bounded, so a same-place pair
+            // hours apart is not welded across a long recording outage that might hide a real outing.
+            val adjacent = trip.startMs - before.endMs <= Constants.DRIFT_TRIP_MERGE_GAP_MS &&
+                    after.startMs - trip.endMs <= Constants.DRIFT_TRIP_MERGE_GAP_MS
+            if (!adjacent) continue
+            if (!isInPlaceJitter(trip, placeId)) continue
+            tripDao.deleteTrip(trip.id)
+            if (before.id != after.id) {
+                val merged = mergedVisit(before, after)
+                visitDao.update(merged)
+                // before is the older survivor; fold the dying visit's annotations onto it.
+                if (after.confirmed) {
+                    annotationStore.foldOnMerge(AnnotationTarget.VISIT, before.id, after.id)
                 }
+                visitDao.delete(after.id)
+                visits[visits.indexOfFirst { it.id == before.id }] = merged
+                visits.removeAll { it.id == after.id }
             }
         }
+    }
+
+    /**
+     * True when [trip] is in-place jitter at [placeId]: a high fraction of its computation-eligible
+     * fixes lie within the place's radius (floored at the stationary radius so a tight place still
+     * tolerates normal indoor wobble). Falls back to the legacy short-path + brief-duration +
+     * low-net-displacement test when no eligible fixes are stored (e.g. a polyline-only trip) — the
+     * duration cap stays in the fallback so a long no-fix loop is still assumed real.
+     */
+    private suspend fun isInPlaceJitter(trip: TripEntity, placeId: Long): Boolean {
+        val place = placeDao.byId(placeId) ?: return false
+        val radius = maxOf(place.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
+        val fixes = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
+        if (fixes.isEmpty()) {
+            return trip.distanceMeters <= Constants.DRIFT_TRIP_MAX_PATH_METERS &&
+                    trip.endMs - trip.startMs <= Constants.DRIFT_TRIP_MAX_DURATION_MS &&
+                    netDisplacement(trip) < Constants.DRIFT_DISPLACEMENT_METERS
+        }
+        val within = fixes.count {
+            Geo.distanceMeters(place.latitude, place.longitude, it.latitude, it.longitude) <= radius
+        }
+        if (within.toDouble() / fixes.size < Constants.DRIFT_TRIP_INPLACE_FRACTION) return false
+        // Doppler gate: a real out-and-back loop near home carries GPS speed, while true jitter reads
+        // ~0 (field data: real near-home walks have ~20-33% of fixes >= 1.2 m/s, drift ~0-2%). Only
+        // collapse when the span is also Doppler-still, so a genuine near-home walk is never merged.
+        val movingFixes = fixes.count { (it.speed ?: 0f) >= Constants.DRIFT_MOVING_SPEED_MPS }
+        return movingFixes.toDouble() / fixes.size < Constants.DRIFT_TRIP_MOVING_FIX_FRACTION
     }
 
     /** Straight-line distance between a trip's first and last recorded points. */

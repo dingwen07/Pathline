@@ -5,7 +5,6 @@ import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TransportClassification
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
-import net.extrawdw.apps.locationhistory.ml.HeuristicClassifier
 import javax.inject.Inject
 import javax.inject.Singleton
 

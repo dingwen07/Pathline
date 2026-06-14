@@ -109,7 +109,7 @@ class LocationRecorderService : LifecycleService() {
         if (isServiceRestart) AppLog.startSession("service-restart")
         AppLog.i(TAG, "startRecording state=$state display=$display profile=$profile (restart=$isServiceRestart)")
 
-        if (!startForeground(display)) {
+        if (!startForeground(state, display)) {
             // Also remove the PI location request: it is system-persistent and would otherwise
             // keep delivering fixes to a service that never became foreground.
             stopUpdatesAndSelf()
@@ -144,8 +144,8 @@ class LocationRecorderService : LifecycleService() {
         return true
     }
 
-    private fun startForeground(display: DevicePhysicalState): Boolean {
-        val notification = Notifications.buildRecordingNotification(this, display)
+    private fun startForeground(state: RecorderState, display: DevicePhysicalState): Boolean {
+        val notification = Notifications.buildRecordingNotification(this, state, display)
         try {
             ServiceCompat.startForeground(
                 this,

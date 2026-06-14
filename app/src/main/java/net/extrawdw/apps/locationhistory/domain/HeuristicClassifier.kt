@@ -1,4 +1,4 @@
-package net.extrawdw.apps.locationhistory.ml
+package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
