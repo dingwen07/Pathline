@@ -133,6 +133,23 @@ object AppLog {
         logsDir?.listFiles { f -> f.name.startsWith("session-") }?.sortedByDescending { it.name }
             ?: emptyList()
 
+    /** Delete one session log, ignoring files outside the app's session-log directory. */
+    fun deleteSessionFile(file: File): Boolean = synchronized(lock) {
+        val dir = logsDir ?: return false
+        val target = runCatching { file.canonicalFile }.getOrNull() ?: return false
+        val logDir = runCatching { dir.canonicalFile }.getOrNull() ?: return false
+        val parent = runCatching { target.parentFile?.canonicalFile }.getOrNull()
+        if (parent != logDir || !target.name.startsWith("session-")) return false
+        runCatching { target.delete() }.getOrDefault(false)
+    }
+
+    /** Delete every current session log file and return the number removed. */
+    fun deleteSessionFiles(): Int = synchronized(lock) {
+        logsDir?.listFiles { f -> f.name.startsWith("session-") }
+            ?.count { runCatching { it.delete() }.getOrDefault(false) }
+            ?: 0
+    }
+
     private fun ApplicationExitInfo.toLogLine(traceFile: File?): String =
         buildString {
             append("process exit")

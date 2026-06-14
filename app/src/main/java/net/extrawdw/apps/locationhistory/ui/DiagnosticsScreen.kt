@@ -1,7 +1,13 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import android.content.Context
-import androidx.compose.foundation.clickable
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -17,8 +23,11 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -27,19 +36,23 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -86,6 +99,12 @@ data class DiagnosticsState(
     val db: DbStats = DbStats(),
     val recorderRows: List<Pair<String, String>> = emptyList(),
     val workerRows: List<WorkerDebugRow> = emptyList(),
+    val logFiles: List<File> = emptyList(),
+)
+
+data class LogExportResult(
+    val exported: Int,
+    val failed: Int,
 )
 
 @HiltViewModel
@@ -137,10 +156,27 @@ class DiagnosticsViewModel @Inject constructor(
                 "Last service start error" to (recorder.lastStartError ?: "—"),
             ),
             workerRows = workers,
+            logFiles = logFiles(),
         )
     }
 
     fun logFiles(): List<File> = AppLog.sessionFiles()
+
+    suspend fun deleteLog(file: File): Boolean {
+        val deleted = withContext(Dispatchers.IO) { AppLog.deleteSessionFile(file) }
+        diagnostics.value = diagnostics.value.copy(logFiles = logFiles())
+        return deleted
+    }
+
+    suspend fun deleteAllLogs(): Int {
+        val deleted = withContext(Dispatchers.IO) { AppLog.deleteSessionFiles() }
+        diagnostics.value = diagnostics.value.copy(logFiles = logFiles())
+        return deleted
+    }
+
+    suspend fun exportLogsToFolder(treeUri: Uri): LogExportResult = withContext(Dispatchers.IO) {
+        exportSessionLogs(appContext, treeUri, logFiles())
+    }
 
     suspend fun readLog(file: File): String = withContext(Dispatchers.IO) {
         runCatching {
@@ -172,16 +208,47 @@ class DiagnosticsViewModel @Inject constructor(
 }
 
 /** On-device diagnostics: live DB/recorder/worker stats and a shareable session-log browser. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = hiltViewModel()) {
     val diagnostics by viewModel.diagnostics.collectAsStateWithLifecycle()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var openFile by remember { mutableStateOf<File?>(null) }
     var content by remember { mutableStateOf("") }
+    var contentRefreshKey by remember { mutableStateOf(0) }
+    var deleteFile by remember { mutableStateOf<File?>(null) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+
+    val exportLogs = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = viewModel.exportLogsToFolder(uri)
+            val message = when {
+                result.exported > 0 && result.failed == 0 ->
+                    context.getString(R.string.diag_export_logs_done, result.exported)
+
+                result.exported > 0 ->
+                    context.getString(
+                        R.string.diag_export_logs_partial,
+                        result.exported,
+                        result.failed,
+                    )
+
+                result.exported == 0 && result.failed == 0 ->
+                    context.getString(R.string.diag_export_logs_none)
+
+                else ->
+                    context.getString(R.string.diag_export_logs_failed)
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
-    LaunchedEffect(openFile) {
+    LaunchedEffect(openFile, contentRefreshKey) {
         openFile?.let {
             content = ""
             content = viewModel.readLog(it)
@@ -208,17 +275,29 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                                 contentDescription = stringResource(R.string.cd_refresh_diagnostics)
                             )
                         }
-                        IconButton(onClick = { shareLogs(context) }) {
+                        IconButton(
+                            onClick = { confirmDeleteAll = true },
+                            enabled = diagnostics.logFiles.isNotEmpty(),
+                        ) {
                             Icon(
-                                Icons.Filled.Share,
-                                contentDescription = stringResource(R.string.cd_share_logs)
+                                Icons.Filled.Delete,
+                                contentDescription = stringResource(R.string.cd_delete_logs)
+                            )
+                        }
+                        IconButton(
+                            onClick = { exportLogs.launch(null) },
+                            enabled = diagnostics.logFiles.isNotEmpty(),
+                        ) {
+                            Icon(
+                                Icons.Filled.Download,
+                                contentDescription = stringResource(R.string.cd_export_logs)
                             )
                         }
                     },
                 )
             },
         ) { padding ->
-            val files = remember(diagnostics) { viewModel.logFiles() }
+            val files = diagnostics.logFiles
             LazyColumn(
                 Modifier
                     .fillMaxSize()
@@ -269,7 +348,10 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .clickable { openFile = f }
+                            .combinedClickable(
+                                onClick = { openFile = f },
+                                onLongClick = { deleteFile = f },
+                            )
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                     ) {
                         Text(f.name, style = MaterialTheme.typography.bodyMedium)
@@ -297,7 +379,69 @@ fun DiagnosticsDialog(onDismiss: () -> Unit, viewModel: DiagnosticsViewModel = h
             file = file,
             content = content,
             onDismiss = { openFile = null },
+            onRefresh = { contentRefreshKey++ },
             onShare = { shareLog(context, file) },
+        )
+    }
+
+    deleteFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { deleteFile = null },
+            title = { Text(stringResource(R.string.diag_delete_log_title)) },
+            text = { Text(stringResource(R.string.diag_delete_log_message, file.name)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val deleted = viewModel.deleteLog(file)
+                            deleteFile = null
+                            Toast.makeText(
+                                context,
+                                if (deleted) {
+                                    R.string.diag_delete_log_done
+                                } else {
+                                    R.string.diag_delete_log_failed
+                                },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                ) { Text(stringResource(R.string.action_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteFile = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text(stringResource(R.string.diag_delete_all_logs_title)) },
+            text = { Text(stringResource(R.string.diag_delete_all_logs_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val deleted = viewModel.deleteAllLogs()
+                            confirmDeleteAll = false
+                            val message = if (deleted > 0) {
+                                context.getString(R.string.diag_delete_all_logs_done, deleted)
+                            } else {
+                                context.getString(R.string.diag_delete_all_logs_none)
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                ) { Text(stringResource(R.string.action_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteAll = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
         )
     }
 }
@@ -308,6 +452,7 @@ private fun LogFileDialog(
     file: File,
     content: String,
     onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
     onShare: () -> Unit,
 ) {
     FullScreenDialog(onDismiss = onDismiss, dim = false) { requestClose ->
@@ -324,6 +469,12 @@ private fun LogFileDialog(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onRefresh) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = stringResource(R.string.cd_refresh_log)
+                            )
+                        }
                         IconButton(onClick = onShare) {
                             Icon(
                                 Icons.Filled.Share,
@@ -386,6 +537,36 @@ private fun StatRow(label: String, value: String) {
 
 private fun fileTime(f: File): String =
     SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(f.lastModified()))
+
+private fun exportSessionLogs(context: Context, treeUri: Uri, files: List<File>): LogExportResult {
+    if (files.isEmpty()) return LogExportResult(exported = 0, failed = 0)
+
+    val resolver = context.contentResolver
+    val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    runCatching { resolver.takePersistableUriPermission(treeUri, flags) }
+
+    val root = DocumentFile.fromTreeUri(context, treeUri)
+        ?.takeIf { it.isDirectory && it.canWrite() }
+        ?: return LogExportResult(exported = 0, failed = files.size)
+
+    var exported = 0
+    var failed = 0
+    files.forEach { source ->
+        val ok = runCatching {
+            root.listFiles()
+                .filter { it.name == source.name }
+                .forEach { it.delete() }
+
+            val target = root.createFile("text/plain", source.name)
+                ?: error("could not create ${source.name}")
+            resolver.openOutputStream(target.uri, "wt")?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("could not open ${source.name}")
+        }.isSuccess
+        if (ok) exported++ else failed++
+    }
+    return LogExportResult(exported = exported, failed = failed)
+}
 
 /** Share the most recent session log files via a FileProvider content URI. */
 fun shareLogs(context: Context) {

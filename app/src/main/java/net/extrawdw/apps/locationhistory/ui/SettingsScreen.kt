@@ -52,7 +52,7 @@ fun SettingsScreen(
     permissionRequestBlocked: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenAppSettings: () -> Unit,
-    onOpenApiAccess: () -> Unit,
+    onOpenApiAccess: (skipOnboarding: Boolean) -> Unit,
     onEnableApiAccess: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -175,7 +175,11 @@ fun SettingsScreen(
                         Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clickable(onClick = onOpenApiAccess)
+                            .clickable {
+                                onOpenApiAccess(
+                                    settings.apiAccessEnabled || settings.apiAccessConsentNeverAsk
+                                )
+                            }
                             .padding(16.dp),
                     ) {
                         Text(

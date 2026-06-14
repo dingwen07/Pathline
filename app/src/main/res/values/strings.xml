@@ -312,12 +312,27 @@
     <!-- ============================ Diagnostics (chrome only) ============================ -->
     <string name="diagnostics_title">Diagnostics</string>
     <string name="cd_refresh_diagnostics">Refresh diagnostics</string>
+    <string name="cd_delete_logs">Delete all logs</string>
+    <string name="cd_export_logs">Export logs</string>
     <string name="cd_share_logs">Share logs</string>
     <string name="cd_close_log">Close log</string>
+    <string name="cd_refresh_log">Refresh this log</string>
     <string name="cd_share_log">Share this log</string>
     <string name="diag_session_logs">Session logs (newest first) — tap to view</string>
     <string name="diag_no_logs">No logs yet.</string>
     <string name="diag_log_empty">(empty)</string>
+    <string name="diag_delete_log_title">Delete log?</string>
+    <string name="diag_delete_log_message">Delete %1$s from this device?</string>
+    <string name="diag_delete_log_done">Log deleted.</string>
+    <string name="diag_delete_log_failed">Couldn\'t delete that log.</string>
+    <string name="diag_delete_all_logs_title">Delete all session logs?</string>
+    <string name="diag_delete_all_logs_message">This removes every session log from this device.</string>
+    <string name="diag_delete_all_logs_done">Deleted %1$d session log(s).</string>
+    <string name="diag_delete_all_logs_none">No session logs to delete.</string>
+    <string name="diag_export_logs_done">Exported %1$d session log(s).</string>
+    <string name="diag_export_logs_partial">Exported %1$d session log(s); %2$d failed.</string>
+    <string name="diag_export_logs_none">No session logs to export.</string>
+    <string name="diag_export_logs_failed">Couldn\'t export session logs.</string>
     <string name="share_logs_chooser">Share Pathline logs</string>
     <string name="share_log_chooser">Share %1$s</string>
 
@@ -387,6 +402,8 @@
     <string name="api_consent_turn_on">Turn on access</string>
     <string name="api_consent_not_now">Not now</string>
     <string name="api_consent_never_ask">Don\'t ask again</string>
+    <string name="api_consent_request_already_on">Pathline data access is already on.</string>
+    <string name="api_consent_request_never_ask">Pathline data access requests are turned off.</string>
     <string name="api_access_title">Access to Pathline data</string>
     <string name="api_access_intro">Apps that recently accessed your Pathline data. Managed by Android permissions.</string>
     <!-- Toggle card for the travel_times routing endpoint, which calls the billable Google Routes API. -->

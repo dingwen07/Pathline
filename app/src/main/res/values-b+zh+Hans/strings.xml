@@ -298,12 +298,27 @@
     <!-- ============================ Diagnostics (chrome only) ============================ -->
     <string name="diagnostics_title">诊断</string>
     <string name="cd_refresh_diagnostics">刷新诊断</string>
+    <string name="cd_delete_logs">删除所有日志</string>
+    <string name="cd_export_logs">导出日志</string>
     <string name="cd_share_logs">分享日志</string>
     <string name="cd_close_log">关闭日志</string>
+    <string name="cd_refresh_log">刷新此日志</string>
     <string name="cd_share_log">分享此日志</string>
     <string name="diag_session_logs">会话日志（最新在前）— 点按查看</string>
     <string name="diag_no_logs">暂无日志。</string>
     <string name="diag_log_empty">（空）</string>
+    <string name="diag_delete_log_title">删除日志？</string>
+    <string name="diag_delete_log_message">要从此设备删除 %1$s 吗？</string>
+    <string name="diag_delete_log_done">日志已删除。</string>
+    <string name="diag_delete_log_failed">无法删除该日志。</string>
+    <string name="diag_delete_all_logs_title">删除所有会话日志？</string>
+    <string name="diag_delete_all_logs_message">这会从此设备移除所有会话日志。</string>
+    <string name="diag_delete_all_logs_done">已删除 %1$d 个会话日志。</string>
+    <string name="diag_delete_all_logs_none">没有可删除的会话日志。</string>
+    <string name="diag_export_logs_done">已导出 %1$d 个会话日志。</string>
+    <string name="diag_export_logs_partial">已导出 %1$d 个会话日志；%2$d 个失败。</string>
+    <string name="diag_export_logs_none">没有可导出的会话日志。</string>
+    <string name="diag_export_logs_failed">无法导出会话日志。</string>
     <string name="share_logs_chooser">分享 Pathline 日志</string>
     <string name="share_log_chooser">分享 %1$s</string>
 
@@ -367,6 +382,8 @@
     <string name="api_consent_turn_on">开启访问</string>
     <string name="api_consent_not_now">暂不</string>
     <string name="api_consent_never_ask">不再询问</string>
+    <string name="api_consent_request_already_on">Pathline 数据访问已经开启。</string>
+    <string name="api_consent_request_never_ask">Pathline 数据访问请求已关闭。</string>
     <string name="api_access_title">访问 Pathline 数据</string>
     <string name="api_access_intro">最近访问过您 Pathline 数据的应用。由 Android 权限管理。</string>
     <!-- travel_times 路线端点的开关，会向 Google Routes API 发起外部请求。 -->

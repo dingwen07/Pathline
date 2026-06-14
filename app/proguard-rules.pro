@@ -18,6 +18,14 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 -renamesourcefileattribute SourceFile
+
+# ---------------------------------------------------------------------------
+# Firebase component discovery — registrars are named from manifest metadata
+# and instantiated reflectively. Preserve their constructors in minified
+# release builds so App Check providers register correctly.
+# ---------------------------------------------------------------------------
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+
 # ---------------------------------------------------------------------------
 # kotlinx.serialization
 # @Serializable models (data/db/Entities.kt, backup/BackupManifest.kt,

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.DrawableRes
@@ -71,8 +72,8 @@ import javax.inject.Inject
  * - [MODE_REQUEST] — another app fired [PathlineContract.Actions.REQUEST_API_ACCESS]. Shows the
  *   explainer with the **requesting app's name and icon** and a note that this is the overall switch.
  *   It **returns a result to that app** (`RESULT_OK`/`RESULT_CANCELED` + [PathlineContract.Actions.EXTRA_ACCESS_ENABLED])
- *   and never opens the manager. If access is already on it returns `RESULT_OK` immediately. The
- *   requester's identity comes only from [getCallingPackage] (system-verified, set for
+ *   and never opens the manager. If access is already on it returns `RESULT_OK` immediately and
+ *   shows a toast. The requester's identity comes only from [getCallingPackage] (system-verified, set for
  *   startActivityForResult); a caller that can't be verified gets a generic "couldn't identify the
  *   app" screen with no consent buttons instead of a personalized sheet.
  *
@@ -117,10 +118,12 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
                 MODE_REQUEST -> when {
                     // Already on -> nothing to ask; return success without any UI.
                     state.apiAccessEnabled -> {
+                        showRequestToast(R.string.api_consent_request_already_on)
                         setResultForRequest(enabled = true); finish(); return@launch
                     }
-                    // The user chose "don't ask again" -> never prompt for a request; decline silently.
+                    // The user chose "don't ask again" -> never prompt for a request.
                     state.apiAccessConsentNeverAsk -> {
+                        showRequestToast(R.string.api_consent_request_never_ask)
                         setResultForRequest(enabled = false); finish(); return@launch
                     }
                 }
@@ -184,6 +187,10 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
             if (enabled) RESULT_OK else RESULT_CANCELED,
             Intent().putExtra(PathlineContract.Actions.EXTRA_ACCESS_ENABLED, enabled),
         )
+    }
+
+    private fun showRequestToast(@StringRes message: Int) {
+        Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
     }
 
     /**

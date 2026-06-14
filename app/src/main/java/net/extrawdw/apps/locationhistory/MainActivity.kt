@@ -1,6 +1,7 @@
 package net.extrawdw.apps.locationhistory
 
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
@@ -36,6 +37,7 @@ import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.ui.OnboardingScreen
 import net.extrawdw.apps.locationhistory.ui.OnboardingViewModel
+import net.extrawdw.apps.locationhistory.ui.ApiAccessActivity
 import net.extrawdw.apps.locationhistory.ui.ApiAccessOnboardingActivity
 import net.extrawdw.apps.locationhistory.ui.MapExplorerScreen
 import net.extrawdw.apps.locationhistory.ui.MapMemoryPressure
@@ -185,9 +187,13 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                             },
                             // Row tap: the onboarding entry shows the first-run explainer when access
                             // is off and undecided, else goes straight to the access manager.
-                            onOpenApiAccess = {
+                            onOpenApiAccess = { skipOnboarding ->
                                 context.startActivity(
-                                    ApiAccessOnboardingActivity.manageIntent(context)
+                                    if (skipOnboarding) {
+                                        Intent(context, ApiAccessActivity::class.java)
+                                    } else {
+                                        ApiAccessOnboardingActivity.manageIntent(context)
+                                    }
                                 )
                             },
                             // Switch on: always show the onboarding explainer (then back to Settings).
