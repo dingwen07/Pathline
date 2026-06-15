@@ -239,7 +239,7 @@ object Notifications {
         // display's own label otherwise (Stationary at a stay, Unknown on a cold start).
         val label = when {
             display != DevicePhysicalState.UNKNOWN -> res.getString(display.labelRes)
-            cadence == RecorderState.MOVING || cadence == RecorderState.VERIFYING_DEPARTURE ->
+            cadence == RecorderState.MOVING || cadence == RecorderState.CONFIRMING_DEPARTURE ->
                 res.getString(R.string.state_moving)
 
             else -> res.getString(display.labelRes)

@@ -15,8 +15,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -104,7 +102,7 @@ class RecordingController @Inject constructor(
     @Volatile
     private var sigMotionRearmJob: Job? = null
 
-    /** Fires the VERIFYING_DEPARTURE deadline when the burst hasn't confirmed a departure. */
+    /** Fires the SENSING/CONFIRMING verify deadline when the look hasn't confirmed a departure. */
     @Volatile
     private var verifyDeadlineJob: Job? = null
 
@@ -155,6 +153,7 @@ class RecordingController @Inject constructor(
         recognitionManager.stop()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
+        deviceStateCollector.disarmWifiLossDetection()
         cancelSigMotionRearm()
         cancelVerify()
         recorderService.stop()
@@ -323,7 +322,7 @@ class RecordingController @Inject constructor(
             // (the Transition API only reports changes), so it would hold the costly UNKNOWN cadence
             // until the next departure. Re-derive the stay from stored fixes and drop to low power.
             // Gate strictly on UNKNOWN: MOVING resolves itself via the live cluster detector, and
-            // VERIFYING_DEPARTURE self-reverts on its deadline — repairing those would clobber the
+            // SENSING/CONFIRMING self-revert on their deadline — repairing those would clobber the
             // live buffer or abort an in-flight departure check.
             if (policy.state == RecorderState.UNKNOWN) repairStationaryFromStoredSamples()
             return@withLock
@@ -427,40 +426,22 @@ class RecordingController @Inject constructor(
             AppLog.i(TAG, "geofence EXIT ignored — recording paused (app removed from Recents)")
             return@withLock
         }
-        AppLog.i(TAG, "geofence EXIT")
-        // Cheap confirmatory re-sample (the significant-motion pattern), but this runs inside the
-        // geofence broadcast's goAsync() budget, so gather the IMU burst and the fix CONCURRENTLY and
-        // cap the fix wait tighter than the foreground path. The pure policy gets both for the verdict.
-        val (motionVariance, freshFix) = coroutineScope {
-            val mv = async { motionSensorReader.motionVariance() }
-            val ff =
-                async { getCurrentLocation(Constants.GEOFENCE_CONFIRM_FIX_TIMEOUT_MS)?.toRecentFix() }
-            mv.await() to ff.await()
-        }
-        val actions = policy.onGeofenceExit(freshFix, motionVariance, System.currentTimeMillis())
-        if (actions.isEmpty()) {
-            AppLog.i(
-                TAG,
-                "geofence EXIT — unconfirmed (drift); keeping stay, re-arming dwell geofence"
-            )
-            rearmDwellGeofenceAtAnchor()
-        } else {
-            executeActions(actions) // EnterMoving clears the geofence itself
-        }
+        AppLog.i(TAG, "geofence EXIT -> sensing departure")
+        // The geofence is a single-fix trigger (indoor multipath fakes it off a still phone), so it is
+        // only a hint: the SENSING_DEPARTURE tier does the cheap evidence-gathering the controller used
+        // to do inline against the goAsync() budget. A stale / already-verifying exit no-ops in the
+        // policy. The geofence stays registered through verification; a SENSING revert re-arms it
+        // (execRevertToStationary) to reset the GMS in/out baseline so it fires on a future real exit.
+        executeActions(policy.onGeofenceExit(System.currentTimeMillis()))
     }
 
     /**
      * The significant-motion trigger fired while stationary — a fast, low-power *hint* that the user
-     * may have started location-changing motion. It is NOT trusted as a confirmed departure: the
-     * one-shot hardware sensor fires on transients (a phone bumped on a desk, HVAC, a passing truck)
-     * that don't actually move the user.
-     *
-     * Cheap pre-filter before paying for a GPS burst: a real walk shakes the phone
-     * ([MotionSensorReader.motionVariance]); a still phone is usually a transient but can also be a
-     * smooth, mounted-vehicle departure, so a still phone is confirmed against one fresh fix's
-     * displacement from the stay (the old drift guard) rather than bursting on every trigger. Only a
-     * genuine motion/displacement hint enters VERIFYING_DEPARTURE; a transient just re-arms the sensor
-     * with backoff so a chronically noisy surface can't flap us into the burst cadence.
+     * may have started location-changing motion. It is NOT trusted as a confirmed departure (the
+     * one-shot sensor fires on transients: a phone bumped on a desk, HVAC, a passing truck). So it
+     * enters the cheap [RecorderState.SENSING_DEPARTURE] look, whose BALANCED window filters transients
+     * without a GPS burst — replacing the old inline fresh-fix pre-check. The consumed one-shot sensor
+     * is re-armed (with backoff) when SENSING reverts, so a chronically noisy surface can't flap us.
      */
     suspend fun handleSignificantMotion(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {
@@ -471,31 +452,8 @@ class RecordingController @Inject constructor(
             return@withLock
         }
         if (policy.state != RecorderState.STATIONARY) return@withLock // stale trigger; already moving
-        val motionVariance = motionSensorReader.motionVariance()
-        val movingHint = if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) {
-            true // phone is shaking — a real walk; let the burst confirm vs. mere handling
-        } else {
-            // Still phone: confirm a possible smooth departure against one fresh fix before bursting.
-            // The fix must be positionally trustworthy — a coarse outlier (often later excluded as
-            // low_accuracy) is indoor multipath, not a departure, and must not ramp the cadence.
-            val fresh = getCurrentLocation()
-            fresh != null &&
-                    (if (fresh.hasAccuracy()) fresh.accuracy else Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                    !heuristics.isWithinStay(
-                        fresh.latitude, fresh.longitude,
-                        if (fresh.hasSpeed()) fresh.speed else 0f, motionVariance,
-                    )
-        }
-        if (movingHint) {
-            AppLog.i(TAG, "significant motion — verifying departure")
-            executeActions(policy.onSignificantMotion(System.currentTimeMillis()))
-        } else {
-            AppLog.i(
-                TAG,
-                "significant motion — transient (no displacement); re-arming with backoff"
-            )
-            rearmSignificantMotionWithBackoff()
-        }
+        AppLog.i(TAG, "significant motion -> sensing departure")
+        executeActions(policy.onSignificantMotion(System.currentTimeMillis()))
     }
 
     /**
@@ -537,7 +495,7 @@ class RecordingController @Inject constructor(
             cancelSigMotionRearm()
             significantMotionManager.arm { handleSignificantMotion() }
         } else {
-            AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) — treating as departure")
+            AppLog.i(TAG, "Doze exit with motion (var=$motionVariance) -> sensing departure")
             executeActions(actions)
         }
     }
@@ -548,6 +506,29 @@ class RecordingController @Inject constructor(
             ?: TimeBuckets.dayEpoch(System.currentTimeMillis())
         workScheduler.enqueueTimelineMaintenance(day, "network_changed")
         refreshServiceState()
+    }
+
+    /**
+     * The connected Wi-Fi network dropped while parked — a near-free departure hint (the phone was
+     * carried out of range / off a hotspot). Routed from [DeviceStateCollector]'s Wi-Fi-loss callback,
+     * armed while STATIONARY. Like a geofence exit it is only a hint, so it enters the cheap
+     * SENSING_DEPARTURE look; a stale signal while not parked / already verifying no-ops in the policy.
+     */
+    suspend fun handleWifiDisconnected(): Unit = stateMutex.withLock {
+        // The ConnectivityManager Wi-Fi callback outlives disableTracking() (it is never unregistered,
+        // only the listener is nulled), so a drop racing a disable can land here after recording stopped
+        // — guard on the persisted preference so we never drive a stray verify transition while off.
+        if (!settingsRepository.settings.first().trackingEnabled) {
+            AppLog.i(TAG, "wifi disconnect ignored — tracking disabled")
+            return@withLock
+        }
+        if (isAutostartSuppressed()) {
+            AppLog.i(TAG, "wifi disconnect ignored — recording paused (app removed from Recents)")
+            return@withLock
+        }
+        if (policy.state != RecorderState.STATIONARY) return@withLock
+        AppLog.i(TAG, "wifi disconnected -> sensing departure")
+        executeActions(policy.onWifiDisconnected(System.currentTimeMillis()))
     }
 
     /** Persist + classify a batch of delivered fixes. */
@@ -676,7 +657,7 @@ class RecordingController @Inject constructor(
         executeActions(policy.onResumeRepair(fixes, System.currentTimeMillis()))
     }
 
-    /** The VERIFYING_DEPARTURE deadline fired: ask the policy to revert if still unconfirmed. */
+    /** The verify deadline fired (SENSING/CONFIRMING): ask the policy to revert if still unconfirmed. */
     private suspend fun onVerifyDeadline() = stateMutex.withLock {
         val actions = policy.onVerifyDeadline(System.currentTimeMillis())
         if (actions.isEmpty()) return@withLock
@@ -726,6 +707,9 @@ class RecordingController @Inject constructor(
             resetSigMotionBackoff()
             significantMotionManager.arm { handleSignificantMotion() }
         }
+        // Wi-Fi loss is a near-free departure hint (carried out of range / off a hotspot). Armed while
+        // parked, eagerly registering the callback so a cold STATIONARY start catches the first drop.
+        deviceStateCollector.armWifiLossDetection { controllerScope.launch { handleWifiDisconnected() } }
         val anchor = action.candidate ?: locationRepository.mostRecent()?.let {
             VisitCandidate(
                 startMs = it.timestampMs,
@@ -754,6 +738,7 @@ class RecordingController @Inject constructor(
         resetSigMotionBackoff()
         geofenceManager.clearAll()
         significantMotionManager.disarm()
+        deviceStateCollector.disarmWifiLossDetection()
         workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay(), action.reason)
         refreshServiceState()
     }
@@ -761,12 +746,12 @@ class RecordingController @Inject constructor(
     private suspend fun execBeginVerifying(action: RecordingAction.BeginVerifying) {
         AppLog.i(
             TAG,
-            "verifying departure (${action.reason}) — burst cadence for ${Constants.DEPARTURE_VERIFY_WINDOW_MS}ms"
+            "verifying departure (${action.reason}) -> ${policy.state}, deadline ${action.windowMs}ms"
         )
         refreshServiceState()
         cancelVerify()
         verifyDeadlineJob = controllerScope.launch {
-            delay(Constants.DEPARTURE_VERIFY_WINDOW_MS)
+            delay(action.windowMs)
             onVerifyDeadline()
         }
     }
@@ -774,9 +759,17 @@ class RecordingController @Inject constructor(
     private suspend fun execRevertToStationary(action: RecordingAction.RevertToStationary) {
         AppLog.i(TAG, "verify window elapsed (${action.reason}) — reverting to STATIONARY")
         refreshServiceState()
-        // The dwell geofence was left armed through verification; re-arm only the (consumed) one-shot
-        // sensor, with backoff growth so a chronically noisy surface can't flap us awake every minute.
+        // Re-arm the consumed one-shot significant-motion sensor with backoff growth so a chronically
+        // noisy surface can't flap us awake every minute.
         rearmSignificantMotionWithBackoff()
+        // Re-arm the dwell geofence at the stay anchor. A spurious EXIT that routed us through SENSING
+        // left the EXIT-only geofence latched 'outside' (GMS won't fire EXIT again until a re-ENTER);
+        // re-adding it (clearAll + addGeofences, setInitialTrigger 0) resets the in/out baseline from the
+        // device's current in-radius position, so a future REAL departure fires EXIT again instead of
+        // staying silent until an incidental re-enter.
+        val anchor = heuristics.stationaryAnchor
+            ?: locationRepository.mostRecent()?.let { it.latitude to it.longitude }
+        anchor?.let { armDwellGeofenceAdaptive(it.first, it.second) }
         workScheduler.enqueueTimelineMaintenanceNow(maintenanceDay(), action.reason)
     }
 
@@ -820,7 +813,8 @@ class RecordingController @Inject constructor(
             latestMovingClassification?.takeUnless { arEvidence.isActivity(AR_STILL) }
                 ?: DevicePhysicalState.UNKNOWN
 
-        RecorderState.VERIFYING_DEPARTURE, RecorderState.UNKNOWN -> DevicePhysicalState.UNKNOWN
+        RecorderState.SENSING_DEPARTURE, RecorderState.CONFIRMING_DEPARTURE, RecorderState.UNKNOWN ->
+            DevicePhysicalState.UNKNOWN
     }
 
     private suspend fun maintenanceDay(): Long =
@@ -869,26 +863,6 @@ class RecordingController @Inject constructor(
     }
 
     // --- helpers ------------------------------------------------------------------------------
-
-    /** Decouple a delivered [Location] into the heuristics' [RecentFix] for a one-off policy check
-     *  (the geofence-exit confirmation); not persisted — that is [handleLocationsCore]'s job. */
-    private fun Location.toRecentFix(): RecentFix = RecentFix(
-        t = time,
-        lat = latitude,
-        lon = longitude,
-        accuracyMeters = if (hasAccuracy()) accuracy else null,
-        speedMps = if (hasSpeed()) speed else null,
-        stationary = false,
-    )
-
-    /** Re-arm the dwell geofence at the current stay anchor after a drift-only exit, so monitoring
-     *  continues without promoting to the high-accuracy cadence. */
-    private suspend fun rearmDwellGeofenceAtAnchor() {
-        val anchor = heuristics.stationaryAnchor
-            ?: locationRepository.mostRecent()?.let { it.latitude to it.longitude }
-            ?: return
-        armDwellGeofenceAdaptive(anchor.first, anchor.second)
-    }
 
     /**
      * Arm the dwell geofence with a radius widened to the GPS noise actually seen at this stay, so an

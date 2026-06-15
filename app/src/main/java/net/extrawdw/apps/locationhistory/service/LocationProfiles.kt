@@ -43,17 +43,31 @@ object LocationProfiles {
                 12_000
             )
 
-            // Verifying a departure hint: a short, eager burst so a few fixes can confirm motion fast;
-            // tiny batch window so we are not waiting on the radio to coalesce the verdict.
-            RecorderState.VERIFYING_DEPARTURE -> Tuning(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                2_000,
-                1_000,
-                4_000
+            // Cheap first look after a weak departure hint: BALANCED (Wi-Fi+cell, rarely GPS) at a
+            // modest cadence. Filters transients (a phone pickup) without engaging GPS hard; escalates
+            // to CONFIRMING only on a real displacement/Doppler hint.
+            RecorderState.SENSING_DEPARTURE -> Tuning(
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                20_000,
+                10_000,
+                40_000
             )
 
+            // Escalated departure check: HIGH_ACCURACY so Doppler + sub-100 m position can resolve a
+            // real walk-out from in-place drift. Slower than the old eager 2s burst -- the multi-fix
+            // signature needs a few fixes over a couple of minutes, not a frantic burst.
+            RecorderState.CONFIRMING_DEPARTURE -> Tuning(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                10_000,
+                5_000,
+                20_000
+            )
+
+            // Parked: BALANCED (Wi-Fi+cell, ~100 m) rather than LOW_POWER (cell-only, ~km) so the stored
+            // stationary samples don't drift on cell-tower handoffs. Departure detection rests on the
+            // armed triggers (geofence / significant-motion / Wi-Fi disconnect), not this heartbeat.
             RecorderState.STATIONARY -> Tuning(
-                Priority.PRIORITY_LOW_POWER,
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
                 180_000,
                 120_000,
                 300_000

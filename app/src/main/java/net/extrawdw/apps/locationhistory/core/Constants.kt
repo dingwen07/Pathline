@@ -138,6 +138,30 @@ object Constants {
      *  The dumps' ambiguous case had 4 fixes; require more. */
     const val MIN_MOVING_WINDOW_FIXES = 5
 
+    /**
+     * Accuracy gate (m) for trusting a fix's Doppler speed / displacement as REAL movement evidence in
+     * the recorder's live decisions (the MOVING sustained-Doppler keep-alive and the CONFIRMING_DEPARTURE
+     * confirm). Tighter than [SAMPLE_ACCURACY_GATE_METERS] (60 m): the June 2026 dump showed coarse
+     * fixes (32-69 m) are exactly the drift that fakes a moving fraction at a stationary place -- with a
+     * <=30 m gate the stationary-vs-walking moving fractions separate cleanly (stationary tops ~0.19,
+     * walking floors ~0.25). Position progress still uses the 60 m gate; this is only for the speed/
+     * Doppler-trust decisions where coarse fixes lie.
+     */
+    const val DOPPLER_ACCURACY_GATE_M = 30f
+
+    /**
+     * MOVING sustained-Doppler keep-alive (slow-trip self-demote fix). [recentlyMoving]'s half-centroid
+     * net-displacement test has an effective ~1.8 m/s floor (above walking pace), so a slow real trip
+     * (a creeping shuttle, traffic, an AR-untagged vehicle) with no step signal would self-demote
+     * mid-trip after [MOVING_IDLE_TIMEOUT_MS]. The keep-alive holds MOVING when, over a
+     * [MOVING_RUN_WINDOW_MS] tail of accuracy-gated ([DOPPLER_ACCURACY_GATE_M]) fixes, the moving
+     * fraction (speed >= [WALK_SPEED_FLOOR_MPS]) clears [MOVING_KEEPALIVE_FIX_FRACTION] AND at least
+     * [MOVING_KEEPALIVE_MIN_MOVING_FIXES] fixes are moving -- the absolute floor stops a lone phantom
+     * Doppler spike from pinning the costly cadence (the 06-13 drain class). Dump-calibrated.
+     */
+    const val MOVING_KEEPALIVE_FIX_FRACTION = 0.20f
+    const val MOVING_KEEPALIVE_MIN_MOVING_FIXES = 3
+
     /** Max gap (ms) from a drift trip to each bounding visit for them to be fused. Looser than
      *  [MERGE_GAP_MS] because the recorder leaves a ~2-min dead zone around the visit split that
      *  creates these trips; still tight enough not to weld a same-place pair across a real outage. */
@@ -147,11 +171,6 @@ object Constants {
      *  20-30s — longer than a broadcast receiver's goAsync window, and the controller mutex is held
      *  while waiting. Past this, the request is cancelled and callers fall back to no-fix paths. */
     const val CURRENT_FIX_TIMEOUT_MS = 8_000L
-
-    /** Tighter fix wait for the geofence-EXIT confirmation: it runs inside the geofence broadcast's
-     *  goAsync() budget (~10s) alongside an IMU burst, so it must not spend the whole window. On
-     *  timeout the policy falls back to the IMU verdict / AR / significant-motion. */
-    const val GEOFENCE_CONFIRM_FIX_TIMEOUT_MS = 5_000L
 
     /**
      * Accelerometer motion-energy (variance) at or above which the phone is physically moving, so a
@@ -186,12 +205,39 @@ object Constants {
     const val MOVING_IDLE_TIMEOUT_MS = 5 * 60_000L
 
     /**
-     * How long [net.extrawdw.apps.locationhistory.core.RecorderState.VERIFYING_DEPARTURE] burst-samples
-     * before giving up on an unconfirmed departure hint and reverting to STATIONARY. Replaces the old
-     * "bet on one fresh fix while holding the mutex" check: a real departure shows movement in the
-     * burst within this window; a transient (phone bumped, HVAC) shows none and is suppressed.
+     * How long the cheap [net.extrawdw.apps.locationhistory.core.RecorderState.SENSING_DEPARTURE] first
+     * look samples (BALANCED) before giving up on an unescalated departure hint and reverting to
+     * STATIONARY. A real departure shows some displacement / Doppler within this window and escalates to
+     * CONFIRMING; a transient (phone bumped, Wi-Fi flap, HVAC) shows none and is suppressed cheaply.
      */
-    const val DEPARTURE_VERIFY_WINDOW_MS = 75_000L
+    const val SENSING_VERIFY_WINDOW_MS = 90_000L
+
+    /**
+     * How long [net.extrawdw.apps.locationhistory.core.RecorderState.CONFIRMING_DEPARTURE] gathers
+     * HIGH_ACCURACY fixes before giving up on an unconfirmed departure and reverting to STATIONARY. Long
+     * enough for a multi-fix movement signature (sustained Doppler or a coherent displacement trace) to
+     * form; the verify deadline is rescheduled to this on escalation from SENSING.
+     */
+    const val CONFIRMING_VERIFY_WINDOW_MS = 150_000L
+
+    /** Departure confirmation (CONFIRMING_DEPARTURE), calibrated from the June 2026 dump. Sustained
+     *  Doppler: at least this many accuracy-gated verify-window fixes carry valid speed
+     *  >= [WALK_SPEED_FLOOR_MPS]. One spike is not enough (the dump showed false Doppler while still). */
+    const val CONFIRM_MIN_DOPPLER_FIXES = 3
+
+    /** Coherent-displacement fallback (no/low Doppler, e.g. network fixes): needs at least this many
+     *  accuracy-gated verify-window fixes to judge a trend. */
+    const val CONFIRM_MIN_DISPLACEMENT_FIXES = 4
+
+    /** Coherent-displacement fallback: the max displacement from the frozen stay anchor must exceed this
+     *  multiple of [DRIFT_DISPLACEMENT_METERS]-floored stationary noise radius (so a real walk-out
+     *  clears it well, but in-place drift around one of the broad stay circles does not). */
+    const val CONFIRM_DISPLACEMENT_RADIUS_MULTIPLE = 2.0
+
+    /** Coherent-displacement fallback kinematic ceiling (m/s): a fix-to-fix step implying a speed above
+     *  this with NO corroborating Doppler is a multipath teleport, not a walk-out -- reject it. Real
+     *  displacement-only departures are slow walks; a genuine fast departure carries Doppler instead. */
+    const val CONFIRM_MAX_STEP_SPEED_MPS = 4.0
 
     /** Floor (m) for the dwell geofence dropped when the device becomes stationary. The radius is
      *  widened per-stay to the GPS noise actually observed there (see [DWELL_GEOFENCE_MARGIN_METERS]);

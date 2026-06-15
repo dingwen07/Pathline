@@ -12,6 +12,8 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
@@ -44,6 +46,37 @@ class DeviceStateCollector @Inject constructor(
     @Volatile
     private var wifiCallbackRegistered = false
 
+    /**
+     * Listener invoked when the connected Wi-Fi network is lost (after a short debounce), when armed via
+     * [armWifiLossDetection]. A Wi-Fi disconnect is a near-free departure hint (you carried the phone
+     * out of range / off a hotspot): the recorder routes it to a
+     * [net.extrawdw.apps.locationhistory.core.RecorderState.SENSING_DEPARTURE] check. The
+     * Wi-Fi-transport-filtered [onLost] below is the clean edge -- the service's default-network callback
+     * can't tell "Wi-Fi specifically dropped" from any handoff. Invoked on [wifiHandler]'s looper, so the
+     * listener hands off (launches a coroutine) rather than blocking.
+     */
+    @Volatile
+    private var onWifiLost: (() -> Unit)? = null
+
+    /** Debounces Wi-Fi loss so a dual-band/mesh roam (lose-then-immediately-regain, no real movement)
+     *  doesn't fire a departure hint: [onLost] schedules [fireWifiLost] after [WIFI_LOSS_DEBOUNCE_MS]
+     *  and a reconnect (onCapabilitiesChanged) cancels it. The runnable re-reads [onWifiLost] at fire
+     *  time, so a disarm in the meantime is a no-op. */
+    private val wifiHandler = Handler(Looper.getMainLooper())
+    private val fireWifiLost = Runnable { onWifiLost?.invoke() }
+
+    /** Arm the Wi-Fi-loss departure hint and eagerly register the callback (so a cold STATIONARY start
+     *  catches the first disconnect without waiting for a Wi-Fi snapshot). Idempotent. */
+    fun armWifiLossDetection(listener: () -> Unit) {
+        onWifiLost = listener
+        ensureWifiCallbackRegistered()
+    }
+
+    /** Disarm the Wi-Fi-loss hint (leaving the network callback registered for snapshot enrichment). */
+    fun disarmWifiLossDetection() {
+        onWifiLost = null
+    }
+
     private fun ensureWifiCallbackRegistered() {
         if (wifiCallbackRegistered) return
         if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return
@@ -55,13 +88,20 @@ class DeviceStateCollector @Inject constructor(
             ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 callbackWifiInfo = caps.transportInfo as? WifiInfo
+                // A (re)connect cancels a pending loss hint -- a dual-band/mesh roam loses then
+                // immediately regains a Wi-Fi network without the user moving.
+                wifiHandler.removeCallbacks(fireWifiLost)
             }
 
             override fun onLost(network: Network) {
                 callbackWifiInfo = null
+                // Debounce: a real departure stays disconnected past the window; a mesh/band-steer flap
+                // reconnects within it and cancels this via onCapabilitiesChanged above.
+                wifiHandler.removeCallbacks(fireWifiLost)
+                wifiHandler.postDelayed(fireWifiLost, WIFI_LOSS_DEBOUNCE_MS)
             }
         }
-        runCatching { cm.registerNetworkCallback(request, callback) }
+        runCatching { cm.registerNetworkCallback(request, callback, wifiHandler) }
             .onSuccess { wifiCallbackRegistered = true }
     }
 
@@ -150,5 +190,8 @@ class DeviceStateCollector @Inject constructor(
     companion object {
         /** The BSSID placeholder Android substitutes when Wi-Fi info is location-redacted. */
         const val REDACTED_BSSID = "02:00:00:00:00:00"
+
+        /** Wi-Fi-loss debounce: a mesh/band-steer roam reconnects within this; a real departure doesn't. */
+        private const val WIFI_LOSS_DEBOUNCE_MS = 12_000L
     }
 }

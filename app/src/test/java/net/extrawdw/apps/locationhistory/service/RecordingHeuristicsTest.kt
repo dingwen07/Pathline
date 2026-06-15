@@ -318,4 +318,63 @@ class RecordingHeuristicsTest {
         // The streak keeps growing past the shift cap; the delay must not overflow or grow.
         assertEquals(30 * 60_000L, RecordingHeuristics.sigMotionBackoffMs(40))
     }
+
+    // ---- sustainedDopplerMoving (MOVING keep-alive) ---------------------------------------------
+
+    @Test
+    fun sustainedDoppler_falseAtPinnedCentroidDespiteSpikes() {
+        // Phantom Doppler at a FIXED point: the spikes pass the speed fraction, but net displacement is
+        // ~0 so the keep-alive must NOT fire (the 06-13 drain guard — this is the sole barrier once the
+        // cluster detector bails on meanSpeed>0.6).
+        for (sec in 0L..180L step 10) {
+            val spd = if (sec % 30 == 0L) 3f else 0.2f
+            h.pushFix(fix(atSec = sec, lat = 40.0, lon = -74.0, accuracy = 20f, speed = spd, stationary = false))
+        }
+        assertFalse(h.sustainedDopplerMoving())
+    }
+
+    @Test
+    fun sustainedDoppler_trueOnProgressingSlowTrip() {
+        // ~1 m/s progressing trip with accurate fixes carrying valid Doppler: holds MOVING.
+        for (sec in 0L..180L step 10) {
+            h.pushFix(fix(atSec = sec, lat = 40.0 + sec * 0.0000090, accuracy = 20f, speed = 1.0f, stationary = false))
+        }
+        assertTrue(h.sustainedDopplerMoving())
+    }
+
+    @Test
+    fun sustainedDoppler_falseWhenProgressingButNoValidSpeed() {
+        // Real translation but speed below the walking floor: the keep-alive needs BOTH -> false.
+        for (sec in 0L..180L step 10) {
+            h.pushFix(fix(atSec = sec, lat = 40.0 + sec * 0.0000090, accuracy = 20f, speed = 0.3f, stationary = false))
+        }
+        assertFalse(h.sustainedDopplerMoving())
+    }
+
+    @Test
+    fun sustainedDoppler_falseWhenDopplerOnlyOnCoarseFixes() {
+        // Valid speed but only on coarse (>30 m) fixes: excluded by the Doppler accuracy gate -> false.
+        for (sec in 0L..180L step 10) {
+            h.pushFix(fix(atSec = sec, lat = 40.0 + sec * 0.0000090, accuracy = 45f, speed = 1.0f, stationary = false))
+        }
+        assertFalse(h.sustainedDopplerMoving())
+    }
+
+    // ---- hasLeftStayBeyondAccuracy (SENSING escalation gate) ------------------------------------
+
+    @Test
+    fun hasLeftStayBeyondAccuracy_requiresDisplacementBeyondBothRadiusAndAccuracy() {
+        h.stationaryAnchor = 40.0 to -74.0
+        // Near + accurate: within the stay.
+        assertFalse(h.hasLeftStayBeyondAccuracy(40.0001, -74.0, 10f))   // ~11 m < 80 m radius
+        // Far + accurate: a real, large move.
+        assertTrue(h.hasLeftStayBeyondAccuracy(40.001, -74.0, 10f))     // ~111 m >= 80 m
+        // Displaced past the radius but NOT past its own (coarse) accuracy: not trusted to attest.
+        assertFalse(h.hasLeftStayBeyondAccuracy(40.0008, -74.0, 100f))  // ~89 m < max(80, 100)
+        // A coarse fix CAN attest to a large enough move (beyond its accuracy).
+        assertTrue(h.hasLeftStayBeyondAccuracy(40.02, -74.0, 100f))     // ~2220 m >= max(80, 100)
+        // No anchor: nothing to be displaced from.
+        h.stationaryAnchor = null
+        assertFalse(h.hasLeftStayBeyondAccuracy(40.02, -74.0, 10f))
+    }
 }

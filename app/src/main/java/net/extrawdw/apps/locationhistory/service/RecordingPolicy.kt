@@ -33,8 +33,12 @@ sealed interface RecordingAction {
     /** Leave to the high-accuracy moving cadence: clear the geofence and disarm significant motion. */
     data class EnterMoving(val reason: String) : RecordingAction
 
-    /** Ambiguous departure hint: switch to the burst cadence and schedule the verification deadline. */
-    data class BeginVerifying(val reason: String) : RecordingAction
+    /**
+     * Entered (or escalated within) departure verification: retune to the new state's cadence and
+     * (re)schedule the verification deadline for [windowMs]. Covers both SENSING_DEPARTURE entry and the
+     * SENSING -> CONFIRMING_DEPARTURE escalation; the policy has already set the target state.
+     */
+    data class BeginVerifying(val reason: String, val windowMs: Long) : RecordingAction
 
     /**
      * The verification window elapsed unconfirmed: revert to the stationary cadence and re-arm
@@ -57,8 +61,10 @@ sealed interface RecordingAction {
  *    budget — keyed on real translation, NOT on raw IMU energy or stale, lossy AR-moving edges (review
  *    findings #1/#2). No departure hint can hold the costly high cadence indefinitely; only continuous
  *    movement does.
- *  - **Ambiguous departures verify before committing.** AR-walking / significant-motion from a stay go
- *    to [RecorderState.VERIFYING_DEPARTURE] and decide from a short burst of fixes, not one fresh fix.
+ *  - **Ambiguous departures verify before committing.** Weak hints (significant-motion, geofence exit,
+ *    Wi-Fi disconnect, Doze-exit motion) enter [RecorderState.SENSING_DEPARTURE] (a cheap BALANCED look)
+ *    and escalate to [RecorderState.CONFIRMING_DEPARTURE] only on real displacement/Doppler, deciding
+ *    from a multi-fix signature, not one fresh fix. AR movement (incl. walking) is trusted -> MOVING.
  *
  * Owns the fix/speed buffers and geometry via the shared [RecordingHeuristics] and the [ArActivityTimeline].
  * Not thread-safe; the controller only ever calls it under its single mutex.
@@ -82,14 +88,25 @@ internal class RecordingPolicy(
      */
     private var quietSinceMs: Long? = null
 
+    /**
+     * When departure verification began (SENSING entry). The confirm rule reads only fixes received
+     * since this instant -- earlier samples were taken under the stationary low-power request and just
+     * prove the pre-existing stay. Kept across the SENSING -> CONFIRMING escalation; cleared on leaving
+     * verification (to MOVING or back to STATIONARY).
+     */
+    private var verifyEntryMs: Long? = null
+
+    private fun isVerifying(): Boolean =
+        state == RecorderState.SENSING_DEPARTURE || state == RecorderState.CONFIRMING_DEPARTURE
+
     // --- events ---------------------------------------------------------------------------------
 
     /**
      * Activity Recognition transitions (most-recent last). Each is recorded on the AR timeline; the
      * latest ENTER drives the decision. STILL is trusted only when recent fixes have settled and no
-     * departure verification is in flight (a smooth light-rail ride makes AR flap STILL); unambiguous
-     * motion (run/cycle/vehicle) leaves the stay immediately; walking from a stay is verified first
-     * (it can be in-place dwell jitter).
+     * departure verification is in flight (a smooth light-rail ride makes AR flap STILL); all AR motion
+     * (walk/run/cycle/vehicle) is trusted and leaves the stay immediately -- the timeline later merges
+     * any in-place dwell walking back into the visit.
      */
     fun onArTransitions(
         transitions: List<Pair<ArActivity, Boolean>>,
@@ -107,12 +124,13 @@ internal class RecordingPolicy(
         if (!last.second) return emptyList()
         return when (last.first) {
             ArActivity.STILL ->
-                if (state == RecorderState.VERIFYING_DEPARTURE || heuristics.recentlyMoving()) emptyList()
+                if (isVerifying() || heuristics.recentlyMoving()) emptyList()
                 else toStationary(heuristics.stationaryClusterCandidate(), "ar_still")
 
-            ArActivity.WALKING ->
-                if (state == RecorderState.STATIONARY) toVerifying("ar_walking") else toMoving("ar_walking")
-
+            // AR movement is trusted as a real user-movement signal -> MOVING directly, including
+            // walking (in-place pacing at home is recorded and the timeline merges it later). AR also
+            // promotes straight out of a verify look, so a real walk-out is caught even mid-SENSING.
+            ArActivity.WALKING -> toMoving("ar_walking")
             ArActivity.RUNNING -> toMoving("ar_running")
             ArActivity.CYCLING -> toMoving("ar_cycling")
             ArActivity.IN_VEHICLE -> toMoving("ar_vehicle")
@@ -132,9 +150,13 @@ internal class RecordingPolicy(
         if (state != RecorderState.STATIONARY && quietSinceMs == null) quietSinceMs = nowMs
 
         val movingFix = fixes.firstOrNull { it.indicatesMotion() }
-        // Real translation (a moving fix) or steps restart the quiet budget — motion evidence that,
-        // unlike raw IMU energy, is not faked by a vibrating-but-stationary surface (an idling car).
-        if (movingFix != null || stepDelta > 0) quietSinceMs = nowMs
+        // A slow real trip (below the ~1.8 m/s effective recentlyMoving floor) with no steps still
+        // carries sustained Doppler; count it as motion so such a trip neither demotes mid-trip nor
+        // loses its quiet budget. Accuracy-gated + multi-fix, so it is not faked by one phantom spike.
+        val sustainedDoppler = heuristics.sustainedDopplerMoving()
+        // Real translation (a moving fix), sustained Doppler, or steps restart the quiet budget — motion
+        // evidence that, unlike raw IMU energy, is not faked by a vibrating-but-stationary surface.
+        if (movingFix != null || stepDelta > 0 || sustainedDoppler) quietSinceMs = nowMs
         return when (state) {
             RecorderState.STATIONARY -> {
                 // Leave only when a delivered fix shows real motion AND isn't drift. Scan the whole
@@ -150,21 +172,25 @@ internal class RecordingPolicy(
                 if (departure != null) toMoving("fix_departure") else emptyList()
             }
 
-            // Confirm only when a burst fix actually leaves the stay (displaced beyond the noise
-            // radius, carries GPS speed, or shakes the phone) — the same geometry the stay uses, NOT
-            // the bare classifier verdict. Phantom-Doppler drift at the anchor does not confirm (the
-            // deadline reverts instead); a slow, speed-less departure confirms once it clears the radius.
-            RecorderState.VERIFYING_DEPARTURE ->
-                if (fixes.any {
-                        // A coarse outlier (often later excluded as low_accuracy) is indoor multipath,
-                        // not a departure — only a positionally-trustworthy fix may confirm.
-                        (it.fix.accuracyMeters
-                            ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                                !heuristics.isWithinStay(
-                                    it.fix.lat, it.fix.lon, it.fix.speedMps ?: 0f, motionVariance,
-                                )
-                    }
-                ) toMoving("verify_confirmed") else emptyList()
+            // Cheap first look: escalate to the HIGH_ACCURACY confirm only when a fix is displaced
+            // beyond BOTH the noise radius AND its own accuracy -- a real, large move even a coarse
+            // BALANCED fix can attest to. Position only: IMU energy (a phone pickup) and bare Doppler at
+            // the anchor (a phantom spike) do NOT escalate, so the cheap tier filters those for free. No
+            // hint -> wait for more fixes or the SENSING deadline (which reverts to STATIONARY).
+            RecorderState.SENSING_DEPARTURE -> {
+                val hint = fixes.any {
+                    heuristics.hasLeftStayBeyondAccuracy(it.fix.lat, it.fix.lon, it.fix.accuracyMeters)
+                }
+                if (hint) toConfirming("sensing_escalate", nowMs) else emptyList()
+            }
+
+            // Escalated confirm: leave to MOVING only on a multi-fix movement signature over the verify
+            // window (sustained Doppler OR a coherent, kinematically-plausible displacement trace from
+            // the frozen anchor) -- never one fix, one Doppler spike, or IMU energy. Otherwise wait, and
+            // the CONFIRMING deadline reverts to the stay.
+            RecorderState.CONFIRMING_DEPARTURE ->
+                if (confirmsDeparture(heuristics.departureEvidenceSince(verifyEntryMs ?: nowMs)))
+                    toMoving("verify_confirmed") else emptyList()
 
             // High-power MOVING is not self-sustaining: it must be continuously justified by real
             // motion (a moving fix or steps — both reset the quiet clock above). Otherwise we try to
@@ -174,6 +200,11 @@ internal class RecordingPolicy(
             // clock (net displacement + steps), NOT a stale AR-moving edge or raw IMU energy.
             RecorderState.MOVING -> when {
                 movingFix != null || stepDelta > 0 -> emptyList()
+                // Sustained Doppler reset the quiet clock above, so the idle-timeout can't fire on a
+                // slow real trip. The cluster detector is left as the backstop AHEAD of the timeout: a
+                // genuinely clustered (stationary) device still demotes via fix_cluster even if GPS fakes
+                // speed, so phantom Doppler can't pin MOVING -- only a non-clustering, progressing trip
+                // (whose fixes never settle within the stay radius) keeps the cadence alive.
                 else -> heuristics.stationaryClusterCandidate()
                     ?.let { toStationary(it, "fix_cluster") }
                     ?: if (idleElapsed(nowMs, Constants.MOVING_IDLE_TIMEOUT_MS))
@@ -193,44 +224,33 @@ internal class RecordingPolicy(
     }
 
     /**
-     * A dwell-geofence EXIT fired. The geofence is a *single-fix* trigger — it fires the instant one
-     * fix crosses the boundary, which is exactly what indoor GPS multipath throws off a still phone
-     * (the 06-13 drain: spurious exits pinned the high-accuracy MOVING cadence for 8-16 min each). So
-     * confirm the displacement is real before committing: trust [freshFix] only if it carries motion
-     * the geofence can't see (GPS speed, or a shaking phone via [motionVariance]) or is positionally
-     * trustworthy AND genuinely outside the stay. A coarse, motionless outlier near the anchor is
-     * drift -> keep the stay (the controller re-arms the geofence). A missing fix is NOT auto-drift: a
-     * shaking phone still confirms (below), and a still phone with no fix falls back to the slower
-     * AR / significant-motion / Doze-exit signals rather than bursting GPS on every spurious exit.
+     * A dwell-geofence EXIT fired -- a weak departure hint. The geofence is a *single-fix* trigger (it
+     * fires the instant one fix crosses the boundary, exactly what indoor multipath throws off a still
+     * phone -- the 06-13 drain that pinned high-accuracy MOVING for 8-16 min each). So it never confirms
+     * directly: enter the cheap [RecorderState.SENSING_DEPARTURE] look and let the gathered fixes
+     * decide. A stale exit while not parked -- or a second exit while already verifying/moving -- is a
+     * no-op (never a re-confirm). The confirmatory fix/IMU sampling the controller used to do inline now
+     * lives in the SENSING tier.
      */
-    fun onGeofenceExit(
-        freshFix: RecentFix?,
-        motionVariance: Float,
-        nowMs: Long
-    ): List<RecordingAction> {
-        // A stale exit while already moving (geofences are only armed at a stay) just commits.
-        if (state != RecorderState.STATIONARY) return toMoving("geofence_exit")
-        // A physically shaking phone is real motion the geofence can't see — and, crucially, it
-        // confirms even when the confirmatory fix request failed (GPS-hostile departure). Check it
-        // BEFORE the null-fix bailout so a real walk out of a dead zone is not discarded as drift.
-        if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING) return toMoving("geofence_exit")
-        val f = freshFix ?: return emptyList()
-        // A single GPS-speed reading is NOT enough to confirm -- indoor multipath fakes Doppler on a
-        // still phone (the 06-13 phantom-speed exits). Confirm only on a positionally-trustworthy fix
-        // that has actually left the stay: outside the noise radius, or a speed corroborated by net
-        // displacement (both via the net-aware isWithinStay). Otherwise stay put and re-arm the fence.
-        val trustedDisplacement =
-            (f.accuracyMeters ?: Float.MAX_VALUE) <= Constants.SAMPLE_ACCURACY_GATE_METERS &&
-                    !heuristics.isWithinStay(f.lat, f.lon, f.speedMps ?: 0f, motionVariance)
-        return if (trustedDisplacement) toMoving("geofence_exit") else emptyList()
-    }
+    fun onGeofenceExit(nowMs: Long): List<RecordingAction> =
+        if (state != RecorderState.STATIONARY) emptyList() else toSensing("geofence_exit", nowMs)
+
+    /**
+     * The connected Wi-Fi network dropped while parked -- a near-free departure hint (the phone was
+     * carried out of range / off a hotspot). Like the geofence exit it is only a hint (a router reboot
+     * or signal flap also disconnects), so it enters the cheap [RecorderState.SENSING_DEPARTURE] look
+     * rather than confirming. A no-op when not parked / already verifying.
+     */
+    fun onWifiDisconnected(nowMs: Long): List<RecordingAction> =
+        if (state != RecorderState.STATIONARY) emptyList() else toSensing("wifi_disconnected", nowMs)
 
     /**
      * The significant-motion sensor fired while parked — a cheap, Doze-surviving *hint* that the user
-     * may have started moving. Not trusted on its own (it fires on transients); verify from a burst.
+     * may have started moving. Not trusted on its own (it fires on transients); enter the cheap
+     * [RecorderState.SENSING_DEPARTURE] look and let the gathered fixes decide.
      */
     fun onSignificantMotion(nowMs: Long): List<RecordingAction> =
-        if (state != RecorderState.STATIONARY) emptyList() else toVerifying("significant_motion")
+        if (state != RecorderState.STATIONARY) emptyList() else toSensing("significant_motion", nowMs)
 
     /**
      * Doze idle-mode changed. Entering deep idle is the platform confirming durable stationarity
@@ -251,13 +271,16 @@ internal class RecordingPolicy(
             )
         }
         if (state != RecorderState.STATIONARY) return emptyList()
+        // Doze exit with motion is a hint, not a confirmation (a maintenance-window / screen-on wake can
+        // coincide with phone handling): enter the cheap SENSING look. Without motion the controller
+        // just re-arms the sensor.
         return if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING)
-            toMoving("doze_exit_motion") else emptyList()
+            toSensing("doze_exit_motion", nowMs) else emptyList()
     }
 
-    /** The verification window elapsed: if still unconfirmed, revert to the stay. */
+    /** The verification window elapsed (SENSING or CONFIRMING): if still unconfirmed, revert to the stay. */
     fun onVerifyDeadline(nowMs: Long): List<RecordingAction> =
-        if (state == RecorderState.VERIFYING_DEPARTURE) revertToStationary("verify_timeout") else emptyList()
+        if (isVerifying()) revertToStationary("verify_timeout") else emptyList()
 
     /**
      * Process-restart repair: recent *stored* fixes already prove a stay (the session came back in
@@ -285,6 +308,7 @@ internal class RecordingPolicy(
         if (state == RecorderState.STATIONARY) return emptyList()
         state = RecorderState.STATIONARY
         quietSinceMs = null
+        verifyEntryMs = null
         // Anchor the drift guard. Prefer the cluster centroid; otherwise the latest buffered fix
         // (Doze/idle-timeout paths); null leaves drift undecidable, which never *suppresses* a departure.
         heuristics.stationaryAnchor =
@@ -297,22 +321,57 @@ internal class RecordingPolicy(
         if (state == RecorderState.MOVING) return emptyList()
         state = RecorderState.MOVING
         quietSinceMs = null
+        verifyEntryMs = null
         heuristics.stationaryAnchor = null
         return listOf(RecordingAction.EnterMoving(reason))
     }
 
-    private fun toVerifying(reason: String): List<RecordingAction> {
-        if (state == RecorderState.VERIFYING_DEPARTURE) return emptyList()
-        state = RecorderState.VERIFYING_DEPARTURE
+    /** Enter the cheap first-look [RecorderState.SENSING_DEPARTURE], freezing the verify-window start. */
+    private fun toSensing(reason: String, nowMs: Long): List<RecordingAction> {
+        if (isVerifying()) return emptyList()
+        state = RecorderState.SENSING_DEPARTURE
         quietSinceMs = null
-        return listOf(RecordingAction.BeginVerifying(reason))
+        verifyEntryMs = nowMs
+        return listOf(RecordingAction.BeginVerifying(reason, Constants.SENSING_VERIFY_WINDOW_MS))
+    }
+
+    /** Escalate the cheap look to the HIGH_ACCURACY [RecorderState.CONFIRMING_DEPARTURE]. Keeps
+     *  [verifyEntryMs] from SENSING entry so the confirm sees the whole post-hint window. */
+    private fun toConfirming(reason: String, nowMs: Long): List<RecordingAction> {
+        if (state == RecorderState.CONFIRMING_DEPARTURE) return emptyList()
+        state = RecorderState.CONFIRMING_DEPARTURE
+        quietSinceMs = null
+        if (verifyEntryMs == null) verifyEntryMs = nowMs
+        return listOf(RecordingAction.BeginVerifying(reason, Constants.CONFIRMING_VERIFY_WINDOW_MS))
     }
 
     private fun revertToStationary(reason: String): List<RecordingAction> {
         state = RecorderState.STATIONARY
         quietSinceMs = null
+        verifyEntryMs = null
         heuristics.stationaryAnchor = heuristics.lastFixLatLon()
         return listOf(RecordingAction.RevertToStationary(reason))
+    }
+
+    /**
+     * CONFIRMING_DEPARTURE -> MOVING decision from [DepartureEvidence] over the verify window. Confirm
+     * on EITHER sustained Doppler (several trusted fixes carrying a real walking-or-faster speed) OR a
+     * coherent displacement fallback for no/low-Doppler departures (network fixes): a sustained,
+     * progressing, kinematically-plausible trace well clear of the stay. Never one fix / one spike.
+     */
+    private fun confirmsDeparture(ev: DepartureEvidence): Boolean {
+        val radius = heuristics.stationaryNoiseRadius()
+        // Sustained Doppler -- but corroborated by real displacement from the frozen anchor, so in-place
+        // phantom Doppler on accurate (<=30 m) fixes at a pinned spot can never confirm from nothing.
+        if (ev.dopplerMovingCount >= Constants.CONFIRM_MIN_DOPPLER_FIXES &&
+            ev.maxDisplacementFromAnchor >= radius
+        ) return true
+        // Coherent displacement fallback (no/low Doppler, e.g. network fixes): a sustained, progressing,
+        // kinematically-plausible trace well clear of the stay.
+        return ev.trustedFixCount >= Constants.CONFIRM_MIN_DISPLACEMENT_FIXES &&
+                ev.maxDisplacementFromAnchor >= Constants.CONFIRM_DISPLACEMENT_RADIUS_MULTIPLE * radius &&
+                ev.netDisplacement >= radius &&
+                ev.maxStepSpeedMps <= Constants.CONFIRM_MAX_STEP_SPEED_MPS
     }
 
     // --- predicates -----------------------------------------------------------------------------

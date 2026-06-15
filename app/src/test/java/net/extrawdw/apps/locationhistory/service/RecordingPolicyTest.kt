@@ -8,16 +8,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Table tests for [RecordingPolicy] — the pure recorder state machine (refactor plan Phase 2).
+ * Table tests for [RecordingPolicy] — the pure recorder state machine.
  *
- * Each scenario is drawn from a real 2026-06-13 device log, encoded so a regression reproduces as a
- * failing row instead of a multi-hour battery dump:
- *  - [clusterEntersStationary] — user start, clean GPS settles into a stay (075952).
- *  - [unknownIdleTimeoutEntersStationary] — boot/restart while parked, GPS too noisy to cluster, so
- *    the recorder self-demotes instead of holding UNKNOWN for hours (025057, 032350).
- *  - [resumeRepairEntersStationary] — START_STICKY restart with stored stationary fixes (093056).
- *  - [dozeIdleEntersStationary] — parked through repeated Doze entries (032350).
- *  - [departureVerifyConfirmed]/[departureVerifyTimesOut] — the verify-before-committing path.
+ * Each scenario is drawn from a real device log, encoded so a regression reproduces as a failing row
+ * instead of a multi-hour battery dump. The departure path is now a two-tier escalation ladder:
+ *  - weak hints (significant-motion, geofence exit, Wi-Fi disconnect, Doze-exit motion) enter the
+ *    cheap [RecorderState.SENSING_DEPARTURE] look;
+ *  - a fix that actually leaves the stay escalates to [RecorderState.CONFIRMING_DEPARTURE], which
+ *    confirms only on a multi-fix movement signature (sustained Doppler or a coherent displacement
+ *    trace) — never one fix;
+ *  - AR movement (incl. walking) is trusted and goes straight to MOVING.
  */
 class RecordingPolicyTest {
 
@@ -40,10 +40,6 @@ class RecordingPolicyTest {
 
     private fun feed(atSec: Long, motionVariance: Float = 0f, stepDelta: Int = 0, fix: ClassifiedFix) =
         policy.onFixes(listOf(fix), motionVariance, t0 + atSec * 1000, stepDelta)
-
-    /** A bare confirming fix for the geofence-exit check (no classification needed). */
-    private fun freshFix(lat: Double = 40.0, lon: Double = -74.0, accuracy: Float? = 10f, speed: Float? = 0f) =
-        RecentFix(t0 + 250_000, lat, lon, accuracy, speed, stationary = false)
 
     // ---- stationary entry paths -----------------------------------------------------------------
 
@@ -158,6 +154,24 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.UNKNOWN, policy.state)
     }
 
+    @Test
+    fun dozeExitMotionStartsSensing() {
+        enterStationary()
+        // Doze exit + IMU motion is a hint, not a confirmation: it enters the cheap SENSING look.
+        val actions = policy.onDozeIdle(idle = false, motionVariance = 5f, nowMs = t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.BeginVerifying && it.reason == "doze_exit_motion" })
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun dozeExitWithoutMotionStaysStationary() {
+        enterStationary()
+        // A still Doze exit (maintenance-window / screen-on wake) is no departure -> stay parked.
+        val actions = policy.onDozeIdle(idle = false, motionVariance = 0f, nowMs = t0 + 250_000)
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
     // ---- AR transitions -------------------------------------------------------------------------
 
     @Test
@@ -183,8 +197,8 @@ class RecordingPolicyTest {
 
     @Test
     fun arStillAcceptedDespitePhantomSpeed() {
-        // The 06-13 wave C: AR reports STILL while GPS fakes speed on a motionless phone (centroid
-        // fixed). With bare speed no longer trusted, the correct STILL is accepted -> low power.
+        // AR reports STILL while GPS fakes speed on a motionless phone (centroid fixed). With bare speed
+        // no longer trusted as translation, the correct STILL is accepted -> low power.
         for (i in 0 until 8) {
             val jitter = if (i % 2 == 0) 0.0 else 0.0012  // oscillating in place, no net progress
             feed(i * 5L, motionVariance = 0f, fix = fix(i * 5L, lat = 40.0 + jitter, speed = 8f, state = DevicePhysicalState.WALKING))
@@ -205,94 +219,184 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun arWalkingFromStationaryVerifiesFirst() {
+    fun arWalkingFromStationaryEntersMovingDirectly() {
+        // AR is trusted as a real user-movement signal: walking fires MOVING directly (no verify look).
+        // In-place pacing is recorded and the timeline merges it back into the visit.
         feed(0, fix = fix(0))
         policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 1_000)
+        assertEquals(RecorderState.STATIONARY, policy.state)
         val actions = policy.onArTransitions(listOf(ArActivity.WALKING to true), t0 + 2_000)
-        assertTrue(actions.any { it is RecordingAction.BeginVerifying && it.reason == "ar_walking" })
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "ar_walking" })
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun arWalkingDuringSensingPromotesToMoving() {
+        // AR walking mid-verify is trusted and promotes straight to MOVING (the weak hint that started
+        // SENSING does not — but AR does).
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val actions = policy.onArTransitions(listOf(ArActivity.WALKING to true), t0 + 251_000)
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "ar_walking" })
+        assertEquals(RecorderState.MOVING, policy.state)
     }
 
     @Test
     fun arStillDoesNotAbortDepartureVerification() {
         enterStationary()
         assertTrue(policy.onSignificantMotion(t0 + 250_000).any { it is RecordingAction.BeginVerifying })
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
 
         val actions = policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 251_000)
 
-        assertTrue("STILL must not abort the in-flight verify burst", actions.isEmpty())
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertTrue("STILL must not abort the in-flight verify look", actions.isEmpty())
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
     }
 
-    // ---- departure verification -----------------------------------------------------------------
+    // ---- departure verification ladder ----------------------------------------------------------
 
     @Test
-    fun departureVerifyConfirmed() {
+    fun significantMotionStartsSensing() {
         enterStationary()
-        assertTrue(policy.onSignificantMotion(t0 + 250_000).any { it is RecordingAction.BeginVerifying })
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
-        val actions = feed(260, motionVariance = 2f, fix = fix(260, lat = 40.02, speed = 5f, state = DevicePhysicalState.WALKING))
+        val actions = policy.onSignificantMotion(t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.BeginVerifying && it.reason == "significant_motion" })
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun departureVerifyConfirmsOnSustainedDoppler() {
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        // A displaced fix escalates SENSING -> CONFIRMING; then several trusted Doppler fixes confirm.
+        val escalate = feed(251, fix = fix(251, lat = 40.001, speed = 5f, state = DevicePhysicalState.WALKING))
+        assertTrue(escalate.any { it is RecordingAction.BeginVerifying })
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        feed(252, fix = fix(252, lat = 40.0012, speed = 5f, state = DevicePhysicalState.WALKING))
+        val actions = feed(253, fix = fix(253, lat = 40.0014, speed = 5f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "verify_confirmed" })
         assertEquals(RecorderState.MOVING, policy.state)
     }
 
     @Test
-    fun verifyConfirmsOnDisplacementWithoutSpeed() {
-        // A slow departure with no Doppler speed (e.g. network fixes) must still confirm once it has
-        // displaced beyond the stay's noise radius — the bare classifier verdict would never fire.
+    fun verifyConfirmsOnCoherentDisplacementWithoutSpeed() {
+        // A slow departure with no Doppler (network fixes): a sustained, progressing, kinematically
+        // plausible displacement trace away from the anchor confirms even at speed 0.
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000)
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
-        // ~220 m north of the anchor, speed 0, classified STATIONARY, still IMU.
-        val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.002, speed = 0f))
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val escalate = feed(260, fix = fix(260, lat = 40.001, speed = 0f, state = DevicePhysicalState.WALKING))
+        assertTrue(escalate.any { it is RecordingAction.BeginVerifying })
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        feed(290, fix = fix(290, lat = 40.0015, speed = 0f, state = DevicePhysicalState.WALKING))
+        feed(320, fix = fix(320, lat = 40.002, speed = 0f, state = DevicePhysicalState.WALKING))
+        val actions = feed(350, fix = fix(350, lat = 40.0025, speed = 0f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "verify_confirmed" })
         assertEquals(RecorderState.MOVING, policy.state)
     }
 
     @Test
-    fun verifyDoesNotConfirmOnDriftFix() {
-        // Phantom GPS drift at the anchor (near, no real speed, still) must NOT confirm a departure —
-        // it is exactly the transient the verify window exists to suppress.
+    fun confirmRejectsTeleportJumpWithoutDoppler() {
+        // A no-Doppler displacement whose fix-to-fix steps imply an implausible speed is multipath, not
+        // a walk-out -- the kinematic guard rejects it (stays CONFIRMING until the deadline reverts).
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000)
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
-        // ~11 m from the anchor, sub-threshold speed, still: within the stay.
+        feed(260, fix = fix(260, lat = 40.001, speed = 0f, state = DevicePhysicalState.WALKING)) // escalate
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        feed(261, fix = fix(261, lat = 40.003, speed = 0f, state = DevicePhysicalState.WALKING))
+        feed(262, fix = fix(262, lat = 40.005, speed = 0f, state = DevicePhysicalState.WALKING))
+        val actions = feed(263, fix = fix(263, lat = 40.007, speed = 0f, state = DevicePhysicalState.WALKING))
+        assertTrue("a no-Doppler teleport jump must not confirm", actions.none { it is RecordingAction.EnterMoving })
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun confirmDoesNotConfirmOnPhantomDopplerNearAnchor() {
+        // In CONFIRMING, accurate near-anchor fixes carrying phantom Doppler (no displacement) must not
+        // confirm: the Doppler branch requires real displacement from the frozen anchor, so 3 in-place
+        // phantom-Doppler fixes can't promote to MOVING.
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        // Escalate via a coarse, far fix (which the <=30 m confirm evidence then excludes).
+        feed(260, fix = fix(260, lat = 40.02, accuracy = 200f, speed = 0f, state = DevicePhysicalState.WALKING))
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        feed(262, fix = fix(262, lat = 40.0001, accuracy = 10f, speed = 8f, state = DevicePhysicalState.WALKING))
+        feed(264, fix = fix(264, lat = 40.0001, accuracy = 10f, speed = 8f, state = DevicePhysicalState.WALKING))
+        val actions = feed(266, fix = fix(266, lat = 40.0001, accuracy = 10f, speed = 8f, state = DevicePhysicalState.WALKING))
+        assertTrue("phantom Doppler near the anchor must not confirm", actions.none { it is RecordingAction.EnterMoving })
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun verifyDoesNotEscalateOnDriftFix() {
+        // Phantom GPS drift near the anchor (no real displacement) must NOT escalate the cheap look.
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
         val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.0001, speed = 0.5f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.isEmpty())
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
     }
 
     @Test
-    fun verifyDoesNotConfirmOnPhantomSpeedAtAnchor() {
-        // Phantom Doppler at the anchor (near, high reported speed, still, no net displacement) must
-        // NOT confirm a departure -- bare GPS speed no longer ejects the stay (the 06-13 phantom exits).
+    fun verifyDoesNotEscalateOnPhantomSpeedAtAnchor() {
+        // Phantom Doppler at the anchor (near, high reported speed, no net displacement) must NOT
+        // escalate -- bare GPS speed no longer leaves the stay (the 06-13 phantom exits).
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000)
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
         val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.0001, speed = 8f, state = DevicePhysicalState.WALKING))
         assertTrue(actions.isEmpty())
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
     }
 
     @Test
     fun verifyDoesNotConfirmOnCoarseOutlier() {
-        // Review #A: a coarse fix far from the anchor (200 m accuracy, often later excluded as
-        // low_accuracy) is indoor multipath, not a departure — it must NOT confirm verification.
+        // A coarse fix far from the anchor (200 m accuracy) may escalate the cheap look (it is displaced
+        // beyond its own error), but the accuracy-gated confirm never trusts it: a single coarse outlier
+        // can never reach MOVING -- CONFIRMING gathers real fixes or reverts.
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000)
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
-        val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.02, accuracy = 200f, speed = 0f))
-        assertTrue("a coarse outlier must not confirm a departure", actions.isEmpty())
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val actions = feed(260, motionVariance = 0f, fix = fix(260, lat = 40.02, accuracy = 200f, speed = 0f, state = DevicePhysicalState.WALKING))
+        assertTrue("a coarse outlier must not confirm to MOVING", actions.none { it is RecordingAction.EnterMoving })
+        assertTrue("must not reach MOVING from one coarse outlier", policy.state != RecorderState.MOVING)
+    }
+
+    @Test
+    fun departureVerifyTimesOut() {
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val actions = policy.onVerifyDeadline(t0 + 250_000 + Constants.SENSING_VERIFY_WINDOW_MS)
+        assertTrue(actions.any { it is RecordingAction.RevertToStationary })
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun confirmingTimesOutWhenUnconfirmed() {
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000)
+        feed(260, fix = fix(260, lat = 40.001, speed = 0f, state = DevicePhysicalState.WALKING)) // -> CONFIRMING
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        val actions = policy.onVerifyDeadline(t0 + 260_000 + Constants.CONFIRMING_VERIFY_WINDOW_MS)
+        assertTrue(actions.any { it is RecordingAction.RevertToStationary })
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun significantMotionIgnoredWhenNotStationary() {
+        assertTrue(policy.onSignificantMotion(t0).isEmpty()) // starts UNKNOWN
+        assertEquals(RecorderState.UNKNOWN, policy.state)
     }
 
     @Test
     fun movingSelfDemotesWhenQuietPastTimeout() {
         // The 06-13 drain: stuck in MOVING with AR silent (no STILL edge) while the phone sits still.
-        // High power is not self-sustaining -- after MOVING_IDLE_TIMEOUT_MS of no real motion the
-        // recorder reverts to the stationary cadence on its own. Coarse fixes keep the cluster detector
-        // from firing first, isolating the idle-timeout path.
+        // High power is not self-sustaining -- after MOVING_IDLE_TIMEOUT_MS of no real motion (no
+        // moving fix, no steps, no sustained Doppler) the recorder reverts on its own. Coarse,
+        // speed-less fixes keep the cluster detector and the Doppler keep-alive from firing first.
         policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)  // -> MOVING
         assertEquals(RecorderState.MOVING, policy.state)
         var reason: String? = null
@@ -319,6 +423,44 @@ class RecordingPolicyTest {
     }
 
     @Test
+    fun movingStaysOnSustainedSlowDoppler() {
+        // The slow-trip self-demote fix: a steady ~1 m/s trip (below the recentlyMoving floor) that AR
+        // and the classifier mislabel STATIONARY, with no steps, must NOT demote mid-trip -- sustained
+        // Doppler holds the quiet clock alive. The fixes progress (they never cluster), so the
+        // cluster/idle fallbacks don't fire either.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)  // -> MOVING
+        var sec = 0L
+        while (sec * 1000 <= Constants.MOVING_IDLE_TIMEOUT_MS + 60_000) {
+            // ~1 m/s northward (10 m / 10 s), classified STATIONARY so ONLY Doppler can keep MOVING.
+            feed(sec, fix = fix(sec, lat = 40.0 + sec * 0.0000090, speed = 1.0f, accuracy = 20f, state = DevicePhysicalState.STATIONARY))
+            sec += 10
+        }
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun movingDemotesOnPhantomDopplerAtFixedSpot() {
+        // The 06-13 drain class: phantom GPS Doppler (high speed) on a MOTIONLESS phone at a FIXED
+        // centroid must NOT pin MOVING. The keep-alive requires real net translation, so a pinned
+        // centroid (net ~0) self-demotes despite sustained >=0.8 m/s phantom speed on accurate (<=30 m)
+        // fixes -- and the cluster detector can't catch it (its meanSpeed>0.6 bail is tripped by the
+        // very spikes), so the net-translation guard in the keep-alive is what saves it.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)  // -> MOVING
+        var demoted = false
+        var sec = 0L
+        while (sec * 1000 <= Constants.MOVING_IDLE_TIMEOUT_MS + 180_000) {
+            // Fixed lat/lon, accuracy 20, classified STATIONARY; ~1-in-3 phantom spikes at 3 m/s.
+            val spd = if (sec % 30 == 0L) 3.0f else 0.2f
+            val actions = feed(sec, fix = fix(sec, lat = 40.0, lon = -74.0, speed = spd, accuracy = 20f, state = DevicePhysicalState.STATIONARY))
+            if (actions.any { it is RecordingAction.EnterStationary }) demoted = true
+            if (policy.state == RecorderState.STATIONARY) break
+            sec += 10
+        }
+        assertTrue("phantom Doppler at a fixed centroid must self-demote", demoted)
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
     fun fixDepartureFoundLaterInBatch() {
         // A batch whose FIRST moving fix is in-radius drift but a LATER fix is a real departure must
         // still leave the stay — the drift fix must not mask the departure.
@@ -330,90 +472,53 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.MOVING, policy.state)
     }
 
+    // ---- geofence / Wi-Fi hints -----------------------------------------------------------------
+
     @Test
-    fun departureVerifyTimesOut() {
+    fun geofenceExitStartsSensing() {
+        enterStationary()
+        val actions = policy.onGeofenceExit(t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.BeginVerifying && it.reason == "geofence_exit" })
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun geofenceExitIgnoredWhileMoving() {
+        // A stale exit while already moving (geofences are only armed at a stay) must not re-confirm.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)
+        assertEquals(RecorderState.MOVING, policy.state)
+        val actions = policy.onGeofenceExit(t0 + 1_000)
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun wifiDisconnectStartsSensing() {
+        enterStationary()
+        val actions = policy.onWifiDisconnected(t0 + 250_000)
+        assertTrue(actions.any { it is RecordingAction.BeginVerifying && it.reason == "wifi_disconnected" })
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun wifiDisconnectIgnoredWhenNotStationary() {
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)
+        assertTrue(policy.onWifiDisconnected(t0 + 1_000).isEmpty())
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun secondHintDuringVerifyIsNoOp() {
+        // Once verifying, a second weak hint (geofence / Wi-Fi) must not re-confirm or reset the look.
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000)
-        assertEquals(RecorderState.VERIFYING_DEPARTURE, policy.state)
-        val actions = policy.onVerifyDeadline(t0 + 250_000 + Constants.DEPARTURE_VERIFY_WINDOW_MS)
-        assertTrue(actions.any { it is RecordingAction.RevertToStationary })
-        assertEquals(RecorderState.STATIONARY, policy.state)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        assertTrue(policy.onGeofenceExit(t0 + 251_000).isEmpty())
+        assertTrue(policy.onWifiDisconnected(t0 + 252_000).isEmpty())
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
     }
 
-    @Test
-    fun significantMotionIgnoredWhenNotStationary() {
-        assertTrue(policy.onSignificantMotion(t0).isEmpty()) // starts UNKNOWN
-        assertEquals(RecorderState.UNKNOWN, policy.state)
-    }
-
-    // ---- geofence-exit confirmation (the 06-13 drain) -------------------------------------------
-
-    @Test
-    fun geofenceExitConfirmsRealDeparture() {
-        enterStationary()
-        // Trustworthy fix far from the anchor, carrying GPS speed: an unambiguous departure.
-        val actions = policy.onGeofenceExit(freshFix(lat = 40.02, speed = 5f), motionVariance = 0f, nowMs = t0 + 250_000)
-        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
-        assertEquals(RecorderState.MOVING, policy.state)
-    }
-
-    @Test
-    fun geofenceExitConfirmsDisplacementWithoutSpeed() {
-        enterStationary()
-        // Trustworthy fix clearly outside the stay but no Doppler speed (e.g. network fix) -> real.
-        val actions = policy.onGeofenceExit(freshFix(lat = 40.02, accuracy = 15f, speed = 0f), motionVariance = 0f, nowMs = t0 + 250_000)
-        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
-        assertEquals(RecorderState.MOVING, policy.state)
-    }
-
-    @Test
-    fun geofenceExitConfirmsOnImuMotion() {
-        enterStationary()
-        // Even a coarse fix confirms when the phone is physically shaking — a real walk just began.
-        val actions = policy.onGeofenceExit(freshFix(lat = 40.0008, accuracy = 120f, speed = 0f), motionVariance = 5f, nowMs = t0 + 250_000)
-        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
-        assertEquals(RecorderState.MOVING, policy.state)
-    }
-
-    @Test
-    fun geofenceExitIgnoresCoarseDrift() {
-        enterStationary()
-        // Coarse (>gate) outlier, no speed, still IMU: indoor multipath drift, NOT a departure. This
-        // is the row that fails if a raw geofence EXIT is trusted again (the 8-16 min MOVING bursts).
-        val actions = policy.onGeofenceExit(freshFix(lat = 40.0008, accuracy = 120f, speed = 0f), motionVariance = 0f, nowMs = t0 + 250_000)
-        assertTrue("a coarse, motionless drift exit must not enter MOVING", actions.isEmpty())
-        assertEquals(RecorderState.STATIONARY, policy.state)
-    }
-
-    @Test
-    fun geofenceExitIgnoresPhantomSpeedNearAnchor() {
-        enterStationary()
-        // Trustworthy accuracy AND high reported speed, but still at the anchor with no net
-        // displacement: phantom Doppler, not a departure. Speed alone must not confirm the exit -- this
-        // is the row that fails if bare GPS speed is trusted again (the 06-13 phantom-speed bursts).
-        val actions = policy.onGeofenceExit(freshFix(lat = 40.0001, accuracy = 12f, speed = 8f), motionVariance = 0f, nowMs = t0 + 250_000)
-        assertTrue("phantom speed at the anchor must not confirm a geofence exit", actions.isEmpty())
-        assertEquals(RecorderState.STATIONARY, policy.state)
-    }
-
-    @Test
-    fun geofenceExitWithoutFreshFixButImuMotionConfirms() {
-        enterStationary()
-        // The confirming fix request failed (GPS-hostile departure) but the phone is shaking — a real
-        // walk. Must NOT be discarded as drift just because the fix was null.
-        val actions = policy.onGeofenceExit(freshFix = null, motionVariance = 5f, nowMs = t0 + 250_000)
-        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "geofence_exit" })
-        assertEquals(RecorderState.MOVING, policy.state)
-    }
-
-    @Test
-    fun geofenceExitWithoutFreshFixAndStillPhoneKeepsStay() {
-        enterStationary()
-        // No fix AND a still phone -> can't prove a departure; keep the stay (AR/sig-motion recover).
-        val actions = policy.onGeofenceExit(freshFix = null, motionVariance = 0f, nowMs = t0 + 250_000)
-        assertTrue(actions.isEmpty())
-        assertEquals(RecorderState.STATIONARY, policy.state)
-    }
+    // ---- coarse-fix drift guard on UNKNOWN/MOVING promotion -------------------------------------
 
     @Test
     fun coarseFastSingleFixDoesNotPromoteFromUnknown() {
@@ -437,8 +542,6 @@ class RecordingPolicyTest {
         assertTrue("a sustained, progressing track must promote to MOVING", promoted)
         assertEquals(RecorderState.MOVING, policy.state)
     }
-
-    // ---- coarse-fix drift guard on UNKNOWN/MOVING promotion -------------------------------------
 
     @Test
     fun coarseMovingFixDoesNotPromoteFromUnknown() {

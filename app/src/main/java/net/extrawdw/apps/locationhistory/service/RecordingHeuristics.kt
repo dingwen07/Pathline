@@ -18,6 +18,25 @@ data class RecentFix(
 )
 
 /**
+ * Movement evidence gathered over a departure-verification window, judged against the frozen stay
+ * anchor. Produced by [RecordingHeuristics.departureEvidenceSince] and consumed by the
+ * [net.extrawdw.apps.locationhistory.core.RecorderState.CONFIRMING_DEPARTURE] confirm rule. All counts
+ * are over the accuracy-gated subset (coarse multipath fixes are excluded, never counted as motion).
+ */
+data class DepartureEvidence(
+    /** Trusted (accuracy-gated, in-window) fixes -- the denominator for a credible verdict. */
+    val trustedFixCount: Int,
+    /** Trusted fixes carrying a valid walking-or-faster Doppler speed. */
+    val dopplerMovingCount: Int,
+    /** Farthest a trusted fix got from the frozen stay anchor (m); 0 when no anchor. */
+    val maxDisplacementFromAnchor: Double,
+    /** Half-vs-half net displacement across the trusted window (m) -- progressing vs oscillating. */
+    val netDisplacement: Double,
+    /** Largest fix-to-fix implied speed (m/s) -- the teleport guard for the no-Doppler fallback. */
+    val maxStepSpeedMps: Double,
+)
+
+/**
  * The pure decision core of [RecordingController] (backlog #7): the recent-fix and speed buffers
  * and every heuristic computed over them — the drift guard, [recentlyMoving], the
  * stationary-cluster detector and the significant-motion backoff curve. No Android types, no
@@ -103,6 +122,79 @@ internal class RecordingHeuristics {
      */
     fun recentlyMoving(): Boolean =
         recentNetDisplacementMeters(RECENT_MOTION_WINDOW_MS) > stationaryNoiseRadius()
+
+    /**
+     * MOVING keep-alive: true when a slow real trip is genuinely progressing -- the slow-trip
+     * self-demote fix. [recentlyMoving]'s half-centroid net-displacement test over a 90s window has an
+     * effective ~1.8 m/s floor (above walking pace), so a slow real trip (creeping traffic, an
+     * AR-untagged vehicle) with no steps would self-demote mid-trip after MOVING_IDLE_TIMEOUT_MS. This
+     * catches it by requiring BOTH, over the longer [Constants.MOVING_RUN_WINDOW_MS] window:
+     *  - sustained Doppler -- a fraction of accuracy-gated ([Constants.DOPPLER_ACCURACY_GATE_M]) fixes
+     *    carrying speed >= [Constants.WALK_SPEED_FLOOR_MPS], floored by
+     *    [Constants.MOVING_KEEPALIVE_MIN_MOVING_FIXES] so one spike can't qualify; AND
+     *  - REAL net translation past the drift floor.
+     *
+     * The net-translation requirement is the decisive guard against the 06-13 drain class: indoor
+     * multipath fakes Doppler on a MOTIONLESS phone (speeds up to 31 m/s with the centroid pinned), but
+     * it cannot fake progression -- the half-centroid net cancels its zero-mean scatter. A pinned spot
+     * nets ~0 -> keep-alive false -> the recorder self-demotes via the idle-timeout; a real ~1 m/s trip
+     * nets ~90 m over 3 min -> keep-alive true. Net is floored at [Constants.DRIFT_DISPLACEMENT_METERS]
+     * (not the adaptive radius) so a trip the classifier mislabels STATIONARY can't inflate its own
+     * threshold. The window drains by fix time, never freezing on a stale spike.
+     */
+    fun sustainedDopplerMoving(): Boolean = synchronized(fixLock) {
+        if (recentFixes.isEmpty()) return false
+        val cutoff = recentFixes.last().t - Constants.MOVING_RUN_WINDOW_MS
+        val trusted = recentFixes.filter {
+            it.t >= cutoff && it.speedMps != null &&
+                    (it.accuracyMeters ?: Float.MAX_VALUE) <= Constants.DOPPLER_ACCURACY_GATE_M
+        }
+        if (trusted.size < Constants.MIN_MOVING_WINDOW_FIXES) return false
+        val moving = trusted.count { (it.speedMps ?: 0f) >= Constants.WALK_SPEED_FLOOR_MPS }
+        if (moving < Constants.MOVING_KEEPALIVE_MIN_MOVING_FIXES) return false
+        if (moving.toFloat() / trusted.size < Constants.MOVING_KEEPALIVE_FIX_FRACTION) return false
+        recentNetDisplacementMeters(Constants.MOVING_RUN_WINDOW_MS) > Constants.DRIFT_DISPLACEMENT_METERS
+    }
+
+    /**
+     * Evidence gathered since departure verification began ([sinceMs] = verify-entry time), over the
+     * accuracy-gated ([Constants.DOPPLER_ACCURACY_GATE_M]) verify-window fixes, judged against the
+     * frozen stay [stationaryAnchor]. Drives the [CONFIRMING_DEPARTURE] confirm: sustained Doppler OR a
+     * coherent, kinematically-plausible displacement trace -- never one fix, one spike, or IMU energy.
+     * Only fixes accurate enough to trust count, so indoor multipath outliers don't fake a departure.
+     */
+    fun departureEvidenceSince(sinceMs: Long): DepartureEvidence = synchronized(fixLock) {
+        val anchor = stationaryAnchor
+        val window = recentFixes.filter {
+            it.t >= sinceMs &&
+                    (it.accuracyMeters ?: Float.MAX_VALUE) <= Constants.DOPPLER_ACCURACY_GATE_M
+        }
+        if (window.isEmpty()) return DepartureEvidence(0, 0, 0.0, 0.0, 0.0)
+        val dopplerMoving = window.count { (it.speedMps ?: 0f) >= Constants.WALK_SPEED_FLOOR_MPS }
+        val maxDisp = anchor?.let { a ->
+            window.maxOf { Geo.distanceMeters(a.first, a.second, it.lat, it.lon) }
+        } ?: 0.0
+        val net = if (window.size < 2) 0.0 else {
+            val half = maxOf(window.size / 2, 1)
+            val a = window.subList(0, half)
+            val b = window.subList(half, window.size)
+            Geo.distanceMeters(
+                a.sumOf { it.lat } / a.size, a.sumOf { it.lon } / a.size,
+                b.sumOf { it.lat } / b.size, b.sumOf { it.lon } / b.size,
+            )
+        }
+        var maxStep = 0.0
+        for (i in 1 until window.size) {
+            val dtSec = (window[i].t - window[i - 1].t) / 1000.0
+            if (dtSec > 0) {
+                val d = Geo.distanceMeters(
+                    window[i - 1].lat, window[i - 1].lon, window[i].lat, window[i].lon,
+                )
+                maxStep = maxOf(maxStep, d / dtSec)
+            }
+        }
+        DepartureEvidence(window.size, dopplerMoving, maxDisp, net, maxStep)
+    }
 
     /**
      * Net displacement (m) over the last [windowMs]: distance between the centroid of the first half
@@ -217,6 +309,20 @@ internal class RecordingHeuristics {
             recentNetDisplacementMeters(RECENT_MOTION_WINDOW_MS) >= stationaryNoiseRadius()
         ) return false
         return true
+    }
+
+    /**
+     * True when a fix is displaced from the stay anchor beyond BOTH the noise radius AND its own
+     * reported accuracy — a real, large move that even a coarse (BALANCED) fix can attest to, without
+     * trusting a noisy fix's small wobble at face value. Used by SENSING_DEPARTURE to decide whether to
+     * escalate the cheap look to the HIGH_ACCURACY confirm. A null-accuracy fix can't attest (returns
+     * false); without an anchor there is nothing to be displaced from (false). Mirrors the
+     * accuracy-aware tolerance the cluster detector already uses (max(radius, per-fix accuracy)).
+     */
+    fun hasLeftStayBeyondAccuracy(lat: Double, lon: Double, accuracyMeters: Float?): Boolean {
+        val anchor = stationaryAnchor ?: return false
+        val d = Geo.distanceMeters(anchor.first, anchor.second, lat, lon)
+        return d >= maxOf(stationaryNoiseRadius(), (accuracyMeters ?: Float.MAX_VALUE).toDouble())
     }
 
     /**

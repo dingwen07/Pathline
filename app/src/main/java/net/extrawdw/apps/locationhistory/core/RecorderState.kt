@@ -20,11 +20,21 @@ enum class RecorderState {
     MOVING,
 
     /**
-     * A departure was hinted (AR walking, significant motion, a Doze exit) but not yet confirmed:
-     * burst-sample briefly and let the arriving fixes decide MOVING vs back to STATIONARY, instead of
-     * betting on a single fresh fix.
+     * First, cheap look after a weak departure hint (significant motion, geofence exit, Wi-Fi
+     * disconnect, a Doze exit with motion): a BALANCED short window that filters transients (a phone
+     * pickup at home shows no city-block displacement) without engaging GPS hard. Escalates to
+     * [CONFIRMING_DEPARTURE] only when a fix actually shows displacement or Doppler; otherwise the
+     * deadline reverts to STATIONARY. AR movement promotes straight to [MOVING] from here.
      */
-    VERIFYING_DEPARTURE,
+    SENSING_DEPARTURE,
+
+    /**
+     * Escalated departure check: a HIGH_ACCURACY window that decides [MOVING] vs back to STATIONARY from
+     * a *multi-fix* movement signature (sustained Doppler over several fixes, or a coherent,
+     * kinematically-plausible displacement trace away from the frozen stay anchor) -- never from one
+     * fix, one Doppler spike, or IMU energy alone.
+     */
+    CONFIRMING_DEPARTURE,
 
     /**
      * Bootstrapping / undecided (cold start, service restart): a moderate cadence that should resolve
