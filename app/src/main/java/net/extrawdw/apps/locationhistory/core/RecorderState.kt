@@ -20,11 +20,12 @@ enum class RecorderState {
     MOVING,
 
     /**
-     * First, cheap look after a weak departure hint (significant motion, geofence exit, Wi-Fi
-     * disconnect, a Doze exit with motion): a BALANCED short window that filters transients (a phone
-     * pickup at home shows no city-block displacement) without engaging GPS hard. Escalates to
-     * [CONFIRMING_DEPARTURE] only when a fix actually shows displacement or Doppler; otherwise the
-     * deadline reverts to STATIONARY. AR movement promotes straight to [MOVING] from here.
+     * First look after a weak departure hint (significant motion, geofence exit, Wi-Fi disconnect, a
+     * Doze exit with motion). HIGH_ACCURACY but at a sparse ~30s cadence: these triggers are rare,
+     * event-like and motion-gated (they fire on starting to move, not on handling a phone), so a few
+     * accurate fixes here are cheap, while coarse fixes can't resolve an 80-150m departure. Escalates to
+     * [CONFIRMING_DEPARTURE] (denser cadence) only when a fix actually shows displacement from the stay;
+     * otherwise the deadline reverts to STATIONARY. AR movement promotes straight to [MOVING] from here.
      */
     SENSING_DEPARTURE,
 

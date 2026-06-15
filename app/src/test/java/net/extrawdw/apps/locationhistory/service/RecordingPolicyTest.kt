@@ -172,6 +172,29 @@ class RecordingPolicyTest {
         assertEquals(RecorderState.STATIONARY, policy.state)
     }
 
+    @Test
+    fun dozeEntryDuringMovingDemotesToStationary() {
+        // Doze ENTER is the platform confirming durable stationarity -> it must demote MOVING
+        // immediately, independent of the keep-alive (a hard backstop against any pinned high cadence).
+        feed(0, fix = fix(0)) // buffer a fix so a stay can be anchored
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0 + 1_000) // -> MOVING
+        assertEquals(RecorderState.MOVING, policy.state)
+        val actions = policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = t0 + 2_000)
+        assertTrue(actions.any { it is RecordingAction.EnterStationary && it.reason == "doze_idle" })
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun dozeEntryDuringVerifyCancelsAndDemotes() {
+        // Doze ENTER while verifying cancels the in-flight look and drops to the stay.
+        enterStationary()
+        policy.onSignificantMotion(t0 + 250_000) // -> SENSING
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val actions = policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = t0 + 251_000)
+        assertTrue(actions.any { it is RecordingAction.EnterStationary })
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
     // ---- AR transitions -------------------------------------------------------------------------
 
     @Test
@@ -457,6 +480,34 @@ class RecordingPolicyTest {
             sec += 10
         }
         assertTrue("phantom Doppler at a fixed centroid must self-demote", demoted)
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun movingKeepAliveSelfDemotesAfterMovementStops() {
+        // The keep-alive must not pin MOVING with NO external signal: it only holds while the device
+        // keeps translating. Once movement stops, net translation drains from the window, the keep-alive
+        // can no longer fire, and the recorder self-demotes (cluster / idle-timeout) without any AR /
+        // sig-motion / geofence / Doze input.
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0) // -> MOVING
+        // Phase 1: ~1 m/s progressing for 3 min -> sustained Doppler holds MOVING.
+        var sec = 0L
+        while (sec <= 180) {
+            feed(sec, fix = fix(sec, lat = 40.0 + sec * 0.0000090, speed = 1.0f, accuracy = 20f, state = DevicePhysicalState.STATIONARY))
+            sec += 10
+        }
+        assertEquals(RecorderState.MOVING, policy.state)
+        // Phase 2: device stops; keep feeding fixes at the last position (no net translation).
+        val stopLat = 40.0 + 180 * 0.0000090
+        var demoted = false
+        val limit = 180 + (Constants.MOVING_IDLE_TIMEOUT_MS / 1000) + 300
+        while (sec <= limit) {
+            val actions = feed(sec, fix = fix(sec, lat = stopLat, speed = 0.2f, accuracy = 20f, state = DevicePhysicalState.STATIONARY))
+            if (actions.any { it is RecordingAction.EnterStationary }) demoted = true
+            if (policy.state == RecorderState.STATIONARY) break
+            sec += 10
+        }
+        assertTrue("MOVING must self-demote after movement stops, with no external signal", demoted)
         assertEquals(RecorderState.STATIONARY, policy.state)
     }
 

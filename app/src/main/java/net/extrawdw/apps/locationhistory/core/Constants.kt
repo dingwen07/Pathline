@@ -205,12 +205,14 @@ object Constants {
     const val MOVING_IDLE_TIMEOUT_MS = 5 * 60_000L
 
     /**
-     * How long the cheap [net.extrawdw.apps.locationhistory.core.RecorderState.SENSING_DEPARTURE] first
-     * look samples (BALANCED) before giving up on an unescalated departure hint and reverting to
-     * STATIONARY. A real departure shows some displacement / Doppler within this window and escalates to
-     * CONFIRMING; a transient (phone bumped, Wi-Fi flap, HVAC) shows none and is suppressed cheaply.
+     * How long the [net.extrawdw.apps.locationhistory.core.RecorderState.SENSING_DEPARTURE] first look
+     * samples (HIGH_ACCURACY, ~30s cadence -> ~4 fixes) before giving up on an unescalated departure
+     * hint and reverting to STATIONARY. A real departure shows displacement within this window and
+     * escalates to CONFIRMING; an in-place walk / transient shows none and reverts (re-arming
+     * significant motion with backoff). Wide enough that a walk-away clears the stay radius before the
+     * deadline even at a slow pace.
      */
-    const val SENSING_VERIFY_WINDOW_MS = 90_000L
+    const val SENSING_VERIFY_WINDOW_MS = 120_000L
 
     /**
      * How long [net.extrawdw.apps.locationhistory.core.RecorderState.CONFIRMING_DEPARTURE] gathers

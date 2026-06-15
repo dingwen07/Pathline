@@ -62,7 +62,7 @@ sealed interface RecordingAction {
  *    findings #1/#2). No departure hint can hold the costly high cadence indefinitely; only continuous
  *    movement does.
  *  - **Ambiguous departures verify before committing.** Weak hints (significant-motion, geofence exit,
- *    Wi-Fi disconnect, Doze-exit motion) enter [RecorderState.SENSING_DEPARTURE] (a cheap BALANCED look)
+ *    Wi-Fi disconnect, Doze-exit motion) enter [RecorderState.SENSING_DEPARTURE] (a sparse-cadence look)
  *    and escalate to [RecorderState.CONFIRMING_DEPARTURE] only on real displacement/Doppler, deciding
  *    from a multi-fix signature, not one fresh fix. AR movement (incl. walking) is trusted -> MOVING.
  *
@@ -172,7 +172,7 @@ internal class RecordingPolicy(
                 if (departure != null) toMoving("fix_departure") else emptyList()
             }
 
-            // Cheap first look: escalate to the HIGH_ACCURACY confirm only when a fix is displaced
+            // First look: escalate to the denser-cadence confirm only when a fix is displaced
             // beyond BOTH the noise radius AND its own accuracy -- a real, large move even a coarse
             // BALANCED fix can attest to. Position only: IMU energy (a phone pickup) and bare Doppler at
             // the anchor (a phantom spike) do NOT escalate, so the cheap tier filters those for free. No
@@ -227,7 +227,7 @@ internal class RecordingPolicy(
      * A dwell-geofence EXIT fired -- a weak departure hint. The geofence is a *single-fix* trigger (it
      * fires the instant one fix crosses the boundary, exactly what indoor multipath throws off a still
      * phone -- the 06-13 drain that pinned high-accuracy MOVING for 8-16 min each). So it never confirms
-     * directly: enter the cheap [RecorderState.SENSING_DEPARTURE] look and let the gathered fixes
+     * directly: enter the lighter [RecorderState.SENSING_DEPARTURE] look and let the gathered fixes
      * decide. A stale exit while not parked -- or a second exit while already verifying/moving -- is a
      * no-op (never a re-confirm). The confirmatory fix/IMU sampling the controller used to do inline now
      * lives in the SENSING tier.
@@ -238,7 +238,7 @@ internal class RecordingPolicy(
     /**
      * The connected Wi-Fi network dropped while parked -- a near-free departure hint (the phone was
      * carried out of range / off a hotspot). Like the geofence exit it is only a hint (a router reboot
-     * or signal flap also disconnects), so it enters the cheap [RecorderState.SENSING_DEPARTURE] look
+     * or signal flap also disconnects), so it enters the lighter [RecorderState.SENSING_DEPARTURE] look
      * rather than confirming. A no-op when not parked / already verifying.
      */
     fun onWifiDisconnected(nowMs: Long): List<RecordingAction> =
@@ -272,7 +272,7 @@ internal class RecordingPolicy(
         }
         if (state != RecorderState.STATIONARY) return emptyList()
         // Doze exit with motion is a hint, not a confirmation (a maintenance-window / screen-on wake can
-        // coincide with phone handling): enter the cheap SENSING look. Without motion the controller
+        // coincide with phone handling): enter the SENSING look. Without motion the controller
         // just re-arms the sensor.
         return if (motionVariance >= Constants.DRIFT_MOTION_VARIANCE_CEILING)
             toSensing("doze_exit_motion", nowMs) else emptyList()
@@ -326,7 +326,7 @@ internal class RecordingPolicy(
         return listOf(RecordingAction.EnterMoving(reason))
     }
 
-    /** Enter the cheap first-look [RecorderState.SENSING_DEPARTURE], freezing the verify-window start. */
+    /** Enter the first-look [RecorderState.SENSING_DEPARTURE], freezing the verify-window start. */
     private fun toSensing(reason: String, nowMs: Long): List<RecordingAction> {
         if (isVerifying()) return emptyList()
         state = RecorderState.SENSING_DEPARTURE
@@ -335,7 +335,7 @@ internal class RecordingPolicy(
         return listOf(RecordingAction.BeginVerifying(reason, Constants.SENSING_VERIFY_WINDOW_MS))
     }
 
-    /** Escalate the cheap look to the HIGH_ACCURACY [RecorderState.CONFIRMING_DEPARTURE]. Keeps
+    /** Escalate the first look to the denser-cadence [RecorderState.CONFIRMING_DEPARTURE]. Keeps
      *  [verifyEntryMs] from SENSING entry so the confirm sees the whole post-hint window. */
     private fun toConfirming(reason: String, nowMs: Long): List<RecordingAction> {
         if (state == RecorderState.CONFIRMING_DEPARTURE) return emptyList()

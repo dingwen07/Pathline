@@ -428,7 +428,7 @@ class RecordingController @Inject constructor(
         }
         AppLog.i(TAG, "geofence EXIT -> sensing departure")
         // The geofence is a single-fix trigger (indoor multipath fakes it off a still phone), so it is
-        // only a hint: the SENSING_DEPARTURE tier does the cheap evidence-gathering the controller used
+        // only a hint: the SENSING_DEPARTURE tier does the evidence-gathering the controller used
         // to do inline against the goAsync() budget. A stale / already-verifying exit no-ops in the
         // policy. The geofence stays registered through verification; a SENSING revert re-arms it
         // (execRevertToStationary) to reset the GMS in/out baseline so it fires on a future real exit.
@@ -436,12 +436,13 @@ class RecordingController @Inject constructor(
     }
 
     /**
-     * The significant-motion trigger fired while stationary — a fast, low-power *hint* that the user
-     * may have started location-changing motion. It is NOT trusted as a confirmed departure (the
-     * one-shot sensor fires on transients: a phone bumped on a desk, HVAC, a passing truck). So it
-     * enters the cheap [RecorderState.SENSING_DEPARTURE] look, whose BALANCED window filters transients
-     * without a GPS burst — replacing the old inline fresh-fix pre-check. The consumed one-shot sensor
-     * is re-armed (with backoff) when SENSING reverts, so a chronically noisy surface can't flap us.
+     * The significant-motion trigger fired while stationary — a cheap, motion-gated *hint* that the user
+     * started location-changing motion. It is NOT a confirmed departure: per the AOSP spec it fires on
+     * the start of locomotion (walking/biking/vehicle), which includes a few in-house steps that never
+     * leave the stay. So it enters the [RecorderState.SENSING_DEPARTURE] first look, which gathers a few
+     * HIGH_ACCURACY fixes and escalates only on real displacement — replacing the old inline fresh-fix
+     * pre-check. The consumed one-shot sensor is re-armed (with backoff) when SENSING reverts, so a
+     * chronically tripping surface can't flap us.
      */
     suspend fun handleSignificantMotion(): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) {

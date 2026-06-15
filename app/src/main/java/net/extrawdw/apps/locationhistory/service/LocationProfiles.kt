@@ -43,14 +43,17 @@ object LocationProfiles {
                 12_000
             )
 
-            // Cheap first look after a weak departure hint: BALANCED (Wi-Fi+cell, rarely GPS) at a
-            // modest cadence. Filters transients (a phone pickup) without engaging GPS hard; escalates
-            // to CONFIRMING only on a real displacement/Doppler hint.
+            // First look after a weak departure hint: HIGH_ACCURACY, but a sparse 30s cadence (vs
+            // CONFIRMING's 10s) -- the battery gradient. Significant-motion / doze-exit are rare,
+            // event-like, motion-gated triggers (not per-handling), and the device is usually already
+            // awake at the trigger, so a few GPS fixes here are cheap; BALANCED's ~100m can't resolve an
+            // 80-150m departure and is crippled further by Wi-Fi-scan suppression in the Doze-adjacent
+            // state this runs in. Escalates to CONFIRMING on a real displacement hint.
             RecorderState.SENSING_DEPARTURE -> Tuning(
-                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-                20_000,
-                10_000,
-                40_000
+                Priority.PRIORITY_HIGH_ACCURACY,
+                30_000,
+                15_000,
+                45_000
             )
 
             // Escalated departure check: HIGH_ACCURACY so Doppler + sub-100 m position can resolve a
