@@ -94,10 +94,7 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
         // Consent UI: keep other apps' overlay windows from drawing on top of it (tapjacking defense).
         window.setHideOverlayWindows(true)
 
-        val mode = when {
-            intent?.action == PathlineContract.Actions.REQUEST_API_ACCESS -> MODE_REQUEST
-            else -> intent?.getIntExtra(EXTRA_MODE, MODE_MANAGE) ?: MODE_MANAGE
-        }
+        val mode = resolveMode()
         // A request defaults to "declined" until the user turns it on, so a back-dismiss returns CANCELED.
         if (mode == MODE_REQUEST) setResultForRequest(enabled = false)
 
@@ -191,6 +188,15 @@ class ApiAccessOnboardingActivity : ComponentActivity() {
 
     private fun showRequestToast(@StringRes message: Int) {
         Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun resolveMode(): Int {
+        if (intent?.action == PathlineContract.Actions.REQUEST_API_ACCESS) return MODE_REQUEST
+        val explicitMode = intent?.takeIf { it.hasExtra(EXTRA_MODE) }?.getIntExtra(
+            EXTRA_MODE,
+            MODE_MANAGE
+        )
+        return explicitMode ?: MODE_REQUEST
     }
 
     /**
