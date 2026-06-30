@@ -18,6 +18,7 @@ import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.security.BackupCrypto
 import net.extrawdw.apps.locationhistory.security.CryptoHeader
+import net.extrawdw.apps.locationhistory.service.Perf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.Base64
@@ -139,7 +140,7 @@ class BackupEngine @Inject constructor(
         material: Material,
         nowMs: Long,
         reporter: BackupReporter = BackupReporter.None,
-    ): BackupReport {
+    ): BackupReport = Perf.trace("backup_incremental") { span ->
         val existing = readManifest(root)
         // The incremental merge must know the COMPLETE previous file set (so it neither drops nor
         // prunes unchanged weeks). If the inventory can't be read, bail to a full backup instead of
@@ -204,13 +205,17 @@ class BackupEngine @Inject constructor(
         pruneOrphans(root, partitions, snapshots, invName)
         reporter.progress(1f)
         AppLog.i(TAG, "incremental backup: wrote=$written failed=$failed total=${partitions.size}")
-        return BackupReport(written, failed, partitions.size)
+        BackupReport(written, failed, partitions.size).also {
+            span.metric("partitions_written", it.partitionsWritten.toLong())
+            span.metric("partitions_failed", it.partitionsFailed.toLong())
+            span.metric("partitions_total", it.totalPartitions.toLong())
+        }
     }
 
     suspend fun runFull(
         root: SafDir, material: Material, nowMs: Long, clearDirtyAfter: Boolean,
         reporter: BackupReporter = BackupReporter.None,
-    ): BackupReport {
+    ): BackupReport = Perf.trace("backup_full") { span ->
         // Snapshot the dirty set up front when this run is meant to clear it: every week populated
         // at this point is re-read by the emits below, while markers added during the (potentially
         // minutes-long) run are new keys the post-commit delete never matches.
@@ -271,7 +276,10 @@ class BackupEngine @Inject constructor(
         pruneOrphans(root, entries, snapshots, invName)
         reporter.progress(1f)
         AppLog.i(TAG, "full backup: wrote=${entries.size} failed=$failed")
-        return BackupReport(entries.size, failed, entries.size)
+        BackupReport(entries.size, failed, entries.size).also {
+            span.metric("partitions_written", it.partitionsWritten.toLong())
+            span.metric("partitions_failed", it.partitionsFailed.toLong())
+        }
     }
 
     /**
@@ -318,7 +326,7 @@ class BackupEngine @Inject constructor(
     suspend fun restore(
         root: SafDir, password: CharArray?, prfSecret: ByteArray? = null,
         reporter: BackupReporter = BackupReporter.None,
-    ): RestoreReport {
+    ): RestoreReport = Perf.trace("backup_restore") { span ->
         val manifest = parseManifest(root) ?: error("no backup found in the selected folder")
         require(checksumMatches(manifest)) { "backup manifest failed integrity check (checksum mismatch)" }
         require(manifest.formatVersion <= Constants.BACKUP_FORMAT_VERSION) {
@@ -372,7 +380,10 @@ class BackupEngine @Inject constructor(
         restoreSettings(root, inventory.snapshots, cipher)
         reporter.progress(1f)
         AppLog.i(TAG, "restore complete: partitions=${inventory.partitions.size} rows=$rows")
-        return RestoreReport(inventory.partitions.size, rows)
+        RestoreReport(inventory.partitions.size, rows).also {
+            span.metric("partitions_restored", it.partitionsRestored.toLong())
+            span.metric("rows_restored", it.rowsRestored.toLong())
+        }
     }
 
     // -- Partition emit / restore -------------------------------------------------------------

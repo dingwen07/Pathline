@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.security
 
+import com.google.firebase.perf.metrics.AddTrace
 import kotlinx.serialization.Serializable
 import java.io.InputStream
 import java.io.OutputStream
@@ -126,6 +127,9 @@ object BackupCrypto {
     /** The PRF eval salt a passkey-protected backup expects at restore time. */
     fun prfSaltOf(header: CryptoHeader): ByteArray? = header.passkey?.let { unb64(it.prfSaltB64) }
 
+    // PBKDF2 is intentionally slow; @AddTrace surfaces its real per-device cost in Performance
+    // Monitoring. Duration-only: no password or salt material is read, named, or uploaded.
+    @AddTrace(name = "dek_derivation")
     private fun deriveKek(password: CharArray, salt: ByteArray, iterations: Int): ByteArray {
         val spec = PBEKeySpec(password, salt, iterations, DEK_BYTES * 8)
         return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded

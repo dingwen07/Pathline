@@ -35,15 +35,13 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 20
-        versionName = "1.8.3-rc.1"
+        versionCode = 21
+        versionName = "1.8.4-rc.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
-        // Telemetry defaults ON for every build type; the in-app "Share crash & performance reports"
-        // switch (FirebaseTelemetry) is the real control and overrides this at runtime. This default
-        // only governs the brief window before Application.onCreate on a fresh install.
+        // Telemetry defaults ON for every build type
         manifestPlaceholders["FIREBASE_CRASHLYTICS_COLLECTION_ENABLED"] = true
         manifestPlaceholders["FIREBASE_PERFORMANCE_COLLECTION_ENABLED"] = true
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")

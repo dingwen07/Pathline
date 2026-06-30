@@ -22,6 +22,8 @@ import net.extrawdw.apps.locationhistory.domain.TimelineRebuilder
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import net.extrawdw.apps.locationhistory.domain.TripSegmenter
 import net.extrawdw.apps.locationhistory.domain.VisitDetector
+import net.extrawdw.apps.locationhistory.service.Perf
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Authoritative maintenance entry point for derived timeline state. The foreground recorder only
@@ -53,6 +55,11 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val reason = inputData.getString(KEY_REASON) ?: "unspecified"
         AppLog.i(TAG, "maintenance day=$day reason=$reason")
 
+        // Count and time each Google Places resolution -- the rebuild's only network I/O -- by
+        // wrapping the place-match seam the (deliberately Firebase-free) rebuilder already takes,
+        // instead of reaching into it.
+        val placeLookups = AtomicInteger(0)
+
         val rebuilder = TimelineRebuilder(
             sampleDao = sampleDao,
             visitDao = visitDao,
@@ -62,14 +69,23 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             placeRepository = placeRepository,
             visitDetector = visitDetector,
             merger = merger,
-            matchPlace = placeMatcher::match,
+            matchPlace = { lat, lon ->
+                placeLookups.incrementAndGet()
+                Perf.trace("place_match") { placeMatcher.match(lat, lon) }
+            },
             segmentTrips = tripSegmenter::segment,
             inTransaction = { block -> db.withTransaction { block() } },
             log = { AppLog.w(TAG, it) },
         )
         // The whole rebuild holds the timeline write lock, so a user confirmation or hand edit can
         // never interleave with the delete-unconfirmed/reinsert sweep (which would silently drop it).
-        val visits = timelineWriteLock.withLock { rebuilder.rebuildDay(day) }
+        val visits = Perf.trace("timeline_rebuild") { span ->
+            span.attribute("reason", reason)
+            timelineWriteLock.withLock { rebuilder.rebuildDay(day) }.also {
+                span.metric("visits", it.toLong())
+                span.metric("place_lookups", placeLookups.get().toLong())
+            }
+        }
 
         AppLog.i(TAG, "maintenance complete day=$day visits=$visits")
         return Result.success()
