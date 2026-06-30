@@ -170,6 +170,8 @@
     <string name="settings_diagnostics_title">诊断</string>
     <string name="settings_diagnostics_desc">查看并分享内部数据和会话日志。</string>
     <string name="settings_open_diagnostics">打开诊断</string>
+    <string name="settings_telemetry_title">分享崩溃和性能报告</string>
+    <string name="settings_telemetry_desc">向 Firebase（谷歌）发送崩溃和性能诊断信息，以帮助修复问题。您记录的位置数据绝不会被发送。</string>
 
     <!-- ============================ Onboarding ============================ -->
     <string name="onboarding_welcome_title">欢迎使用 Pathline</string>
@@ -297,6 +299,16 @@
     <string name="passkey_label">通行密钥</string>
     <string name="passkey_unlock_failed">通行密钥解锁失败</string>
     <string name="passkey_setup_failed">通行密钥设置失败</string>
+    <string name="backup_group_name">备份</string>
+    <string name="backup_failure_channel_name">备份提醒</string>
+    <string name="backup_failure_channel_desc">计划的 Pathline 备份失败时提醒您。</string>
+    <string name="backup_notify_failed_title">计划备份失败</string>
+    <string name="backup_notify_incomplete_title">计划备份未完成</string>
+    <string name="backup_notify_needs_attention_title">备份需要处理</string>
+    <string name="backup_notify_failed_text">Pathline 未能完成计划备份：%1$s</string>
+    <string name="backup_notify_incomplete_text">部分备份文件未能写入。Pathline 会在满足后台备份条件时重试。</string>
+    <string name="backup_notify_needs_reclaim_text">Pathline 已无法访问备份文件夹。请在设置中重新连接。</string>
+    <string name="backup_notify_key_unavailable_text">计划备份继续前，Pathline 需要您的备份密码或通行密钥。</string>
 
     <!-- ============================ Diagnostics (chrome only) ============================ -->
     <string name="diagnostics_title">诊断</string>
@@ -451,8 +463,11 @@
     <string name="api_access_event_write_subtitle">更新了 %1$d 个%2$s</string>
 
     <!-- 隐私通知 -->
-    <string name="api_access_channel_name">数据访问提醒</string>
-    <string name="api_access_channel_desc">当其他应用读取或仍可访问您的 Pathline 数据时提醒您。</string>
+    <string name="api_access_group_name">访问 Pathline 数据</string>
+    <string name="api_access_activity_channel_name">数据访问活动</string>
+    <string name="api_access_activity_channel_desc">当其他应用读取或仍可访问您的 Pathline 数据时提醒您。</string>
+    <string name="api_access_denied_channel_name">已拒绝的数据访问</string>
+    <string name="api_access_denied_channel_desc">当其他应用试图在没有权限的情况下访问 Pathline 数据时提醒您。</string>
     <string name="api_notify_read_title">有应用访问了您的 Pathline 数据</string>
     <string name="api_notify_read_text_one">%1$s 访问了%2$s。</string>
     <string name="api_notify_read_text_generic">%1$s 访问了您的 Pathline 数据。</string>

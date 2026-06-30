@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.service
 import android.app.LocaleManager
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -23,6 +24,8 @@ import net.extrawdw.apps.locationhistory.core.RecorderState
 
 /** Notification channel + builder for the foreground recording session. */
 object Notifications {
+    const val PATHLINE_GROUP_ID = "pathline"
+
     const val RECORDING_CHANNEL_ID = "pathline_recording"
     const val RECORDING_NOTIFICATION_ID = 7001
 
@@ -36,9 +39,16 @@ object Notifications {
     const val RECORDING_STOPPED_NOTIFICATION_ID = 7002
     const val RECORDING_TERMINATED_NOTIFICATION_ID = 7003
 
+    const val API_ACCESS_GROUP_ID = "pathline_data_access"
+
     /** Privacy alerts: another app read Pathline data, or apps still hold access. Default importance. */
     const val API_ACCESS_CHANNEL_ID = "pathline_api_access"
+    const val API_ACCESS_DENIED_CHANNEL_ID = "pathline_api_access_denied"
     const val API_ACCESS_HOLD_NOTIFICATION_ID = 7005
+
+    const val BACKUP_GROUP_ID = "pathline_backups"
+    const val BACKUP_FAILURE_CHANNEL_ID = "pathline_backup_failures"
+    const val BACKUP_FAILURE_NOTIFICATION_ID = 7006
 
     /** Distinct, stable notification id per reading app, so multiple apps' "read" alerts coexist. */
     fun apiAccessReadNotificationId(packageName: String): Int =
@@ -64,14 +74,16 @@ object Notifications {
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(RECORDING_CHANNEL_ID) == null) {
-            val res = localized(context)
+        val res = localized(context)
+        ensureGroup(manager, PATHLINE_GROUP_ID, res.getString(R.string.app_name))
+        if (manager.getNotificationChannel(RECORDING_CHANNEL_ID)?.group != PATHLINE_GROUP_ID) {
             val channel = NotificationChannel(
                 RECORDING_CHANNEL_ID,
                 res.getString(R.string.recording_channel_name),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
                 description = res.getString(R.string.recording_channel_desc)
+                group = PATHLINE_GROUP_ID
                 setShowBadge(false)
             }
             manager.createNotificationChannel(channel)
@@ -163,16 +175,46 @@ object Notifications {
             ?.notify(RECORDING_TERMINATED_NOTIFICATION_ID, notification)
     }
 
-    fun ensureApiAccessChannel(context: Context) {
+    fun ensureApiAccessChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(API_ACCESS_CHANNEL_ID) == null) {
-            val res = localized(context)
+        val res = localized(context)
+        ensureGroup(manager, API_ACCESS_GROUP_ID, res.getString(R.string.api_access_group_name))
+        if (manager.getNotificationChannel(API_ACCESS_CHANNEL_ID)?.group != API_ACCESS_GROUP_ID) {
             val channel = NotificationChannel(
                 API_ACCESS_CHANNEL_ID,
-                res.getString(R.string.api_access_channel_name),
+                res.getString(R.string.api_access_activity_channel_name),
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = res.getString(R.string.api_access_channel_desc)
+                description = res.getString(R.string.api_access_activity_channel_desc)
+                group = API_ACCESS_GROUP_ID
+            }
+            manager.createNotificationChannel(channel)
+        }
+        if (manager.getNotificationChannel(API_ACCESS_DENIED_CHANNEL_ID)?.group != API_ACCESS_GROUP_ID) {
+            val channel = NotificationChannel(
+                API_ACCESS_DENIED_CHANNEL_ID,
+                res.getString(R.string.api_access_denied_channel_name),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = res.getString(R.string.api_access_denied_channel_desc)
+                group = API_ACCESS_GROUP_ID
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    fun ensureBackupChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val res = localized(context)
+        ensureGroup(manager, BACKUP_GROUP_ID, res.getString(R.string.backup_group_name))
+        if (manager.getNotificationChannel(BACKUP_FAILURE_CHANNEL_ID)?.group != BACKUP_GROUP_ID) {
+            val channel = NotificationChannel(
+                BACKUP_FAILURE_CHANNEL_ID,
+                res.getString(R.string.backup_failure_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = res.getString(R.string.backup_failure_channel_desc)
+                group = BACKUP_GROUP_ID
             }
             manager.createNotificationChannel(channel)
         }
@@ -189,9 +231,13 @@ object Notifications {
         title: String,
         text: String,
         largeIcon: Bitmap? = null,
+        denied: Boolean = false,
     ) {
-        ensureApiAccessChannel(context)
-        val notification = NotificationCompat.Builder(context, API_ACCESS_CHANNEL_ID)
+        ensureApiAccessChannels(context)
+        val channelId = if (denied) API_ACCESS_DENIED_CHANNEL_ID else API_ACCESS_CHANNEL_ID
+        val priority =
+            if (denied) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT
+        val notification = NotificationCompat.Builder(context, channelId)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -199,10 +245,39 @@ object Notifications {
             .setSmallIcon(R.drawable.ic_stat_recording)
             .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
             .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(priority)
             .setAutoCancel(true)
             .build()
         context.getSystemService(NotificationManager::class.java)
             ?.notify(notificationId, notification)
+    }
+
+    fun notifyBackupFailure(context: Context, title: String, text: String) {
+        ensureBackupChannel(context)
+        val notification = NotificationCompat.Builder(context, BACKUP_FAILURE_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(contentIntent(context))
+            .setSmallIcon(R.drawable.ic_stat_recording)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            ?.notify(BACKUP_FAILURE_NOTIFICATION_ID, notification)
+    }
+
+    fun cancelBackupFailure(context: Context) {
+        context.getSystemService(NotificationManager::class.java)
+            ?.cancel(BACKUP_FAILURE_NOTIFICATION_ID)
+    }
+
+    private fun ensureGroup(manager: NotificationManager, groupId: String, name: String) {
+        if (manager.getNotificationChannelGroup(groupId) == null) {
+            manager.createNotificationChannelGroup(NotificationChannelGroup(groupId, name))
+        }
     }
 
     /** Deep-links the data-access notifications straight into the "Access to Pathline data" manager,

@@ -115,10 +115,11 @@ class WorkScheduler @Inject constructor(
             .build()
         val request = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.DAYS)
             .setConstraints(constraints)
+            .setInputData(workDataOf(BackupWorker.KEY_NOTIFY_FAILURE to true))
             .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.MINUTES)
             .build()
         workManager.enqueueUniquePeriodicWork(
-            WORK_BACKUP, ExistingPeriodicWorkPolicy.KEEP, request,
+            WORK_BACKUP, ExistingPeriodicWorkPolicy.UPDATE, request,
         )
     }
 
@@ -171,6 +172,7 @@ class WorkScheduler @Inject constructor(
             .setConstraints(
                 Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             )
+            .setInputData(workDataOf(BackupWorker.KEY_NOTIFY_FAILURE to false))
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
             .build()
         // KEEP, not REPLACE: a second "Back up now" tap must not cancel a backup already in flight.

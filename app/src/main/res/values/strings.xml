@@ -181,6 +181,8 @@
     <string name="settings_diagnostics_title">Diagnostics</string>
     <string name="settings_diagnostics_desc">Inspect and share internal data and session logs.</string>
     <string name="settings_open_diagnostics">Open diagnostics</string>
+    <string name="settings_telemetry_title">Share crash &amp; performance reports</string>
+    <string name="settings_telemetry_desc">Sends crash and performance diagnostics to Firebase (Google) to help fix problems. Your location data is never included.</string>
 
     <!-- ============================ Onboarding ============================ -->
     <string name="onboarding_welcome_title">Welcome to Pathline</string>
@@ -311,6 +313,16 @@
     <string name="passkey_label">Passkey</string>
     <string name="passkey_unlock_failed">Passkey unlock failed</string>
     <string name="passkey_setup_failed">Passkey setup failed</string>
+    <string name="backup_group_name">Backups</string>
+    <string name="backup_failure_channel_name">Backup alerts</string>
+    <string name="backup_failure_channel_desc">Warns when scheduled Pathline backups fail.</string>
+    <string name="backup_notify_failed_title">Scheduled backup failed</string>
+    <string name="backup_notify_incomplete_title">Scheduled backup incomplete</string>
+    <string name="backup_notify_needs_attention_title">Backup needs attention</string>
+    <string name="backup_notify_failed_text">Pathline couldn\'t finish the scheduled backup: %1$s</string>
+    <string name="backup_notify_incomplete_text">Some backup files could not be written. Pathline will retry when background backup conditions are met.</string>
+    <string name="backup_notify_needs_reclaim_text">Pathline can no longer access the backup folder. Reconnect it in Settings.</string>
+    <string name="backup_notify_key_unavailable_text">Pathline needs your backup password or passkey before scheduled backups can continue.</string>
 
     <!-- ============================ Diagnostics (chrome only) ============================ -->
     <string name="diagnostics_title">Diagnostics</string>
@@ -476,8 +488,11 @@
     <string name="api_access_event_write_subtitle">Updated %1$d %2$s</string>
 
     <!-- Privacy notifications -->
-    <string name="api_access_channel_name">Data access alerts</string>
-    <string name="api_access_channel_desc">Warns you when another app reads your Pathline data, or still has access.</string>
+    <string name="api_access_group_name">Access to Pathline data</string>
+    <string name="api_access_activity_channel_name">Data access activity</string>
+    <string name="api_access_activity_channel_desc">Warns you when another app reads your Pathline data, or still has access.</string>
+    <string name="api_access_denied_channel_name">Denied data access</string>
+    <string name="api_access_denied_channel_desc">Warns you when another app tries to access Pathline data without permission.</string>
     <string name="api_notify_read_title">An app accessed your Pathline data</string>
     <!-- "<app> accessed <data summary>." e.g. "Acme accessed 6 visits, 2,636 location samples." -->
     <string name="api_notify_read_text_one">%1$s accessed %2$s.</string>

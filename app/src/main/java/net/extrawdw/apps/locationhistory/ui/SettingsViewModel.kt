@@ -11,6 +11,7 @@ import net.extrawdw.apps.locationhistory.data.repo.AppSettings
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
+import net.extrawdw.apps.locationhistory.service.FirebaseTelemetry
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
@@ -60,5 +61,11 @@ class SettingsViewModel @Inject constructor(
     fun setApiAccessEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.setApiAccessEnabled(enabled)
         if (!enabled) settingsRepository.setApiAccessConsentNeverAsk(false)
+    }
+
+    /** Master switch for crash & performance telemetry. Applies immediately and persists for next launch. */
+    fun setTelemetryEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setTelemetryEnabled(enabled)
+        FirebaseTelemetry.apply(enabled)
     }
 }

@@ -8,10 +8,13 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
-// Firebase App Check needs google-services.json (gitignored, like the Maps key). Apply the plugin
+// Firebase services need google-services.json (gitignored, like the Maps key). Apply the plugins
 // only when the file is present so CI / fresh checkouts still build without Firebase configured.
-if (file("google-services.json").exists()) {
+val firebaseConfigured = file("google-services.json").exists()
+if (firebaseConfigured) {
     apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+    apply(plugin = "com.google.firebase.firebase-perf")
 }
 
 // Read the Google Maps / Places API key from local.properties (never committed) so it can be
@@ -32,12 +35,17 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 19
-        versionName = "1.8.2-rc.1"
+        versionCode = 20
+        versionName = "1.8.3-rc.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+        // Telemetry defaults ON for every build type; the in-app "Share crash & performance reports"
+        // switch (FirebaseTelemetry) is the real control and overrides this at runtime. This default
+        // only governs the brief window before Application.onCreate on a fresh install.
+        manifestPlaceholders["FIREBASE_CRASHLYTICS_COLLECTION_ENABLED"] = true
+        manifestPlaceholders["FIREBASE_PERFORMANCE_COLLECTION_ENABLED"] = true
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
     }
 
@@ -128,9 +136,11 @@ dependencies {
     implementation(libs.maps.compose.utils)
     implementation(libs.places)
 
-    // Firebase App Check — attests the Routes API web-service call. Play Integrity in release,
-    // the debug provider (a registered debug token) for local builds. Needs app/google-services.json.
+    // Firebase services. Crashlytics and Performance Monitoring collect in release builds only;
+    // App Check attests the Routes API web-service call when app/google-services.json is present.
     implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.crashlytics)
+    implementation(libs.firebase.perf)
     implementation(libs.firebase.appcheck.playintegrity)
     debugImplementation(libs.firebase.appcheck.debug)
     implementation(libs.androidx.concurrent.futures)

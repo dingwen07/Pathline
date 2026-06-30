@@ -206,6 +206,18 @@ fun SettingsScreen(
                 }
             }
 
+            // Share crash & performance reports (Firebase telemetry; user opt-out)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    SettingSwitchRow(
+                        title = stringResource(R.string.settings_telemetry_title),
+                        description = stringResource(R.string.settings_telemetry_desc),
+                        checked = settings.telemetryEnabled,
+                        onCheckedChange = viewModel::setTelemetryEnabled,
+                    )
+                }
+            }
+
             // Diagnostics
             var showDiagnostics by remember { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {

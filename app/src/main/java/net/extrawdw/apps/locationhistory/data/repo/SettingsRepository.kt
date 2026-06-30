@@ -44,6 +44,13 @@ data class AppSettings(
      * routing can never bill unexpectedly. Independent of (and gated behind) [apiAccessEnabled].
      */
     val routeApiEnabled: Boolean = true,
+    /**
+     * Master switch for crash & performance telemetry (Firebase Crashlytics + Performance
+     * Monitoring). Opt-out: defaults **on**. Pushed into the SDKs by
+     * [net.extrawdw.apps.locationhistory.service.FirebaseTelemetry] at startup and on toggle. Applies
+     * to every build type -- debug honors it too.
+     */
+    val telemetryEnabled: Boolean = true,
 )
 
 /**
@@ -82,6 +89,7 @@ class SettingsRepository @Inject constructor(
     private val keyApiEnabled = booleanPreferencesKey("api_access_enabled")
     private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
     private val keyRouteApiEnabled = booleanPreferencesKey("route_api_enabled")
+    private val keyTelemetryEnabled = booleanPreferencesKey("telemetry_enabled")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -102,6 +110,7 @@ class SettingsRepository @Inject constructor(
             apiAccessEnabled = prefs[keyApiEnabled] ?: false,
             apiAccessConsentNeverAsk = prefs[keyApiNeverAsk] ?: false,
             routeApiEnabled = prefs[keyRouteApiEnabled] ?: true,
+            telemetryEnabled = prefs[keyTelemetryEnabled] ?: true,
         )
     }
 
@@ -119,6 +128,14 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setRouteApiEnabled(enabled: Boolean) {
         context.dataStore.edit { it[keyRouteApiEnabled] = enabled }
+    }
+
+    /** Current telemetry switch state, read once for the startup apply path. On by default. */
+    suspend fun telemetryEnabled(): Boolean =
+        context.dataStore.data.map { it[keyTelemetryEnabled] ?: true }.first()
+
+    suspend fun setTelemetryEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[keyTelemetryEnabled] = enabled }
     }
 
     /** Suppress the first-run API-access consent screen (the "don't ask again" choice). */

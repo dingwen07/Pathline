@@ -1,34 +1,36 @@
 [versions]
 agp = "9.2.1"
-coreKtx = "1.18.0"
+coreKtx = "1.19.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-lifecycleRuntimeKtx = "2.10.0"
+lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 kotlin = "2.2.10"
-composeBom = "2025.12.00"
+composeBom = "2026.06.00"
 
 ksp = "2.3.9"
-hilt = "2.59.2"
+hilt = "2.60"
 hiltExt = "1.3.0"
 room = "2.8.4"
 workManager = "2.11.2"
 datastore = "1.2.1"
 navigationCompose = "2.9.8"
-lifecycleViewmodelCompose = "2.10.0"
-playServicesLocation = "21.3.0"
+lifecycleViewmodelCompose = "2.11.0"
+playServicesLocation = "21.4.0"
 mapsCompose = "8.3.0"
 places = "5.2.0"
 kotlinxSerialization = "1.11.0"
-kotlinxCoroutines = "1.10.2"
+kotlinxCoroutines = "1.11.0"
 accompanistPermissions = "0.37.3"
-sqlcipher = "4.6.1"
+sqlcipher = "4.16.0"
 documentFile = "1.1.0"
-credentials = "1.5.0"
-firebaseBom = "33.7.0"
-googleServices = "4.4.2"
-concurrentFutures = "1.2.0"
+credentials = "1.6.0"
+firebaseBom = "34.15.0"
+googleServices = "4.5.0"
+firebaseCrashlyticsGradle = "3.0.7"
+firebasePerfGradle = "2.0.2"
+concurrentFutures = "1.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -84,9 +86,13 @@ maps-compose = { group = "com.google.maps.android", name = "maps-compose", versi
 maps-compose-utils = { group = "com.google.maps.android", name = "maps-compose-utils", version.ref = "mapsCompose" }
 places = { group = "com.google.android.libraries.places", name = "places", version.ref = "places" }
 
-# Firebase App Check — attests the Routes API web-service call (Play Integrity in release, debug
-# provider locally). BoM pins the App Check artifact versions.
+# Firebase services. The BoM pins SDK artifact versions.
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
+# Crashlytics + Performance Monitoring
+firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
+firebase-perf = { group = "com.google.firebase", name = "firebase-perf" }
+# App Check attests the Routes API web-service call (Play Integrity in release, debug provider
+# locally).
 firebase-appcheck-playintegrity = { group = "com.google.firebase", name = "firebase-appcheck-playintegrity" }
 firebase-appcheck-debug = { group = "com.google.firebase", name = "firebase-appcheck-debug" }
 # Adapts the Firebase App Check Task into the ListenableFuture the Places SDK token provider expects.
@@ -109,3 +115,5 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+firebase-crashlytics-gradle = { id = "com.google.firebase.crashlytics", version.ref = "firebaseCrashlyticsGradle" }
+firebase-perf-gradle = { id = "com.google.firebase.firebase-perf", version.ref = "firebasePerfGradle" }

@@ -6,9 +6,11 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.BackupResult
+import net.extrawdw.apps.locationhistory.service.Notifications
 
 /**
  * The shared periodic, charging-gated sync worker. Runs two independent jobs, each a clean no-op
@@ -27,8 +29,13 @@ class BackupWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val backup = evaluate("backup", backupRepository.runScheduledBackup())
+        val shouldNotify = inputData.getBoolean(KEY_NOTIFY_FAILURE, true)
+        val backupResult = backupRepository.runScheduledBackup()
+        val backup = evaluate("backup", backupResult)
         val gpx = evaluate("gpx", backupRepository.runScheduledGpxExport())
+        if (shouldNotify) {
+            notifyBackupFailure(backupResult)
+        }
         return if (backup == Outcome.RETRY || gpx == Outcome.RETRY) Result.retry() else Result.success()
     }
 
@@ -63,7 +70,48 @@ class BackupWorker @AssistedInject constructor(
         is BackupResult.Restored -> Outcome.OK
     }
 
-    private companion object {
-        const val TAG = "BackupWorker"
+    private fun notifyBackupFailure(result: BackupResult) {
+        val ctx = applicationContext
+        val title: String
+        val text: String
+        when (result) {
+            is BackupResult.Backed -> {
+                if (result.report.partitionsFailed <= 0) {
+                    Notifications.cancelBackupFailure(ctx)
+                    return
+                }
+                title = ctx.getString(R.string.backup_notify_incomplete_title)
+                text = ctx.getString(R.string.backup_notify_incomplete_text)
+            }
+
+            BackupResult.NeedsReclaim -> {
+                title = ctx.getString(R.string.backup_notify_needs_attention_title)
+                text = ctx.getString(R.string.backup_notify_needs_reclaim_text)
+            }
+
+            BackupResult.KeyUnavailable -> {
+                title = ctx.getString(R.string.backup_notify_needs_attention_title)
+                text = ctx.getString(R.string.backup_notify_key_unavailable_text)
+            }
+
+            is BackupResult.Error -> {
+                title = ctx.getString(R.string.backup_notify_failed_title)
+                text = ctx.getString(R.string.backup_notify_failed_text, result.message)
+            }
+
+            BackupResult.NoDestination,
+            is BackupResult.Exported,
+            is BackupResult.Restored -> {
+                Notifications.cancelBackupFailure(ctx)
+                return
+            }
+        }
+        Notifications.notifyBackupFailure(ctx, title, text)
+    }
+
+    companion object {
+        const val KEY_NOTIFY_FAILURE = "notify_failure"
+
+        private const val TAG = "BackupWorker"
     }
 }

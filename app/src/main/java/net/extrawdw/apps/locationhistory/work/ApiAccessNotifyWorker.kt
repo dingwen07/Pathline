@@ -98,7 +98,7 @@ class ApiAccessNotifyWorker @AssistedInject constructor(
             runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
         }
 
-        Notifications.notifyApiAccess(ctx, notificationId, title, text, largeIcon)
+        Notifications.notifyApiAccess(ctx, notificationId, title, text, largeIcon, denied)
         prefs.edit {
             putLong("${lane}last:$pkg", now)
             putInt("${lane}count:$pkg", (count + 1).coerceAtMost(MAX_COUNT))
