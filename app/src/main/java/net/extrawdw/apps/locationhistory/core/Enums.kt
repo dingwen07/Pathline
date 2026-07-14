@@ -83,6 +83,9 @@ enum class PlaceCoordinateRepairDecision {
     /** An untouched legacy Google center/baseline was classified for provider-frame preview only. */
     AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE,
 
+    /** The center/radius exactly match Pathline's historical Google-anchor/WGS-visit blend. */
+    AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE,
+
     /** User explicitly confirmed that the saved center is already WGS-84. */
     SAVED_CENTER_AS_WGS84,
 

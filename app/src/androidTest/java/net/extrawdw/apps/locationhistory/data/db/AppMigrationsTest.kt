@@ -21,10 +21,10 @@ class AppMigrationsTest {
     )
 
     @Test
-    fun migration2To3_preservesGeometry_classifiesOnlyExactMapsBaseline_andClearsCandidates() {
+    fun migration2To3_preservesGeometry_classifiesPlaces_andRetainsOnlyIdentityCandidates() {
         helper.createDatabase(TEST_DATABASE, 2).use { database ->
             PLACES.forEach { place -> database.insertPlace(place) }
-            database.insertVisit(VISIT)
+            VISITS.forEach { visit -> database.insertVisit(visit) }
         }
 
         helper.runMigrationsAndValidate(
@@ -89,40 +89,68 @@ class AppMigrationsTest {
                 "candidateLongitude, startMs, endMs, dayEpoch, centroidLatitude, " +
                 "centroidLongitude, radiusMeters, sampleCount, reliability, confirmed, " +
                 "confidence, isOngoing, candidateCoordinateFrame, candidateOrigin " +
-                "FROM visits WHERE id = ?",
-            arrayOf(VISIT.id),
+                "FROM visits ORDER BY id",
         ).use { cursor ->
-            assertTrue("missing visit ${VISIT.id}", cursor.moveToFirst())
-            assertEquals(VISIT.id, cursor.getLong(0))
-            assertEquals(VISIT.placeId, cursor.getLong(1))
+            VISITS.forEach { expected ->
+                assertTrue("missing visit ${expected.id}", cursor.moveToNext())
+                assertEquals(expected.id, cursor.getLong(0))
+                assertEquals(expected.placeId, cursor.getLong(1))
 
-            // v2 candidates had no recorded coordinate frame, so the safe migration drops the
-            // complete snapshot instead of guessing whether it can be promoted.
-            (2..5).forEach { index ->
-                assertTrue("candidate column $index was not cleared", cursor.isNull(index))
+                if (expected.retainedAsIdentity) {
+                    assertEquals(expected.candidateName, cursor.getString(2))
+                    assertEquals(expected.candidateGooglePlaceId, cursor.getString(3))
+                    assertDoubleUnchanged(
+                        "visit ${expected.id} candidate latitude",
+                        expected.candidateLatitude,
+                        cursor.getDouble(4),
+                    )
+                    assertDoubleUnchanged(
+                        "visit ${expected.id} candidate longitude",
+                        expected.candidateLongitude,
+                        cursor.getDouble(5),
+                    )
+                    assertEquals("WGS84", cursor.getString(17))
+                    assertEquals("MAPS", cursor.getString(18))
+                } else {
+                    (2..5).forEach { index ->
+                        assertTrue("candidate column $index was not cleared", cursor.isNull(index))
+                    }
+                    assertEquals("UNKNOWN", cursor.getString(17))
+                    assertEquals("UNKNOWN", cursor.getString(18))
+                }
+
+                assertEquals(expected.startMs, cursor.getLong(6))
+                assertEquals(expected.endMs, cursor.getLong(7))
+                assertEquals(expected.dayEpoch, cursor.getLong(8))
+                assertDoubleUnchanged(
+                    "visit ${expected.id} centroid latitude",
+                    expected.centroidLatitude,
+                    cursor.getDouble(9),
+                )
+                assertDoubleUnchanged(
+                    "visit ${expected.id} centroid longitude",
+                    expected.centroidLongitude,
+                    cursor.getDouble(10),
+                )
+                assertDoubleUnchanged(
+                    "visit ${expected.id} radius",
+                    expected.radiusMeters,
+                    cursor.getDouble(11),
+                )
+                assertEquals(expected.sampleCount, cursor.getInt(12))
+                assertDoubleUnchanged(
+                    "visit ${expected.id} reliability",
+                    expected.reliability,
+                    cursor.getDouble(13),
+                )
+                assertEquals(expected.confirmed, cursor.getInt(14))
+                assertDoubleUnchanged(
+                    "visit ${expected.id} confidence",
+                    expected.confidence,
+                    cursor.getDouble(15),
+                )
+                assertEquals(expected.isOngoing, cursor.getInt(16))
             }
-
-            assertEquals(VISIT.startMs, cursor.getLong(6))
-            assertEquals(VISIT.endMs, cursor.getLong(7))
-            assertEquals(VISIT.dayEpoch, cursor.getLong(8))
-            assertDoubleUnchanged(
-                "visit centroid latitude",
-                VISIT.centroidLatitude,
-                cursor.getDouble(9),
-            )
-            assertDoubleUnchanged(
-                "visit centroid longitude",
-                VISIT.centroidLongitude,
-                cursor.getDouble(10),
-            )
-            assertDoubleUnchanged("visit radius", VISIT.radiusMeters, cursor.getDouble(11))
-            assertEquals(VISIT.sampleCount, cursor.getInt(12))
-            assertDoubleUnchanged("visit reliability", VISIT.reliability, cursor.getDouble(13))
-            assertEquals(VISIT.confirmed, cursor.getInt(14))
-            assertDoubleUnchanged("visit confidence", VISIT.confidence, cursor.getDouble(15))
-            assertEquals(VISIT.isOngoing, cursor.getInt(16))
-            assertEquals("UNKNOWN", cursor.getString(17))
-            assertEquals("UNKNOWN", cursor.getString(18))
             assertFalse("unexpected duplicate visit", cursor.moveToNext())
         }
     }
@@ -192,10 +220,10 @@ class AppMigrationsTest {
             arrayOf<Any>(
                 visit.id,
                 visit.placeId,
-                "Legacy candidate",
-                "legacy-google-place",
-                31.230_401_234_567_89,
-                121.473_711_234_567_89,
+                visit.candidateName,
+                visit.candidateGooglePlaceId,
+                visit.candidateLatitude,
+                visit.candidateLongitude,
                 visit.startMs,
                 visit.endMs,
                 visit.dayEpoch,
@@ -241,6 +269,11 @@ class AppMigrationsTest {
         val confirmed: Int,
         val confidence: Double,
         val isOngoing: Int,
+        val candidateName: String,
+        val candidateGooglePlaceId: String,
+        val candidateLatitude: Double,
+        val candidateLongitude: Double,
+        val retainedAsIdentity: Boolean,
     )
 
     private companion object {
@@ -299,20 +332,47 @@ class AppMigrationsTest {
             ),
         )
 
-        val VISIT = V2Visit(
-            id = 101,
-            placeId = 1,
-            startMs = 1_719_840_123_456L,
-            endMs = 1_719_840_987_654L,
-            dayEpoch = 19_906L,
-            centroidLatitude = 31.230_421_234_567_89,
-            centroidLongitude = 121.473_691_234_567_89,
-            radiusMeters = 24.625,
-            sampleCount = 17,
-            reliability = 0.8125,
-            confirmed = 0,
-            confidence = 0.6875,
-            isOngoing = 1,
+        val VISITS = listOf(
+            V2Visit(
+                id = 101,
+                placeId = 1,
+                startMs = 1_719_840_123_456L,
+                endMs = 1_719_840_987_654L,
+                dayEpoch = 19_906L,
+                centroidLatitude = 31.230_421_234_567_89,
+                centroidLongitude = 121.473_691_234_567_89,
+                radiusMeters = 24.625,
+                sampleCount = 17,
+                reliability = 0.8125,
+                confirmed = 0,
+                confidence = 0.6875,
+                isOngoing = 1,
+                candidateName = "Mainland legacy candidate",
+                candidateGooglePlaceId = "mainland-google-place",
+                candidateLatitude = 31.230_401_234_567_89,
+                candidateLongitude = 121.473_711_234_567_89,
+                retainedAsIdentity = false,
+            ),
+            V2Visit(
+                id = 102,
+                placeId = 4,
+                startMs = 1_719_841_123_456L,
+                endMs = 1_719_841_987_654L,
+                dayEpoch = 19_906L,
+                centroidLatitude = 1.352_083_234_567_89,
+                centroidLongitude = 103.819_836_234_567_89,
+                radiusMeters = 28.5,
+                sampleCount = 12,
+                reliability = 0.75,
+                confirmed = 0,
+                confidence = 0.5,
+                isOngoing = 0,
+                candidateName = "Singapore identity candidate",
+                candidateGooglePlaceId = "outside-google-place",
+                candidateLatitude = 1.352_093_234_567_89,
+                candidateLongitude = 103.819_846_234_567_89,
+                retainedAsIdentity = true,
+            ),
         )
     }
 }

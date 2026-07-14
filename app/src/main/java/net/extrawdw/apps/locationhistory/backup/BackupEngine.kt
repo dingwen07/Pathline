@@ -371,6 +371,7 @@ class BackupEngine @Inject constructor(
             restoreSnapshots(root, inventory.snapshots, cipher)
             // A retained old partition can sit under a newer incremental manifest. Validate each
             // candidate tuple by its own provenance rather than trusting the manifest version.
+            backupDao.classifyIdentityFrameLegacyCandidates()
             backupDao.clearUntrustedCandidates()
             // Repair trip->visit links that the backup itself carried broken (older exports, or data
             // imported from a previous app version): detach any trip endpoint whose visit is absent so

@@ -488,7 +488,7 @@
     <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
     <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>
     <string name="api_notify_hold_text_many">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</string>
-    <string name="place_edit_location_write_disabled">在验证此 Google 地图运行环境的坐标输出前，暂时无法移动地点。名称、半径、锁定、笔记和标签仍可安全编辑。</string>
+    <string name="place_edit_location_write_disabled">在验证此 Google 地图运行环境于该区域的坐标输出前，暂时无法移动地点。名称、半径、锁定、笔记和标签仍可安全编辑。</string>
     <string name="action_confirm">确认</string>
     <string name="place_coordinate_review_badge">需要检查位置</string>
     <string name="place_coordinate_review_message">此地点保存时尚未记录坐标来源。在您确认其坐标解释之前，Pathline 不会将该位置用于匹配、路线或 API 邻近查询。</string>

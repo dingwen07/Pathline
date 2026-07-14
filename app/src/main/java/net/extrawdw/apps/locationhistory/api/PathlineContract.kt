@@ -564,6 +564,11 @@ object PathlineContract {
      * A caller holding [Permissions.READ_ALL_PLACES] bypasses that scoping entirely and reads the
      * whole saved-place corpus.
      *
+     * A place whose pre-v3 coordinate interpretation is unresolved is still returned so a
+     * [Visits.PLACE_ID] remains resolvable. Its identity and metadata are available, but [LATITUDE],
+     * [LONGITUDE], and [RADIUS_METERS] are null until the user repairs it. Proximity mode omits these
+     * rows because no canonical distance can be computed.
+     *
      * Not time-windowed: [QueryParams.START] / [QueryParams.END] are ignored. Pass [QueryParams.IDS]
      * to fetch specific places, or omit it for all allowed places. With [QueryParams.Q] it becomes a
      * place search (see [QueryParams.Q]). Requires [Permissions.READ_TIMELINE] (grant-scoped) or
@@ -600,16 +605,16 @@ object PathlineContract {
         /** Google Places id this place is linked to, or null. */
         const val GOOGLE_PLACE_ID: String = "google_place_id"
 
-        /** Canonical WGS-84 place-center latitude. */
+        /** Canonical WGS-84 place-center latitude, or null while coordinates are unresolved. */
         const val LATITUDE: String = "latitude"
 
-        /** Canonical WGS-84 place-center longitude. */
+        /** Canonical WGS-84 place-center longitude, or null while coordinates are unresolved. */
         const val LONGITUDE: String = "longitude"
 
-        /** Coordinate provenance. Returned rows are `WGS84_CANONICAL`; unresolved rows are omitted. */
+        /** Coordinate provenance; inspect this before consuming any geometry columns. */
         const val COORDINATE_STATE: String = "coordinate_state"
 
-        /** Approximate radius of the place in meters. */
+        /** Approximate radius in meters, or null while coordinates are unresolved. */
         const val RADIUS_METERS: String = "radius_meters"
 
         /**

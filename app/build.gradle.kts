@@ -12,9 +12,9 @@ plugins {
 // only when the file is present so CI / fresh checkouts still build without Firebase configured.
 val firebaseConfigured = file("google-services.json").exists()
 if (firebaseConfigured) {
-    apply(plugin = "com.google.gms.google-services")
-    apply(plugin = "com.google.firebase.crashlytics")
-    apply(plugin = "com.google.firebase.firebase-perf")
+    pluginManager.apply("com.google.gms.google-services")
+    pluginManager.apply("com.google.firebase.crashlytics")
+    pluginManager.apply("com.google.firebase.firebase-perf")
 }
 
 // Read the Google Maps / Places API key from local.properties (never committed) so it can be
@@ -35,8 +35,8 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 21
-        versionName = "1.8.4-rc.1"
+        versionCode = 22
+        versionName = "1.8.5-rc.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

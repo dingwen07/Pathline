@@ -43,9 +43,18 @@ class GoogleAndroidCoordinateAdapter @Inject constructor(
         GoogleBoundaryFrame.MAINLAND_GCJ02 -> transform.gcj02ToWgs84(
             Gcj02Coordinate(value.latitude, value.longitude)
         )
-        GoogleBoundaryFrame.UNVERIFIED -> TransformResult.Failure(
-            TransformResult.Reason.UNVERIFIED_PROFILE
-        )
+        GoogleBoundaryFrame.UNVERIFIED -> {
+            // The observed mainland map-click output is uncharacterized, but points safely beyond
+            // the expanded compatibility envelope cannot have taken the GCJ branch. Preserve the
+            // documented WGS-84 click behavior everywhere else instead of disabling writes globally.
+            if (transform.mightRequireMainlandCompatibility(value.latitude, value.longitude)) {
+                TransformResult.Failure(TransformResult.Reason.UNVERIFIED_PROFILE)
+            } else {
+                validate(value.latitude, value.longitude) {
+                    Wgs84Coordinate(value.latitude, value.longitude)
+                }
+            }
+        }
     }
 
     /**

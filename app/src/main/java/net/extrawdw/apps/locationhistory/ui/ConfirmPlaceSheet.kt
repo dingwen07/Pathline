@@ -145,6 +145,9 @@ fun ConfirmPlaceSheet(
 
             LazyColumn(
                 Modifier
+                    // Yield result-list space when the IME reduces the sheet's available height so
+                    // the custom-place controls below remain visible.
+                    .weight(1f, fill = false)
                     .heightIn(max = 380.dp)
                     .padding(top = 8.dp)
             ) {

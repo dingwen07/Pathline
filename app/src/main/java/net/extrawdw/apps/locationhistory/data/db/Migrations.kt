@@ -129,8 +129,9 @@ object AppMigrations {
      * narrow classification is an untouched MAPS row whose complete baseline is bit-for-bit its
      * center; it remains provider-frame legacy and is not normalized. Differing/mixed MAPS rows and
      * all rows whose provenance is ambiguous stay UNKNOWN.
-     * Legacy candidate suggestions are intentionally cleared: their request/result frame was not
-     * recorded, so promoting them would be an unsafe guess.
+     * Complete Google candidates safely beyond the mainland transform envelope are retained as
+     * canonical because both historical frame interpretations are exact identity there. Every other
+     * legacy candidate is cleared because its request/result frame was not recorded.
      */
     val MIGRATION_2_3 = object : Migration(2, 3) {
         override fun migrate(db: SupportSQLiteDatabase) {
@@ -238,11 +239,24 @@ object AppMigrations {
                 "ALTER TABLE `visits` ADD COLUMN `candidateOrigin` TEXT NOT NULL " +
                         "DEFAULT 'UNKNOWN'",
             )
+            val safeIdentityCandidate =
+                "`candidateName` IS NOT NULL AND `candidateGooglePlaceId` IS NOT NULL AND " +
+                        "`candidateLatitude` IS NOT NULL AND `candidateLongitude` IS NOT NULL AND " +
+                        "`candidateLatitude` BETWEEN -90.0 AND 90.0 AND " +
+                        "`candidateLongitude` BETWEEN -180.0 AND 180.0 AND " +
+                        "(`candidateLatitude` < 18.1520757 OR " +
+                        "`candidateLatitude` > 53.590963401 OR " +
+                        "`candidateLongitude` < 73.586083281 OR " +
+                        "`candidateLongitude` > 134.760415954)"
+            db.execSQL(
+                "UPDATE `visits` SET `candidateCoordinateFrame` = 'WGS84', " +
+                        "`candidateOrigin` = 'MAPS' WHERE $safeIdentityCandidate",
+            )
             db.execSQL(
                 "UPDATE `visits` SET `candidateName` = NULL, " +
                         "`candidateGooglePlaceId` = NULL, `candidateLatitude` = NULL, " +
                         "`candidateLongitude` = NULL, `candidateCoordinateFrame` = 'UNKNOWN', " +
-                        "`candidateOrigin` = 'UNKNOWN'",
+                        "`candidateOrigin` = 'UNKNOWN' WHERE NOT ($safeIdentityCandidate)",
             )
         }
     }

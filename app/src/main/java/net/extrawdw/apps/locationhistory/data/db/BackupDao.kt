@@ -130,6 +130,22 @@ interface BackupDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restoreConceptMembers(rows: List<ConceptMemberEntity>)
 
+    /**
+     * Recover old complete Google candidates where both historical coordinate interpretations are
+     * provably exact identity. This runs before [clearUntrustedCandidates] during restore.
+     */
+    @Query(
+        "UPDATE visits SET candidateCoordinateFrame = 'WGS84', candidateOrigin = 'MAPS' " +
+                "WHERE candidateCoordinateFrame = 'UNKNOWN' AND candidateOrigin = 'UNKNOWN' AND " +
+                "candidateName IS NOT NULL AND candidateGooglePlaceId IS NOT NULL AND " +
+                "candidateLatitude IS NOT NULL AND candidateLongitude IS NOT NULL AND " +
+                "candidateLatitude BETWEEN -90.0 AND 90.0 AND " +
+                "candidateLongitude BETWEEN -180.0 AND 180.0 AND " +
+                "(candidateLatitude < 18.1520757 OR candidateLatitude > 53.590963401 OR " +
+                "candidateLongitude < 73.586083281 OR candidateLongitude > 134.760415954)",
+    )
+    suspend fun classifyIdentityFrameLegacyCandidates()
+
     /** Clear any candidate tuple that is not complete canonical Maps data, regardless of manifest. */
     @Query(
         "UPDATE visits SET candidateName = NULL, candidateGooglePlaceId = NULL, " +

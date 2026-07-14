@@ -93,17 +93,35 @@ class GoogleMapProjector @Inject constructor(
             null
         }
 
-    /** Project each vertex once and split at a failed vertex so invalid input is never bridged. */
+    /**
+     * Project each vertex once. Split at invalid input and whenever the projection changes between
+     * identity and mainland GCJ so a polyline never bridges the coordinate discontinuity.
+     */
     fun paths(points: List<Pair<Double, Double>>): List<List<GoogleMapCoordinate>> {
         val paths = ArrayList<List<GoogleMapCoordinate>>()
         var current = ArrayList<GoogleMapCoordinate>()
+        var currentUsesMainlandProjection: Boolean? = null
         fun flush() {
             if (current.isNotEmpty()) paths += current
             current = ArrayList()
+            currentUsesMainlandProjection = null
         }
         points.forEach { (latitude, longitude) ->
             val projected = coordinate(latitude, longitude)
-            if (projected == null) flush() else current += projected
+            if (projected == null) {
+                flush()
+            } else {
+                val usesMainlandProjection =
+                    projected.latitude.toRawBits() != latitude.toRawBits() ||
+                            projected.longitude.toRawBits() != longitude.toRawBits()
+                if (currentUsesMainlandProjection != null &&
+                    currentUsesMainlandProjection != usesMainlandProjection
+                ) {
+                    flush()
+                }
+                current += projected
+                currentUsesMainlandProjection = usesMainlandProjection
+            }
         }
         flush()
         return paths

@@ -38,7 +38,7 @@ class LegacyPlaceCoordinateManager @Inject constructor(
     private val historicalMapProfile =
         GoogleAndroidCoordinateProfiles.HISTORICAL_MAP_ANDROID_MAINLAND_2026_07_USER_CONFIRMED
 
-    /** Idempotently unlock only rows whose persisted numbers prove a no-transform interpretation. */
+    /** Idempotently classify only rows whose persisted geometry proves one safe interpretation. */
     suspend fun classifySafeRows() = writeLock.withLock {
         db.withTransaction {
             placeDao.unresolvedCoordinates().forEach { current ->
@@ -56,6 +56,13 @@ class LegacyPlaceCoordinateManager @Inject constructor(
                             current.hasCompleteAnchor() && current.centerRawEqualsAnchor() ->
                         PlaceCoordinateState.LEGACY_GOOGLE_MAP_CENTER_AND_BASELINE to
                                 PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE
+
+                    LegacyMixedCenterClassifier.isProvable(
+                        current,
+                        visitDao.listForPlace(current.id),
+                    ) -> PlaceCoordinateState.LEGACY_MIXED_CENTER_GOOGLE_MAP_BASELINE to
+                            PlaceCoordinateRepairDecision
+                                .AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE
 
                     else -> null
                 } ?: return@forEach
@@ -121,6 +128,7 @@ class LegacyPlaceCoordinateManager @Inject constructor(
                 PlaceCoordinateRepairDecision.AUTO_OUTSIDE_MAINLAND_IDENTITY,
                 PlaceCoordinateRepairDecision.AUTO_UNTOUCHED_LOCAL_IDENTITY,
                 PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE,
+                PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE,
                 PlaceCoordinateRepairDecision.UNKNOWN -> null
             } ?: return@withTransaction false
 
@@ -291,7 +299,8 @@ class LegacyPlaceCoordinateManager @Inject constructor(
         PlaceCoordinateRepairDecision.UNKNOWN,
         PlaceCoordinateRepairDecision.AUTO_OUTSIDE_MAINLAND_IDENTITY,
         PlaceCoordinateRepairDecision.AUTO_UNTOUCHED_LOCAL_IDENTITY,
-        PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE -> false
+        PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE,
+        PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE -> false
     }
 
     private fun PlaceCoordinateRepairDecision.usesSavedCenter(): Boolean = when (this) {

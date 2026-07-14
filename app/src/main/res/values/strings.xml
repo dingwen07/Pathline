@@ -521,7 +521,7 @@
     <string name="api_notify_hold_text_one">%1$s has access to your timeline and location history.</string>
     <!-- "<app> and <N> more apps have access…" -->
     <string name="api_notify_hold_text_many">%1$s and %2$d more apps have access to your timeline and location history.</string>
-    <string name="place_edit_location_write_disabled">Location moves are disabled until this Google map runtime’s coordinate output is verified. Name, radius, lock, note, and tag edits are still safe.</string>
+    <string name="place_edit_location_write_disabled">Location moves are disabled in this region until this Google map runtime’s coordinate output is verified. Name, radius, lock, note, and tag edits are still safe.</string>
     <string name="action_confirm">Confirm</string>
     <string name="place_coordinate_review_badge">Location review required</string>
     <string name="place_coordinate_review_message">This place was saved before coordinate provenance was recorded. Pathline will not use its location for matching, routes, or API proximity until you confirm its interpretation.</string>

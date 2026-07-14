@@ -95,7 +95,67 @@ class GoogleMapProjectorTest {
         assertRawEquals(wgs.longitude, map.longitude)
         assertRawEquals(wgs.latitude, recovered.latitude)
         assertRawEquals(wgs.longitude, recovered.longitude)
-        assertNull(projector.fromMap(map)) // click ingress is deliberately unverified/write-disabled
+        val clicked = requireNotNull(projector.fromMap(map))
+        assertRawEquals(wgs.latitude, clicked.latitude)
+        assertRawEquals(wgs.longitude, clicked.longitude)
+    }
+
+    @Test
+    fun mainlandMapClick_remainsWriteDisabledWhileOutputFrameIsUnverified() {
+        val projector = projector(mainlandEverywhere)
+
+        assertNull(projector.fromMap(BEIJING_GCJ))
+    }
+
+    @Test
+    fun outsidePolygonButInsideBroadBounds_mapClickRemainsIdentity() {
+        val envelopeOnly = object : MainlandRegionClassifier {
+            override fun contains(latitude: Double, longitude: Double): Boolean = false
+
+            override fun mightContain(
+                latitude: Double,
+                longitude: Double,
+                marginDegrees: Double,
+            ): Boolean = true
+        }
+        val projector = projector(envelopeOnly)
+        val map = GoogleMapCoordinate(37.5665, 126.9780)
+
+        val clicked = requireNotNull(projector.fromMap(map))
+
+        assertRawEquals(map.latitude, clicked.latitude)
+        assertRawEquals(map.longitude, clicked.longitude)
+    }
+
+    @Test
+    fun paths_splitWhenProjectionRegimeChanges() {
+        val projector = projector(
+            object : MainlandRegionClassifier {
+                override fun contains(latitude: Double, longitude: Double): Boolean =
+                    longitude >= 116.4
+
+                override fun mightContain(
+                    latitude: Double,
+                    longitude: Double,
+                    marginDegrees: Double,
+                ): Boolean = contains(latitude, longitude)
+            }
+        )
+
+        val paths = projector.paths(
+            listOf(
+                39.9 to 116.2,
+                39.9 to 116.3,
+                39.9 to 116.5,
+                39.9 to 116.6,
+                39.9 to 116.1,
+            )
+        )
+
+        assertEquals(listOf(2, 2, 1), paths.map { it.size })
+        assertRawEquals(116.3, paths[0].last().longitude)
+        assertFalse(paths[1].first().longitude.toRawBits() == 116.5.toRawBits())
+        assertRawEquals(116.1, paths[2].single().longitude)
     }
 
     private fun projector(mainland: MainlandRegionClassifier): GoogleMapProjector =

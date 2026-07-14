@@ -15,6 +15,7 @@ import net.extrawdw.apps.locationhistory.core.coordinates.MainlandChinaRegion
 import net.extrawdw.apps.locationhistory.core.coordinates.getOrNull
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
+import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -208,6 +209,52 @@ class LegacyPlaceCoordinateManagerTest {
             )
         )
         assertGeometryRawEquals(original.copy(id = id), requireNotNull(db.placeDao().byId(id)))
+    }
+
+    @Test
+    fun suppliedHistoricalBlend_isClassifiedMixedAndJournaled() = runBlocking {
+        val original = place(
+            latitude = 30.289257161716655,
+            longitude = 120.12435028996394,
+            anchorLatitude = 30.288797399999996,
+            anchorLongitude = 120.12530039999999,
+        ).copy(
+            radiusMeters = 44.7806044617915,
+            anchorRadiusMeters = 50.0,
+        )
+        val id = db.placeDao().insert(original)
+        db.visitDao().insert(
+            VisitEntity(
+                placeId = id,
+                candidateName = null,
+                candidateGooglePlaceId = null,
+                candidateLatitude = null,
+                candidateLongitude = null,
+                startMs = 1_783_932_842_018L,
+                endMs = 1_783_976_400_810L,
+                dayEpoch = 20_647L,
+                centroidLatitude = 30.29099957893666,
+                centroidLongitude = 120.12074953760076,
+                radiusMeters = 25.0,
+                reliability = 0.67308307f,
+                confirmed = true,
+                confidence = 1f,
+                isOngoing = false,
+            )
+        )
+
+        manager.classifySafeRows()
+
+        val classified = requireNotNull(db.placeDao().byId(id))
+        assertEquals(
+            PlaceCoordinateState.LEGACY_MIXED_CENTER_GOOGLE_MAP_BASELINE,
+            classified.coordinateState,
+        )
+        assertGeometryRawEquals(original.copy(id = id), classified)
+        assertEquals(
+            PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE,
+            requireNotNull(db.placeCoordinateRepairDao().latestActive(id)).decision,
+        )
     }
 
     private fun place(

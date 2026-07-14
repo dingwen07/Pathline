@@ -16,6 +16,22 @@ class Gcj02CoordinateTransform @Inject constructor(
     private val mainland: MainlandRegionClassifier,
 ) : ChinaCoordinateTransform {
 
+    /**
+     * True when a provider-frame point is inside the mainland mask or could be the displaced image
+     * of one. This keeps the polygon's inverse edge guard without disabling identity map clicks in
+     * unrelated locations that merely share the mainland geometry's broad bounding box.
+     */
+    fun mightRequireMainlandCompatibility(latitude: Double, longitude: Double): Boolean {
+        if (!mainland.mightContain(latitude, longitude)) return false
+        if (mainland.contains(latitude, longitude)) return true
+        return when (val recovered = gcj02ToWgs84(Gcj02Coordinate(latitude, longitude))) {
+            is TransformResult.Failure -> true
+            is TransformResult.Success ->
+                recovered.coordinate.latitude.toRawBits() != latitude.toRawBits() ||
+                        recovered.coordinate.longitude.toRawBits() != longitude.toRawBits()
+        }
+    }
+
     override fun wgs84ToGcj02(value: Wgs84Coordinate): TransformResult<Gcj02Coordinate> {
         validate(value.latitude, value.longitude)?.let { return it }
         // Preserve the caller's original IEEE-754 values exactly outside the selected mask.

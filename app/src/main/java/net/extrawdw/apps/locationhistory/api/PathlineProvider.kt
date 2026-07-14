@@ -648,9 +648,7 @@ class PathlineProvider : ContentProvider() {
                         if (allowed.isEmpty()) emptyList() else entryPoint.placeDao().byIds(allowed)
                     }
                 }
-                listed
-                    .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
-                    .let { if (limit == null) it else it.take(limit) }
+                if (limit == null) listed else listed.take(limit)
             } else {
                 require(q.isNotBlank()) { "'${PathlineContract.QueryParams.Q}' must not be blank" }
                 val fields = searchEngine.placeSearchFields(
@@ -670,19 +668,14 @@ class PathlineProvider : ContentProvider() {
                 if (scoped.isEmpty()) {
                     emptyList()
                 } else {
-                    val canonicalById = entryPoint.placeDao().byIds(scoped)
-                        .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
-                        .associateBy { it.id }
-                    val filtered = scoped.filter(canonicalById::containsKey)
+                    val byId = entryPoint.placeDao().byIds(scoped).associateBy { it.id }
+                    val filtered = scoped.filter(byId::containsKey)
                         .let { if (limit == null) it else it.take(limit) }
-                    filtered.mapNotNull(canonicalById::get)
+                    filtered.mapNotNull(byId::get)
                 }
             }
         }
-        val canonicalPlaces = places.filter {
-            it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL
-        }
-        val cursor = ApiCursors.places(canonicalPlaces, distances)
+        val cursor = ApiCursors.places(places, distances)
         logger.log(
             caller,
             AccessEvent(
