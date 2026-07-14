@@ -16,7 +16,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.tasks.await
 import net.extrawdw.apps.locationhistory.BuildConfig
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleAndroidCoordinateAdapter
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleAndroidCoordinateProfile
+import net.extrawdw.apps.locationhistory.core.coordinates.GooglePlacesCoordinate
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
+import net.extrawdw.apps.locationhistory.core.coordinates.getOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,14 +30,66 @@ import javax.inject.Singleton
 data class PlaceCandidate(
     val name: String,
     val googlePlaceId: String?,
-    val latitude: Double,
-    val longitude: Double,
+    /** Canonicalized immediately at provider ingress; safe for WGS domain math and persistence. */
+    val coordinate: Wgs84Coordinate,
     val address: String?,
     /** The single primary Google type (SDK `primaryType`, falling back to the first of [types]). */
     val primaryType: String?,
     /** The full Google place-type list, in the order Google returned it. */
     val types: List<String> = emptyList(),
+    val origin: CandidateOrigin = CandidateOrigin.MAPS,
+) {
+    val latitude: Double get() = coordinate.latitude
+    val longitude: Double get() = coordinate.longitude
+}
+
+/** Domain-facing Places contract. Google SDK coordinates never escape its implementation. */
+interface PlacesPort {
+    suspend fun nearestPlace(
+        center: Wgs84Coordinate,
+        radiusMeters: Double = 80.0,
+    ): PlaceCandidate?
+
+    suspend fun searchText(
+        query: String,
+        biasCenter: Wgs84Coordinate,
+        biasRadiusMeters: Double = 3_000.0,
+    ): List<PlaceCandidate>
+
+    suspend fun nearbyPlaces(
+        center: Wgs84Coordinate,
+        radiusMeters: Double = 120.0,
+    ): List<PlaceCandidate>
+}
+
+internal data class RankedCanonicalPlace<T>(
+    val value: T,
+    val coordinate: Wgs84Coordinate,
+    val distanceMeters: Double,
 )
+
+/** Normalize provider coordinates before distance/ranking; malformed/unverified results drop out. */
+internal fun <T> normalizeAndRankPlaces(
+    center: Wgs84Coordinate,
+    values: List<T>,
+    coordinateAdapter: GoogleAndroidCoordinateAdapter,
+    operationProfile: GoogleAndroidCoordinateProfile,
+    providerCoordinate: (T) -> GooglePlacesCoordinate?,
+): List<RankedCanonicalPlace<T>> = values.mapNotNull { value ->
+    val provider = providerCoordinate(value) ?: return@mapNotNull null
+    val canonical = coordinateAdapter.fromPlacesResult(provider, operationProfile)
+        .getOrNull() ?: return@mapNotNull null
+    RankedCanonicalPlace(
+        value = value,
+        coordinate = canonical,
+        distanceMeters = Geo.distanceMeters(
+            center.latitude,
+            center.longitude,
+            canonical.latitude,
+            canonical.longitude,
+        ),
+    )
+}.sortedBy { it.distanceMeters }
 
 /**
  * Wraps the Google Places SDK (new). Lazily initializes the client from the build's Maps key; if
@@ -41,7 +99,8 @@ data class PlaceCandidate(
 @Singleton
 class PlacesGateway @Inject constructor(
     @param:ApplicationContext private val context: Context,
-) {
+    private val coordinateAdapter: GoogleAndroidCoordinateAdapter,
+) : PlacesPort {
     private val client: PlacesClient? by lazy { createClient() }
 
     private fun createClient(): PlacesClient? = runCatching {
@@ -66,51 +125,69 @@ class PlacesGateway @Inject constructor(
         Places.createClient(context.applicationContext)
     }.getOrNull()
 
-    /** The single most likely POI near [lat]/[lon], or null if none / unavailable. */
-    suspend fun nearestPlace(
-        lat: Double,
-        lon: Double,
-        radiusMeters: Double = 80.0
-    ): PlaceCandidate? =
-        withTimeoutOrNull(2_000) { nearbyPlaces(lat, lon, radiusMeters).firstOrNull() }
+    /** The single most likely POI near canonical [center], or null if none / unavailable. */
+    override suspend fun nearestPlace(
+        center: Wgs84Coordinate,
+        radiusMeters: Double,
+    ): PlaceCandidate? = withTimeoutOrNull(2_000) {
+        nearbyPlaces(center, radiusMeters).firstOrNull()
+    }
 
-    /** Free-text place search (Maps API), focused near [lat]/[lon] and ranked by distance from it. */
-    suspend fun searchText(
-        query: String, lat: Double, lon: Double, biasRadiusMeters: Double = 3_000.0,
+    /** Free-text search focused near canonical [biasCenter] and ranked in that same frame. */
+    override suspend fun searchText(
+        query: String,
+        biasCenter: Wgs84Coordinate,
+        biasRadiusMeters: Double,
     ): List<PlaceCandidate> {
-        val placesClient = client ?: return emptyList()
         if (query.isBlank()) return emptyList()
+        val operationProfile = coordinateAdapter.profile
+        val providerCenter = coordinateAdapter.toPlacesRequest(biasCenter, operationProfile)
+            .getOrNull() ?: return emptyList()
+        val placesClient = client ?: return emptyList()
         return runCatching {
             val fields = listOf(
                 Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.FORMATTED_ADDRESS,
                 Place.Field.LOCATION, Place.Field.TYPES, Place.Field.PRIMARY_TYPE,
             )
             val request = SearchByTextRequest.builder(query, fields)
-                .setLocationBias(CircularBounds.newInstance(LatLng(lat, lon), biasRadiusMeters))
+                .setLocationBias(
+                    CircularBounds.newInstance(
+                        LatLng(providerCenter.latitude, providerCenter.longitude),
+                        biasRadiusMeters,
+                    )
+                )
                 .setMaxResultCount(10)
                 .build()
-            placesClient.searchByText(request).await().places
-                .mapNotNull { place ->
-                    val loc = place.location ?: return@mapNotNull null
+            normalizeAndRankPlaces(
+                center = biasCenter,
+                values = placesClient.searchByText(request).await().places,
+                coordinateAdapter = coordinateAdapter,
+                operationProfile = operationProfile,
+                providerCoordinate = { place ->
+                    place.location?.let { GooglePlacesCoordinate(it.latitude, it.longitude) }
+                },
+            ).map { ranked ->
+                    val place = ranked.value
                     PlaceCandidate(
                         name = place.displayName ?: place.formattedAddress ?: "Place",
                         googlePlaceId = place.id,
-                        latitude = loc.latitude,
-                        longitude = loc.longitude,
+                        coordinate = ranked.coordinate,
                         address = place.formattedAddress,
                         primaryType = place.primaryType ?: place.placeTypes?.firstOrNull(),
                         types = place.placeTypes ?: emptyList(),
-                    ) to Geo.distanceMeters(lat, lon, loc.latitude, loc.longitude)
+                    )
                 }
-                .sortedBy { it.second }
-                .map { it.first }
         }.getOrDefault(emptyList())
     }
 
-    /** Nearby POIs around [lat]/[lon], nearest first. Empty if Places is unavailable. */
-    suspend fun nearbyPlaces(
-        lat: Double, lon: Double, radiusMeters: Double = 120.0,
+    /** Nearby POIs around canonical [center], nearest first. Empty if Places is unavailable. */
+    override suspend fun nearbyPlaces(
+        center: Wgs84Coordinate,
+        radiusMeters: Double,
     ): List<PlaceCandidate> {
+        val operationProfile = coordinateAdapter.profile
+        val providerCenter = coordinateAdapter.toPlacesRequest(center, operationProfile)
+            .getOrNull() ?: return emptyList()
         val placesClient = client ?: return emptyList()
         return runCatching {
             val fields = listOf(
@@ -121,26 +198,32 @@ class PlacesGateway @Inject constructor(
                 Place.Field.TYPES,
                 Place.Field.PRIMARY_TYPE,
             )
-            val bounds = CircularBounds.newInstance(LatLng(lat, lon), radiusMeters)
+            val bounds = CircularBounds.newInstance(
+                LatLng(providerCenter.latitude, providerCenter.longitude),
+                radiusMeters,
+            )
             val request = SearchNearbyRequest.builder(bounds, fields)
                 .setMaxResultCount(10)
                 .build()
-            placesClient.searchNearby(request).await().places
-                .mapNotNull { place ->
-                    val loc = place.location ?: return@mapNotNull null
-                    val candidate = PlaceCandidate(
+            normalizeAndRankPlaces(
+                center = center,
+                values = placesClient.searchNearby(request).await().places,
+                coordinateAdapter = coordinateAdapter,
+                operationProfile = operationProfile,
+                providerCoordinate = { place ->
+                    place.location?.let { GooglePlacesCoordinate(it.latitude, it.longitude) }
+                },
+            ).map { ranked ->
+                    val place = ranked.value
+                    PlaceCandidate(
                         name = place.displayName ?: place.formattedAddress ?: "Unknown place",
                         googlePlaceId = place.id,
-                        latitude = loc.latitude,
-                        longitude = loc.longitude,
+                        coordinate = ranked.coordinate,
                         address = place.formattedAddress,
                         primaryType = place.primaryType ?: place.placeTypes?.firstOrNull(),
                         types = place.placeTypes ?: emptyList(),
                     )
-                    candidate to Geo.distanceMeters(lat, lon, loc.latitude, loc.longitude)
                 }
-                .sortedBy { it.second }
-                .map { it.first }
         }.getOrDefault(emptyList())
     }
 }

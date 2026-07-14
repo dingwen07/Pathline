@@ -110,6 +110,7 @@ internal object ApiCursors {
                     p.googlePlaceId,
                     p.latitude,
                     p.longitude,
+                    p.coordinateState.name,
                     p.radiusMeters,
                     distances?.get(p.id),
                 ),

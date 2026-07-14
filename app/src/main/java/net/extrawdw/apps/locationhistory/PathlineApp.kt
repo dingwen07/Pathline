@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
+import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.service.FirebaseTelemetry
 import net.extrawdw.apps.locationhistory.service.Notifications
 import javax.inject.Inject
@@ -30,6 +31,9 @@ class PathlineApp : Application(), Configuration.Provider {
     @Inject
     lateinit var settingsRepository: SettingsRepository
 
+    @Inject
+    lateinit var legacyPlaceCoordinates: LegacyPlaceCoordinateManager
+
     /** Long-lived scope for fire-and-forget app-init work (e.g. reconciling the telemetry switch). */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -44,6 +48,10 @@ class PathlineApp : Application(), Configuration.Provider {
         AppLog.logRecentApplicationExitInfo(this)
         AppLog.i("App", "onCreate")
         Notifications.ensureChannel(this)
+        appScope.launch {
+            runCatching { legacyPlaceCoordinates.classifySafeRows() }
+                .onFailure { AppLog.w("Coordinates", "legacy classification failed: ${it.message}") }
+        }
         initFirebase()
     }
 

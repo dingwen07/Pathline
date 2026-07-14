@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 
@@ -161,6 +162,14 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 4.dp),
                             )
+                            if (place.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) {
+                                Text(
+                                    stringResource(R.string.place_coordinate_review_badge),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
                         }
                         if (count == 0) {
                             IconButton(onClick = { deletePlace = place }) {
@@ -195,12 +204,36 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
         PlaceEditDialog(
             place = place,
             loadAnnotations = { target, id -> viewModel.loadAnnotations(target, id) },
-            onSave = { name, address, lat, lon, radius, fixed ->
-                viewModel.updatePlace(place, name, address, lat, lon, radius, fixed)
+            projectPlace = viewModel::projectPlaceForMap,
+            projectCoordinate = viewModel::projectCoordinateForMap,
+            normalizeMapCoordinate = viewModel::normalizeMapInteraction,
+            canUndoRepair = { viewModel.canUndoCoordinateRepair(place.id) },
+            onSave = { name, address, lat, lon, radius, fixed, centerChanged, radiusChanged ->
+                viewModel.updatePlace(
+                    place,
+                    name,
+                    address,
+                    lat,
+                    lon,
+                    radius,
+                    fixed,
+                    centerChanged,
+                    radiusChanged,
+                )
                 editPlace = null
             },
             onSaveAnnotations = { note, tags ->
                 viewModel.saveAnnotations(AnnotationTarget.PLACE, place.id, note, tags)
+            },
+            onRepair = { decision ->
+                val repaired = viewModel.repairCoordinates(place, decision)
+                if (repaired) editPlace = null
+                repaired
+            },
+            onUndoRepair = {
+                val undone = viewModel.undoCoordinateRepair(place)
+                if (undone) editPlace = null
+                undone
             },
             onDismiss = { editPlace = null },
         )

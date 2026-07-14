@@ -20,6 +20,7 @@ import net.extrawdw.apps.locationhistory.data.db.ConceptDao
 import net.extrawdw.apps.locationhistory.data.db.GeofenceDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
+import net.extrawdw.apps.locationhistory.data.db.PlaceCoordinateRepairDao
 import net.extrawdw.apps.locationhistory.data.db.SearchDao
 import net.extrawdw.apps.locationhistory.data.db.TagDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
@@ -69,6 +70,10 @@ object DatabaseModule {
 
     @Provides
     fun providePlaceDao(db: AppDatabase): PlaceDao = db.placeDao()
+
+    @Provides
+    fun providePlaceCoordinateRepairDao(db: AppDatabase): PlaceCoordinateRepairDao =
+        db.placeCoordinateRepairDao()
 
     @Provides
     fun provideVisitDao(db: AppDatabase): VisitDao = db.visitDao()

@@ -15,6 +15,7 @@ import net.extrawdw.apps.locationhistory.data.db.BackupDao
 import net.extrawdw.apps.locationhistory.data.db.BackupDirtyPartitionEntity
 import net.extrawdw.apps.locationhistory.data.enrich.DeviceStateCollector
 import net.extrawdw.apps.locationhistory.data.repo.PowerProfile
+import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.security.BackupCrypto
 import net.extrawdw.apps.locationhistory.security.CryptoHeader
@@ -71,6 +72,7 @@ class BackupEngine @Inject constructor(
     private val db: AppDatabase,
     private val backupDao: BackupDao,
     private val settingsRepository: SettingsRepository,
+    private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -367,6 +369,9 @@ class BackupEngine @Inject constructor(
                 }
             }
             restoreSnapshots(root, inventory.snapshots, cipher)
+            // A retained old partition can sit under a newer incremental manifest. Validate each
+            // candidate tuple by its own provenance rather than trusting the manifest version.
+            backupDao.clearUntrustedCandidates()
             // Repair trip->visit links that the backup itself carried broken (older exports, or data
             // imported from a previous app version): detach any trip endpoint whose visit is absent so
             // the restored DB is self-consistent rather than reproducing the dangling references.
@@ -378,6 +383,9 @@ class BackupEngine @Inject constructor(
             backupDao.clearAllDirty()
         }
         restoreSettings(root, inventory.snapshots, cipher)
+        // Old backups intentionally decode place provenance as UNKNOWN. Re-enable only rows that
+        // the frozen on-device classifier proves are exact identity, journaling the state change.
+        legacyPlaceCoordinates.classifySafeRows()
         reporter.progress(1f)
         AppLog.i(TAG, "restore complete: partitions=${inventory.partitions.size} rows=$rows")
         RestoreReport(inventory.partitions.size, rows).also {
@@ -482,6 +490,13 @@ class BackupEngine @Inject constructor(
         out += snapshotLines(
             dir,
             material,
+            SNAP_PLACE_COORDINATE_REPAIRS,
+            backupDao.allPlaceCoordinateRepairs(),
+            previous[SNAP_PLACE_COORDINATE_REPAIRS],
+        )
+        out += snapshotLines(
+            dir,
+            material,
             SNAP_GEOFENCES,
             backupDao.allGeofences(),
             previous[SNAP_GEOFENCES]
@@ -551,6 +566,14 @@ class BackupEngine @Inject constructor(
                 decodeLines(
                     it,
                     net.extrawdw.apps.locationhistory.data.db.PlaceEntity.serializer()
+                )
+            )
+        }
+        bytesOf(SNAP_PLACE_COORDINATE_REPAIRS)?.let {
+            backupDao.restorePlaceCoordinateRepairs(
+                decodeLines(
+                    it,
+                    net.extrawdw.apps.locationhistory.data.db.PlaceCoordinateRepairEntity.serializer(),
                 )
             )
         }
@@ -815,6 +838,7 @@ class BackupEngine @Inject constructor(
         private const val INVENTORY_BASE = "inventory"
         private const val SNAPSHOT_DIR = "snapshot"
         private const val SNAP_PLACES = "places"
+        private const val SNAP_PLACE_COORDINATE_REPAIRS = "place_coordinate_repairs"
         private const val SNAP_GEOFENCES = "geofences"
         private const val SNAP_TAGS = "tags"
         private const val SNAP_ENTITY_TAGS = "entity_tags"

@@ -3,11 +3,16 @@ package net.extrawdw.apps.locationhistory.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 import kotlinx.serialization.Serializable
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
+import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.NetworkTransport
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateRepairDecision
 import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TransportMode
 
@@ -106,15 +111,52 @@ data class PlaceEntity(
     /** When true the user has pinned the center/radius — the app must not auto-update them. */
     val fixed: Boolean = false,
     /**
-     * The place's *original* center at creation (Google's coordinates for a MAPS place, or the
-     * founding visit's centroid otherwise). It never changes, and is folded into the weighted
-     * center/radius recompute as a stable, non-decaying anchor so the place doesn't drift away from
-     * — or shrink below — its authoritative origin as visits accumulate. Null for places created
+     * The place's authoritative center/radius baseline (Google's normalized coordinate for a MAPS
+     * place, or the founding visit's centroid otherwise). Automatic visit maintenance does not
+     * move it; a deliberate center/radius edit replaces the corresponding baseline component so a
+     * later recompute cannot pull the place back toward stale geometry. Null for places created
      * before anchoring existed.
      */
     val anchorLatitude: Double? = null,
     val anchorLongitude: Double? = null,
     val anchorRadiusMeters: Double? = null,
+    /** Coordinate provenance guard. No UNKNOWN/legacy row may enter ordinary WGS calculations. */
+    @ColumnInfo(defaultValue = "'UNKNOWN'")
+    val coordinateState: PlaceCoordinateState = PlaceCoordinateState.UNKNOWN,
+)
+
+/**
+ * Encrypted, backup-retained before/after image for every legacy coordinate classification or
+ * repair. No FK is used: deleting a place must not erase the evidence needed to audit a repair.
+ */
+@Serializable
+@Entity(
+    tableName = "place_coordinate_repairs",
+    indices = [Index("placeId")],
+)
+data class PlaceCoordinateRepairEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val placeId: Long,
+    val originalLatitude: Double,
+    val originalLongitude: Double,
+    val originalRadiusMeters: Double,
+    val originalAnchorLatitude: Double?,
+    val originalAnchorLongitude: Double?,
+    val originalAnchorRadiusMeters: Double?,
+    val originalCoordinateState: PlaceCoordinateState,
+    val originalSource: PlaceSource,
+    val repairedLatitude: Double,
+    val repairedLongitude: Double,
+    val repairedRadiusMeters: Double,
+    val repairedAnchorLatitude: Double?,
+    val repairedAnchorLongitude: Double?,
+    val repairedAnchorRadiusMeters: Double?,
+    val repairedCoordinateState: PlaceCoordinateState,
+    val repairedSource: PlaceSource,
+    val decision: PlaceCoordinateRepairDecision,
+    val profileId: String?,
+    val repairedAtMs: Long,
+    val undoneAtMs: Long? = null,
 )
 
 /**
@@ -275,6 +317,11 @@ data class VisitEntity(
     /** Place-attribution confidence (match distance / confirmed status), NOT geometric quality. */
     val confidence: Float,
     val isOngoing: Boolean,
+    /** Candidate pair is promotable only when this is WGS84 and [candidateOrigin] is explicit. */
+    @ColumnInfo(defaultValue = "'UNKNOWN'")
+    val candidateCoordinateFrame: CandidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+    @ColumnInfo(defaultValue = "'UNKNOWN'")
+    val candidateOrigin: CandidateOrigin = CandidateOrigin.UNKNOWN,
 )
 
 /**

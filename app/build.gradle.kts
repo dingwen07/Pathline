@@ -81,6 +81,9 @@ android {
             System.getProperty("user.timezone")?.let { test.systemProperty("user.timezone", it) }
         }
     }
+    sourceSets {
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
+    }
 }
 
 // Emit Room schemas to a versioned directory so migrations can be validated/tested.
@@ -156,6 +159,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

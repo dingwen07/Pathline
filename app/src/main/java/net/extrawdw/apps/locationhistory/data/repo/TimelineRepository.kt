@@ -5,7 +5,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.AppDatabase
@@ -14,6 +17,8 @@ import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
+import net.extrawdw.apps.locationhistory.data.places.PlacesPort
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
@@ -42,7 +47,7 @@ class TimelineRepository @Inject constructor(
     private val placeDao: PlaceDao,
     private val sampleDao: LocationSampleDao,
     private val placeRepository: PlaceRepository,
-    private val placesGateway: net.extrawdw.apps.locationhistory.data.places.PlacesGateway,
+    private val placesPort: PlacesPort,
     private val locationRepository: LocationRepository,
     private val db: AppDatabase,
     private val writeLock: TimelineWriteLock,
@@ -50,11 +55,11 @@ class TimelineRepository @Inject constructor(
 
     /** Nearby Google Places suggestions for the confirm-place sheet. */
     suspend fun nearbyPlaceSuggestions(lat: Double, lon: Double): List<PlaceCandidate> =
-        placesGateway.nearbyPlaces(lat, lon)
+        placesPort.nearbyPlaces(Wgs84Coordinate(lat, lon))
 
     /** Free-text Google Places search, biased to the visit location. */
     suspend fun searchPlaces(query: String, lat: Double, lon: Double): List<PlaceCandidate> =
-        placesGateway.searchText(query, lat, lon)
+        placesPort.searchText(query, Wgs84Coordinate(lat, lon))
 
     /** Reactive timeline for a single local day, ordered chronologically. Uses time-overlap so a
      *  visit or trip that crosses midnight shows on both days it touches. */
@@ -102,7 +107,13 @@ class TimelineRepository @Inject constructor(
         db.withTransaction {
             val visit = visitDao.byId(visitId) ?: return@withTransaction
             val placeId = when (choice) {
-                is PlaceChoice.Existing -> choice.placeId
+                is PlaceChoice.Existing -> {
+                    val chosen = placeDao.byId(choice.placeId) ?: return@withTransaction
+                    if (chosen.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) {
+                        return@withTransaction
+                    }
+                    choice.placeId
+                }
                 is PlaceChoice.Google -> placeRepository.confirmPlace(
                     name = choice.candidate.name,
                     latitude = choice.candidate.latitude,
@@ -122,14 +133,20 @@ class TimelineRepository @Inject constructor(
                     source = PlaceSource.USER,
                 )
 
-                PlaceChoice.PromoteCandidate -> placeRepository.confirmPlace(
-                    name = visit.candidateName ?: "Place",
-                    latitude = visit.candidateLatitude ?: visit.centroidLatitude,
-                    longitude = visit.candidateLongitude ?: visit.centroidLongitude,
-                    googlePlaceId = visit.candidateGooglePlaceId,
-                    address = null, category = null,
-                    source = if (visit.candidateGooglePlaceId != null) PlaceSource.MAPS else PlaceSource.USER,
-                )
+                PlaceChoice.PromoteCandidate -> {
+                    val candidateCoordinate = visit.promotableCandidateCoordinate()
+                        ?: return@withTransaction
+                    val candidateName = visit.candidateName ?: return@withTransaction
+                    placeRepository.confirmPlace(
+                        name = candidateName,
+                        latitude = candidateCoordinate.latitude,
+                        longitude = candidateCoordinate.longitude,
+                        googlePlaceId = visit.candidateGooglePlaceId,
+                        address = null,
+                        category = null,
+                        source = PlaceSource.MAPS,
+                    )
+                }
             }
             // Link + confirm the visit first so the place recompute counts it as a (weighted) ground-truth
             // visit, then recompute the place center/radius as a recency/confirmation-weighted mean.
@@ -144,11 +161,15 @@ class TimelineRepository @Inject constructor(
                     candidateGooglePlaceId = null,
                     candidateLatitude = null,
                     candidateLongitude = null,
+                    candidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+                    candidateOrigin = CandidateOrigin.UNKNOWN,
                 ),
             )
             placeRepository.recordVisitToPlace(placeId)
             // Mark fixes outside the (updated) place circle as GPS drift (bogus).
-            placeRepository.byId(placeId)?.let { p ->
+            placeRepository.byId(placeId)
+                ?.takeIf { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
+                ?.let { p ->
                 locationRepository.excludeDriftOutside(
                     visit.startMs,
                     visit.endMs,
@@ -158,6 +179,15 @@ class TimelineRepository @Inject constructor(
                 )
             }
         }
+    }
+
+    private fun net.extrawdw.apps.locationhistory.data.db.VisitEntity.promotableCandidateCoordinate():
+            Wgs84Coordinate? {
+        if (candidateCoordinateFrame != CandidateCoordinateFrame.WGS84) return null
+        if (candidateOrigin != CandidateOrigin.MAPS) return null
+        val lat = candidateLatitude ?: return null
+        val lon = candidateLongitude ?: return null
+        return Wgs84Coordinate(lat, lon)
     }
 
     /**

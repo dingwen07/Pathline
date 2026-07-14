@@ -5,6 +5,7 @@ import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
@@ -43,6 +44,7 @@ class TimelineMergerTest {
                 id = 1, name = "Home", latitude = 1.0, longitude = 1.0, radiusMeters = 40.0,
                 category = null, source = PlaceSource.INFERRED, googlePlaceId = null, address = null,
                 confirmed = true, createdAtMs = 0L,
+                coordinateState = PlaceCoordinateState.WGS84_CANONICAL,
             ),
         )
     }

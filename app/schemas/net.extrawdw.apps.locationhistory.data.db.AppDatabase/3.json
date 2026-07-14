@@ -1,0 +1,1163 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "69264736e1d51103e1c3dd6264eca637",
+    "entities": [
+      {
+        "tableName": "location_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitude` REAL, `accuracy` REAL, `verticalAccuracyMeters` REAL, `bearing` REAL, `bearingAccuracyDegrees` REAL, `speed` REAL, `speedAccuracyMetersPerSecond` REAL, `provider` TEXT, `isMock` INTEGER NOT NULL, `elapsedRealtimeNanos` INTEGER NOT NULL, `satelliteCount` INTEGER, `batteryPct` INTEGER, `isCharging` INTEGER, `networkTransport` TEXT, `networkTypeName` TEXT, `cellSignalDbm` INTEGER, `hasCellService` INTEGER, `wifiSsid` TEXT, `wifiBssid` TEXT, `screenOn` INTEGER, `arActivity` TEXT, `arConfidence` INTEGER, `devicePhysicalState` TEXT NOT NULL, `devicePhysicalStateConfidence` REAL NOT NULL, `motionVariance` REAL, `stepCadenceHz` REAL, `gravityAngleDeltaDeg` REAL, `pressureHpa` REAL, `stepDelta` INTEGER, `includedInComputation` INTEGER NOT NULL, `exclusionReason` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMs",
+            "columnName": "timestampMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayEpoch",
+            "columnName": "dayEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "altitude",
+            "columnName": "altitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "accuracy",
+            "columnName": "accuracy",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "verticalAccuracyMeters",
+            "columnName": "verticalAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bearing",
+            "columnName": "bearing",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bearingAccuracyDegrees",
+            "columnName": "bearingAccuracyDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speed",
+            "columnName": "speed",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedAccuracyMetersPerSecond",
+            "columnName": "speedAccuracyMetersPerSecond",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isMock",
+            "columnName": "isMock",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedRealtimeNanos",
+            "columnName": "elapsedRealtimeNanos",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "satelliteCount",
+            "columnName": "satelliteCount",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "batteryPct",
+            "columnName": "batteryPct",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "isCharging",
+            "columnName": "isCharging",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "networkTransport",
+            "columnName": "networkTransport",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "networkTypeName",
+            "columnName": "networkTypeName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "cellSignalDbm",
+            "columnName": "cellSignalDbm",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "hasCellService",
+            "columnName": "hasCellService",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "wifiSsid",
+            "columnName": "wifiSsid",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "wifiBssid",
+            "columnName": "wifiBssid",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "screenOn",
+            "columnName": "screenOn",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "arActivity",
+            "columnName": "arActivity",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "arConfidence",
+            "columnName": "arConfidence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "devicePhysicalState",
+            "columnName": "devicePhysicalState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "devicePhysicalStateConfidence",
+            "columnName": "devicePhysicalStateConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "motionVariance",
+            "columnName": "motionVariance",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "stepCadenceHz",
+            "columnName": "stepCadenceHz",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gravityAngleDeltaDeg",
+            "columnName": "gravityAngleDeltaDeg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pressureHpa",
+            "columnName": "pressureHpa",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "stepDelta",
+            "columnName": "stepDelta",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "includedInComputation",
+            "columnName": "includedInComputation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exclusionReason",
+            "columnName": "exclusionReason",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_location_samples_dayEpoch",
+            "unique": false,
+            "columnNames": [
+              "dayEpoch"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_location_samples_dayEpoch` ON `${TABLE_NAME}` (`dayEpoch`)"
+          },
+          {
+            "name": "index_location_samples_timestampMs",
+            "unique": false,
+            "columnNames": [
+              "timestampMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_location_samples_timestampMs` ON `${TABLE_NAME}` (`timestampMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "places",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `category` TEXT, `types` TEXT, `source` TEXT NOT NULL, `googlePlaceId` TEXT, `address` TEXT, `confirmed` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `fixed` INTEGER NOT NULL, `anchorLatitude` REAL, `anchorLongitude` REAL, `anchorRadiusMeters` REAL, `coordinateState` TEXT NOT NULL DEFAULT 'UNKNOWN')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "radiusMeters",
+            "columnName": "radiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "types",
+            "columnName": "types",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "googlePlaceId",
+            "columnName": "googlePlaceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "confirmed",
+            "columnName": "confirmed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fixed",
+            "columnName": "fixed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorLatitude",
+            "columnName": "anchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "anchorLongitude",
+            "columnName": "anchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "anchorRadiusMeters",
+            "columnName": "anchorRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "coordinateState",
+            "columnName": "coordinateState",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_places_latitude",
+            "unique": false,
+            "columnNames": [
+              "latitude"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_places_latitude` ON `${TABLE_NAME}` (`latitude`)"
+          },
+          {
+            "name": "index_places_longitude",
+            "unique": false,
+            "columnNames": [
+              "longitude"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_places_longitude` ON `${TABLE_NAME}` (`longitude`)"
+          }
+        ]
+      },
+      {
+        "tableName": "place_coordinate_repairs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER NOT NULL, `originalLatitude` REAL NOT NULL, `originalLongitude` REAL NOT NULL, `originalRadiusMeters` REAL NOT NULL, `originalAnchorLatitude` REAL, `originalAnchorLongitude` REAL, `originalAnchorRadiusMeters` REAL, `originalCoordinateState` TEXT NOT NULL, `originalSource` TEXT NOT NULL, `repairedLatitude` REAL NOT NULL, `repairedLongitude` REAL NOT NULL, `repairedRadiusMeters` REAL NOT NULL, `repairedAnchorLatitude` REAL, `repairedAnchorLongitude` REAL, `repairedAnchorRadiusMeters` REAL, `repairedCoordinateState` TEXT NOT NULL, `repairedSource` TEXT NOT NULL, `decision` TEXT NOT NULL, `profileId` TEXT, `repairedAtMs` INTEGER NOT NULL, `undoneAtMs` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalLatitude",
+            "columnName": "originalLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalLongitude",
+            "columnName": "originalLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalRadiusMeters",
+            "columnName": "originalRadiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalAnchorLatitude",
+            "columnName": "originalAnchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "originalAnchorLongitude",
+            "columnName": "originalAnchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "originalAnchorRadiusMeters",
+            "columnName": "originalAnchorRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "originalCoordinateState",
+            "columnName": "originalCoordinateState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalSource",
+            "columnName": "originalSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repairedLatitude",
+            "columnName": "repairedLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repairedLongitude",
+            "columnName": "repairedLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repairedRadiusMeters",
+            "columnName": "repairedRadiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repairedAnchorLatitude",
+            "columnName": "repairedAnchorLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "repairedAnchorLongitude",
+            "columnName": "repairedAnchorLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "repairedAnchorRadiusMeters",
+            "columnName": "repairedAnchorRadiusMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "repairedCoordinateState",
+            "columnName": "repairedCoordinateState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repairedSource",
+            "columnName": "repairedSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decision",
+            "columnName": "decision",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileId",
+            "columnName": "profileId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "repairedAtMs",
+            "columnName": "repairedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "undoneAtMs",
+            "columnName": "undoneAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_place_coordinate_repairs_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_place_coordinate_repairs_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "visits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `placeId` INTEGER, `candidateName` TEXT, `candidateGooglePlaceId` TEXT, `candidateLatitude` REAL, `candidateLongitude` REAL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `centroidLatitude` REAL NOT NULL, `centroidLongitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `sampleCount` INTEGER NOT NULL, `reliability` REAL NOT NULL, `confirmed` INTEGER NOT NULL, `confidence` REAL NOT NULL, `isOngoing` INTEGER NOT NULL, `candidateCoordinateFrame` TEXT NOT NULL DEFAULT 'UNKNOWN', `candidateOrigin` TEXT NOT NULL DEFAULT 'UNKNOWN')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "candidateName",
+            "columnName": "candidateName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "candidateGooglePlaceId",
+            "columnName": "candidateGooglePlaceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "candidateLatitude",
+            "columnName": "candidateLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateLongitude",
+            "columnName": "candidateLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayEpoch",
+            "columnName": "dayEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "centroidLatitude",
+            "columnName": "centroidLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "centroidLongitude",
+            "columnName": "centroidLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "radiusMeters",
+            "columnName": "radiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reliability",
+            "columnName": "reliability",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmed",
+            "columnName": "confirmed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isOngoing",
+            "columnName": "isOngoing",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidateCoordinateFrame",
+            "columnName": "candidateCoordinateFrame",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          },
+          {
+            "fieldPath": "candidateOrigin",
+            "columnName": "candidateOrigin",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNKNOWN'"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_visits_startMs",
+            "unique": false,
+            "columnNames": [
+              "startMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_visits_startMs` ON `${TABLE_NAME}` (`startMs`)"
+          },
+          {
+            "name": "index_visits_dayEpoch",
+            "unique": false,
+            "columnNames": [
+              "dayEpoch"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_visits_dayEpoch` ON `${TABLE_NAME}` (`dayEpoch`)"
+          },
+          {
+            "name": "index_visits_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_visits_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "trips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fromVisitId` INTEGER, `toVisitId` INTEGER, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `dayEpoch` INTEGER NOT NULL, `mode` TEXT NOT NULL, `modeConfidence` REAL NOT NULL, `encodedPolyline` TEXT NOT NULL, `distanceMeters` REAL NOT NULL, `confirmed` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromVisitId",
+            "columnName": "fromVisitId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "toVisitId",
+            "columnName": "toVisitId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayEpoch",
+            "columnName": "dayEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modeConfidence",
+            "columnName": "modeConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encodedPolyline",
+            "columnName": "encodedPolyline",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmed",
+            "columnName": "confirmed",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trips_startMs",
+            "unique": false,
+            "columnNames": [
+              "startMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trips_startMs` ON `${TABLE_NAME}` (`startMs`)"
+          },
+          {
+            "name": "index_trips_dayEpoch",
+            "unique": false,
+            "columnNames": [
+              "dayEpoch"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trips_dayEpoch` ON `${TABLE_NAME}` (`dayEpoch`)"
+          }
+        ]
+      },
+      {
+        "tableName": "geofences",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`requestId` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `radiusMeters` REAL NOT NULL, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`requestId`))",
+        "fields": [
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "radiusMeters",
+            "columnName": "radiusMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "requestId"
+          ]
+        }
+      },
+      {
+        "tableName": "backup_dirty_partitions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`stream` TEXT NOT NULL, `weekStart` INTEGER NOT NULL, PRIMARY KEY(`stream`, `weekStart`))",
+        "fields": [
+          {
+            "fieldPath": "stream",
+            "columnName": "stream",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weekStart",
+            "columnName": "weekStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "stream",
+            "weekStart"
+          ]
+        }
+      },
+      {
+        "tableName": "tags",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `createdBy` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonicalName",
+            "columnName": "canonicalName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdBy",
+            "columnName": "createdBy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_tags_canonicalName",
+            "unique": true,
+            "columnNames": [
+              "canonicalName"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_tags_canonicalName` ON `${TABLE_NAME}` (`canonicalName`)"
+          }
+        ]
+      },
+      {
+        "tableName": "entity_tags",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`tagId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `createdBy` TEXT, PRIMARY KEY(`tagId`, `targetType`, `targetId`))",
+        "fields": [
+          {
+            "fieldPath": "tagId",
+            "columnName": "tagId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetType",
+            "columnName": "targetType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetId",
+            "columnName": "targetId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdBy",
+            "columnName": "createdBy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "tagId",
+            "targetType",
+            "targetId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_entity_tags_tagId",
+            "unique": false,
+            "columnNames": [
+              "tagId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_entity_tags_tagId` ON `${TABLE_NAME}` (`tagId`)"
+          },
+          {
+            "name": "index_entity_tags_targetType_targetId",
+            "unique": false,
+            "columnNames": [
+              "targetType",
+              "targetId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_entity_tags_targetType_targetId` ON `${TABLE_NAME}` (`targetType`, `targetId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "annotations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `content` TEXT NOT NULL, `updatedAtMs` INTEGER NOT NULL, `updatedBy` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetType",
+            "columnName": "targetType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetId",
+            "columnName": "targetId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedBy",
+            "columnName": "updatedBy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_annotations_targetType_targetId_kind",
+            "unique": true,
+            "columnNames": [
+              "targetType",
+              "targetId",
+              "kind"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_annotations_targetType_targetId_kind` ON `${TABLE_NAME}` (`targetType`, `targetId`, `kind`)"
+          }
+        ]
+      },
+      {
+        "tableName": "concepts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `canonicalName` TEXT NOT NULL, `displayName` TEXT NOT NULL, `kind` TEXT, `description` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `createdBy` TEXT, `updatedBy` TEXT, `archivedAtMs` INTEGER, `archivedBy` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonicalName",
+            "columnName": "canonicalName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdBy",
+            "columnName": "createdBy",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "updatedBy",
+            "columnName": "updatedBy",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "archivedBy",
+            "columnName": "archivedBy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_concepts_canonicalName",
+            "unique": true,
+            "columnNames": [
+              "canonicalName"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_concepts_canonicalName` ON `${TABLE_NAME}` (`canonicalName`)"
+          },
+          {
+            "name": "index_concepts_kind",
+            "unique": false,
+            "columnNames": [
+              "kind"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_concepts_kind` ON `${TABLE_NAME}` (`kind`)"
+          }
+        ]
+      },
+      {
+        "tableName": "concept_members",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`conceptId` INTEGER NOT NULL, `targetType` TEXT NOT NULL, `targetId` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `createdBy` TEXT, PRIMARY KEY(`conceptId`, `targetType`, `targetId`))",
+        "fields": [
+          {
+            "fieldPath": "conceptId",
+            "columnName": "conceptId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetType",
+            "columnName": "targetType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetId",
+            "columnName": "targetId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdBy",
+            "columnName": "createdBy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "conceptId",
+            "targetType",
+            "targetId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_concept_members_conceptId",
+            "unique": false,
+            "columnNames": [
+              "conceptId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_concept_members_conceptId` ON `${TABLE_NAME}` (`conceptId`)"
+          },
+          {
+            "name": "index_concept_members_targetType_targetId",
+            "unique": false,
+            "columnNames": [
+              "targetType",
+              "targetId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_concept_members_targetType_targetId` ON `${TABLE_NAME}` (`targetType`, `targetId`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '69264736e1d51103e1c3dd6264eca637')"
+    ]
+  }
+}

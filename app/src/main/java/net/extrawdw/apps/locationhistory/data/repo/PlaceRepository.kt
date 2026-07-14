@@ -4,7 +4,9 @@ import kotlinx.coroutines.flow.Flow
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
+import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceVisitCount
@@ -18,6 +20,7 @@ class PlaceRepository @Inject constructor(
     private val dao: PlaceDao,
     private val visitDao: VisitDao,
     private val annotationStore: AnnotationStore,
+    private val writeLock: TimelineWriteLock = TimelineWriteLock(),
 ) {
     fun observeAll(): Flow<List<PlaceEntity>> = dao.observeAll()
 
@@ -60,16 +63,57 @@ class PlaceRepository @Inject constructor(
                 address = address,
                 confirmed = true,
                 createdAtMs = System.currentTimeMillis(),
-                // Capture the creation center/radius as the immutable anchor (Google's coordinates for a
-                // MAPS place, else the founding visit centroid). Folded into every later recompute.
+                // Capture the authoritative baseline (normalized Google coordinate for a MAPS
+                // place, else the founding visit centroid). Deliberate edits can replace it.
                 anchorLatitude = latitude,
                 anchorLongitude = longitude,
                 anchorRadiusMeters = initialRadius,
+                coordinateState = PlaceCoordinateState.WGS84_CANONICAL,
             ),
         )
     }
 
-    suspend fun update(place: PlaceEntity) = dao.update(place)
+    /**
+     * Apply a place-editor save without letting a name/radius-only edit reinterpret legacy
+     * coordinates. Generic edits never change coordinate state; all legacy transitions go through
+     * the journaled [LegacyPlaceCoordinateManager].
+     */
+    suspend fun updateFromEditor(
+        original: PlaceEntity,
+        name: String,
+        address: String?,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Double,
+        fixed: Boolean,
+        centerChanged: Boolean,
+        radiusChanged: Boolean,
+    ) = writeLock.withLock {
+        val current = dao.byId(original.id) ?: return@withLock
+        val canMoveCenter = centerChanged &&
+                current.coordinateState == PlaceCoordinateState.WGS84_CANONICAL
+        val effectiveRadius = if (radiusChanged) radiusMeters else current.radiusMeters
+        val geometry = if (canMoveCenter) {
+            current.copy(
+                latitude = latitude,
+                longitude = longitude,
+                anchorLatitude = latitude,
+                anchorLongitude = longitude,
+            )
+        } else {
+            current
+        }
+        dao.update(
+            geometry.copy(
+                name = name,
+                address = address,
+                radiusMeters = effectiveRadius,
+                anchorRadiusMeters = if (radiusChanged) effectiveRadius
+                else geometry.anchorRadiusMeters,
+                fixed = fixed,
+            )
+        )
+    }
 
     suspend fun deleteIfUnvisited(placeId: Long): Boolean {
         val deleted = dao.deleteIfUnvisited(placeId) > 0
@@ -83,7 +127,7 @@ class PlaceRepository @Inject constructor(
      * Recompute a place's center and radius as a **weighted mean of its origin anchor + all its
      * visits' centroids/radii**, so it follows where the user recently goes without drifting from —
      * or shrinking below — its authoritative origin. Contributions:
-     *  - **origin anchor** — the immutable creation center/radius (Google's for a MAPS place),
+     *  - **origin anchor** — the authoritative baseline center/radius (Google's for a MAPS place),
      *    weighted by a fixed [Constants.PLACE_GOOGLE_ANCHOR_WEIGHT]/[Constants.PLACE_LOCAL_ANCHOR_WEIGHT]
      *    that does NOT decay; this keeps the radius from collapsing to the per-visit floor.
      *  - each **visit**, weighted by **recency** (halves every
@@ -99,6 +143,7 @@ class PlaceRepository @Inject constructor(
      */
     suspend fun recordVisitToPlace(placeId: Long, nowMs: Long = System.currentTimeMillis()) {
         val place = dao.byId(placeId) ?: return
+        if (place.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) return
         if (place.fixed) return
         val visits = visitDao.listForPlace(placeId)
 
@@ -107,9 +152,9 @@ class PlaceRepository @Inject constructor(
         var sumLon = 0.0
         var sumRadius = 0.0
 
-        // Immutable origin anchor (Google coordinates carry more authority than a local centroid).
+        // Authoritative baseline (Google coordinates carry more authority than a local centroid).
         if (place.anchorLatitude != null && place.anchorLongitude != null) {
-            val aw = if (place.googlePlaceId != null) Constants.PLACE_GOOGLE_ANCHOR_WEIGHT
+            val aw = if (place.source == PlaceSource.MAPS) Constants.PLACE_GOOGLE_ANCHOR_WEIGHT
             else Constants.PLACE_LOCAL_ANCHOR_WEIGHT
             sumW += aw
             sumLat += aw * place.anchorLatitude
@@ -132,6 +177,10 @@ class PlaceRepository @Inject constructor(
 
         val newRadius = (sumRadius / sumW)
             .coerceIn(Constants.PLACE_MIN_RADIUS_METERS, Constants.PLACE_MAX_RADIUS_METERS)
-        dao.updateCenterRadius(placeId, sumLat / sumW, sumLon / sumW, newRadius)
+        // A normalized Google provider baseline is authoritative: visits may expand/contract its
+        // radius but must not pull the POI center away. Local places retain adaptive centers.
+        val newLatitude = if (place.source == PlaceSource.MAPS) place.latitude else sumLat / sumW
+        val newLongitude = if (place.source == PlaceSource.MAPS) place.longitude else sumLon / sumW
+        dao.updateCenterRadius(placeId, newLatitude, newLongitude, newRadius)
     }
 }

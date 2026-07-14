@@ -353,6 +353,9 @@ internal class FakePlaceDao : PlaceDao {
 
     override suspend fun all(): List<PlaceEntity> = places.sortedBy { it.name }
 
+    override suspend fun unresolvedCoordinates(): List<PlaceEntity> =
+        places.filter { it.coordinateState != net.extrawdw.apps.locationhistory.core.PlaceCoordinateState.WGS84_CANONICAL }
+
     override fun observeById(id: Long): Flow<PlaceEntity?> =
         flowOf(places.firstOrNull { it.id == id })
 
@@ -360,6 +363,9 @@ internal class FakePlaceDao : PlaceDao {
         minLat: Double, minLon: Double, maxLat: Double, maxLon: Double,
     ): List<PlaceEntity> =
         places.filter { it.latitude in minLat..maxLat && it.longitude in minLon..maxLon }
+
+    override suspend fun withRadiusAbove(radiusMeters: Double): List<PlaceEntity> =
+        places.filter { it.radiusMeters > radiusMeters }
 
     override suspend fun updateCenterRadius(id: Long, lat: Double, lon: Double, radius: Double) {
         places.replaceAll {

@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
@@ -100,6 +101,7 @@ fun ConfirmPlaceSheet(
 
     val localNearby = remember(localPlaces) {
         localPlaces
+            .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
             .map {
                 it to Geo.distanceMeters(
                     anchor.latitude,

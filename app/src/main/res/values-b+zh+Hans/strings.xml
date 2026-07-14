@@ -488,4 +488,23 @@
     <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
     <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>
     <string name="api_notify_hold_text_many">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</string>
+    <string name="place_edit_location_write_disabled">在验证此 Google 地图运行环境的坐标输出前，暂时无法移动地点。名称、半径、锁定、笔记和标签仍可安全编辑。</string>
+    <string name="action_confirm">确认</string>
+    <string name="place_coordinate_review_badge">需要检查位置</string>
+    <string name="place_coordinate_review_message">此地点保存时尚未记录坐标来源。在您确认其坐标解释之前，Pathline 不会将该位置用于匹配、路线或 API 邻近查询。</string>
+    <string name="place_coordinate_legacy_preview">此地图仅预览旧版 Google 基准位置。访问标记来自规范 GPS 历史；两者的相对位置不代表数据已修复。</string>
+    <string name="place_repair_google_historical">使用旧版 Google 位置</string>
+    <string name="place_repair_google_wgs84">将 Google 基准视为 WGS‑84</string>
+    <string name="place_repair_saved_wgs84">将已保存中心视为 WGS‑84</string>
+    <string name="place_repair_saved_historical">将已保存中心视为旧版 Google 地图点</string>
+    <string name="place_repair_confirm_title">确认坐标解释</string>
+    <string name="place_repair_confirm_google_historical">如果此地点是在受影响的中国大陆 Android 运行环境中通过 Google Places 添加，请选择此项。Pathline 将使用冻结的 2026 年 7 月配置规范化原始 Google 基准，绝不会转换混合后的已保存中心。</string>
+    <string name="place_repair_confirm_google_wgs84">仅当您确定原始 Google 基准已经是 WGS‑84 时选择此项。数值将完全保持不变。</string>
+    <string name="place_repair_confirm_saved_wgs84">仅当您确定当前已保存中心已经是 WGS‑84 时选择此项。数值将完全保持不变。</string>
+    <string name="place_repair_confirm_saved_historical">仅当已保存中心是您在受影响的旧版 Google 地图上选择的纯位置点时，才选择此项。自动漂移或混合后的中心请勿使用。Pathline 将通过冻结的 2026 年 7 月地图配置规范化该点。</string>
+    <string name="place_repair_unsaved_warning">此页面中其他尚未保存的编辑不会被应用。</string>
+    <string name="place_repair_failed">操作完成前地点已发生变化。请重新打开并检查最新数值。</string>
+    <string name="place_coordinate_preview_google_baseline">下方地图仅预览已保存的 Google 基准。所选坐标解释可能会移动最终保存的圆圈。</string>
+    <string name="place_repair_undo">撤销坐标解释</string>
+    <string name="place_repair_undo_confirm">是否恢复修复日志中保存的原始坐标数值和来源状态？仅当之后没有其他几何更新时才能执行。</string>
 </resources>
