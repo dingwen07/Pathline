@@ -55,6 +55,62 @@ enum class PlaceSource(@param:StringRes val labelRes: Int) {
     INFERRED(R.string.place_source_inferred),
 }
 
+/** Whether a persisted place coordinate is safe to use as canonical WGS-84 domain geometry. */
+enum class PlaceCoordinateState {
+    /** New/local/repaired center and anchor are both canonical WGS-84. */
+    WGS84_CANONICAL,
+
+    /** Legacy Google row whose provider-frame anchor can be previewed, but not used in WGS math. */
+    LEGACY_GOOGLE_MAP_CENTER_AND_BASELINE,
+
+    /** Legacy center was averaged across provider and WGS operands; only its baseline is previewable. */
+    LEGACY_MIXED_CENTER_GOOGLE_MAP_BASELINE,
+
+    /** Provenance is insufficient; fail closed for geometry calculations and writes. */
+    UNKNOWN,
+}
+
+/** Auditable decision that changed only a place's coordinate interpretation/repair state. */
+enum class PlaceCoordinateRepairDecision {
+    UNKNOWN,
+
+    /** Both frozen historical transform directions were exact identity for every stored point. */
+    AUTO_OUTSIDE_MAINLAND_IDENTITY,
+
+    /** A local baseline exactly matches its linked WGS visit and was never moved. */
+    AUTO_UNTOUCHED_LOCAL_IDENTITY,
+
+    /** An untouched legacy Google center/baseline was classified for provider-frame preview only. */
+    AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE,
+
+    /** The center/radius exactly match Pathline's historical Google-anchor/WGS-visit blend. */
+    AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE,
+
+    /** User explicitly confirmed that the saved center is already WGS-84. */
+    SAVED_CENTER_AS_WGS84,
+
+    /** User confirmed the saved center was a pure point selected on the historical Google map. */
+    SAVED_CENTER_AS_HISTORICAL_MAP,
+
+    /** User explicitly confirmed that the saved Google baseline is already WGS-84. */
+    GOOGLE_BASELINE_AS_WGS84,
+
+    /** User selected the frozen July-2026 Android Places provider-frame hypothesis. */
+    GOOGLE_BASELINE_AS_HISTORICAL_PROVIDER,
+}
+
+/** Frame of a visit's complete, temporary candidate snapshot. */
+enum class CandidateCoordinateFrame {
+    WGS84,
+    UNKNOWN,
+}
+
+/** Business provenance of a visit's complete, temporary candidate snapshot. */
+enum class CandidateOrigin {
+    MAPS,
+    UNKNOWN,
+}
+
 /** The active network transport when a sample was recorded. */
 enum class NetworkTransport {
     WIFI,

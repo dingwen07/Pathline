@@ -211,8 +211,9 @@ object PathlineContract {
         const val ARCHIVED_ONLY: String = "only"
 
         /**
-         * Proximity filter on the [Places] collection: a `lat,lng` point (decimal degrees, e.g.
-         * `near=40.7235,-74.0354`). Only places within [RADIUS_M] meters are returned, **ordered
+         * Proximity filter on the [Places] collection: a canonical **WGS-84** `lat,lng` point
+         * (decimal degrees, e.g. `near=40.7235,-74.0354`; never a Google map/provider-frame
+         * coordinate). Only places within [RADIUS_M] meters are returned, **ordered
          * nearest-first** with [Places.DISTANCE_M] populated. Composable with [Q] (matches are
          * intersected; nearest-first ordering wins) and [IDS]. Scope is unchanged — the caller's
          * granted places, or the corpus under [Permissions.READ_ALL_PLACES]; proximity never
@@ -563,6 +564,11 @@ object PathlineContract {
      * A caller holding [Permissions.READ_ALL_PLACES] bypasses that scoping entirely and reads the
      * whole saved-place corpus.
      *
+     * A place whose pre-v3 coordinate interpretation is unresolved is still returned so a
+     * [Visits.PLACE_ID] remains resolvable. Its identity and metadata are available, but [LATITUDE],
+     * [LONGITUDE], and [RADIUS_METERS] are null until the user repairs it. Proximity mode omits these
+     * rows because no canonical distance can be computed.
+     *
      * Not time-windowed: [QueryParams.START] / [QueryParams.END] are ignored. Pass [QueryParams.IDS]
      * to fetch specific places, or omit it for all allowed places. With [QueryParams.Q] it becomes a
      * place search (see [QueryParams.Q]). Requires [Permissions.READ_TIMELINE] (grant-scoped) or
@@ -599,13 +605,16 @@ object PathlineContract {
         /** Google Places id this place is linked to, or null. */
         const val GOOGLE_PLACE_ID: String = "google_place_id"
 
-        /** Place center latitude. */
+        /** Canonical WGS-84 place-center latitude, or null while coordinates are unresolved. */
         const val LATITUDE: String = "latitude"
 
-        /** Place center longitude. */
+        /** Canonical WGS-84 place-center longitude, or null while coordinates are unresolved. */
         const val LONGITUDE: String = "longitude"
 
-        /** Approximate radius of the place in meters. */
+        /** Coordinate provenance; inspect this before consuming any geometry columns. */
+        const val COORDINATE_STATE: String = "coordinate_state"
+
+        /** Approximate radius in meters, or null while coordinates are unresolved. */
         const val RADIUS_METERS: String = "radius_meters"
 
         /**
@@ -618,7 +627,7 @@ object PathlineContract {
         @JvmField
         val COLUMNS: Array<String> = arrayOf(
             ID, NAME, ADDRESS, CATEGORY, TYPES, SOURCE, GOOGLE_PLACE_ID,
-            LATITUDE, LONGITUDE, RADIUS_METERS, DISTANCE_M,
+            LATITUDE, LONGITUDE, COORDINATE_STATE, RADIUS_METERS, DISTANCE_M,
         )
 
         /** Sub-collection path segment for a place's visit history (see [visitHistoryUri]). */

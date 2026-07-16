@@ -14,6 +14,7 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
+import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
 import net.extrawdw.apps.locationhistory.domain.PlaceMatcher
@@ -43,6 +44,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private val locationRepository: LocationRepository,
     private val recordingRepository: RecordingRepository,
     private val placeRepository: PlaceRepository,
+    private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
     private val visitDetector: VisitDetector,
     private val placeMatcher: PlaceMatcher,
     private val tripSegmenter: TripSegmenter,
@@ -54,6 +56,10 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         val day = inputData.getLong(KEY_DAY, TimeBuckets.dayEpoch(System.currentTimeMillis()))
         val reason = inputData.getString(KEY_REASON) ?: "unspecified"
         AppLog.i(TAG, "maintenance day=$day reason=$reason")
+
+        // Idempotent and lock-serialized: prove any exact-identity legacy rows before a rebuild
+        // considers place geometry. Ambiguous rows remain excluded.
+        legacyPlaceCoordinates.classifySafeRows()
 
         // Count and time each Google Places resolution -- the rebuild's only network I/O -- by
         // wrapping the place-match seam the (deliberately Firebase-free) rebuilder already takes,

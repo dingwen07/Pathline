@@ -120,7 +120,149 @@ object AppMigrations {
         }
     }
 
+    /**
+     * v2 -> v3: coordinate-boundary provenance for mainland Google Maps/Places compatibility.
+     *
+     * No recorded or place geometry is rewritten. Rows safely beyond the mainland mask's expanded
+     * global bounds are exact identity under the frozen historical hypothesis and can therefore be
+     * marked canonical without changing a double. The before/after state is journaled. The other
+     * narrow classification is an untouched MAPS row whose complete baseline is bit-for-bit its
+     * center; it remains provider-frame legacy and is not normalized. Differing/mixed MAPS rows and
+     * all rows whose provenance is ambiguous stay UNKNOWN.
+     * Complete Google candidates safely beyond the mainland transform envelope are retained as
+     * canonical because both historical frame interpretations are exact identity there. Every other
+     * legacy candidate is cleared because its request/result frame was not recorded.
+     */
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `places` ADD COLUMN `coordinateState` TEXT NOT NULL " +
+                        "DEFAULT 'UNKNOWN'",
+            )
+
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `place_coordinate_repairs` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`placeId` INTEGER NOT NULL, " +
+                        "`originalLatitude` REAL NOT NULL, " +
+                        "`originalLongitude` REAL NOT NULL, " +
+                        "`originalRadiusMeters` REAL NOT NULL, " +
+                        "`originalAnchorLatitude` REAL, " +
+                        "`originalAnchorLongitude` REAL, " +
+                        "`originalAnchorRadiusMeters` REAL, " +
+                        "`originalCoordinateState` TEXT NOT NULL, " +
+                        "`originalSource` TEXT NOT NULL, " +
+                        "`repairedLatitude` REAL NOT NULL, " +
+                        "`repairedLongitude` REAL NOT NULL, " +
+                        "`repairedRadiusMeters` REAL NOT NULL, " +
+                        "`repairedAnchorLatitude` REAL, " +
+                        "`repairedAnchorLongitude` REAL, " +
+                        "`repairedAnchorRadiusMeters` REAL, " +
+                        "`repairedCoordinateState` TEXT NOT NULL, " +
+                        "`repairedSource` TEXT NOT NULL, " +
+                        "`decision` TEXT NOT NULL, " +
+                        "`profileId` TEXT, " +
+                        "`repairedAtMs` INTEGER NOT NULL, " +
+                        "`undoneAtMs` INTEGER)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_place_coordinate_repairs_placeId` " +
+                        "ON `place_coordinate_repairs` (`placeId`)",
+            )
+
+            // The committed mainland geometry spans [18.1720757, 53.570963401] latitude and
+            // [73.606083281, 134.740415954] longitude. The transform's inverse edge guard is
+            // 0.02 degrees, so points beyond this expanded box are provably on the exact identity
+            // path without loading or approximating the polygon in SQLite.
+            val centerValid = "`latitude` BETWEEN -90.0 AND 90.0 AND " +
+                    "`longitude` BETWEEN -180.0 AND 180.0"
+            val centerOutside = "(`latitude` < 18.1520757 OR `latitude` > 53.590963401 " +
+                    "OR `longitude` < 73.586083281 OR `longitude` > 134.760415954)"
+            val anchorAbsent = "`anchorLatitude` IS NULL AND `anchorLongitude` IS NULL"
+            val anchorValidOutside = "(`anchorLatitude` IS NOT NULL AND " +
+                    "`anchorLongitude` IS NOT NULL AND `anchorLatitude` BETWEEN -90.0 AND 90.0 " +
+                    "AND `anchorLongitude` BETWEEN -180.0 AND 180.0 AND " +
+                    "(`anchorLatitude` < 18.1520757 OR `anchorLatitude` > 53.590963401 " +
+                    "OR `anchorLongitude` < 73.586083281 " +
+                    "OR `anchorLongitude` > 134.760415954))"
+            val safeOutside = "$centerValid AND $centerOutside AND " +
+                    "($anchorAbsent OR $anchorValidOutside)"
+            val journalColumns =
+                "(`placeId`, `originalLatitude`, `originalLongitude`, " +
+                        "`originalRadiusMeters`, `originalAnchorLatitude`, " +
+                        "`originalAnchorLongitude`, `originalAnchorRadiusMeters`, " +
+                        "`originalCoordinateState`, `originalSource`, `repairedLatitude`, `repairedLongitude`, " +
+                        "`repairedRadiusMeters`, `repairedAnchorLatitude`, " +
+                        "`repairedAnchorLongitude`, `repairedAnchorRadiusMeters`, " +
+                        "`repairedCoordinateState`, `repairedSource`, `decision`, `profileId`, `repairedAtMs`, " +
+                        "`undoneAtMs`)"
+            val unchangedValues =
+                "`id`, `latitude`, `longitude`, `radiusMeters`, `anchorLatitude`, " +
+                        "`anchorLongitude`, `anchorRadiusMeters`, 'UNKNOWN', `source`, `latitude`, " +
+                        "`longitude`, `radiusMeters`, `anchorLatitude`, `anchorLongitude`, " +
+                        "`anchorRadiusMeters`"
+            val historicalProfile =
+                "historical-google-android-places-5.2.0-mainland-2026-07"
+            val nowMs = "(CAST(strftime('%s','now') AS INTEGER) * 1000)"
+
+            db.execSQL(
+                "INSERT INTO `place_coordinate_repairs` $journalColumns SELECT " +
+                        "$unchangedValues, 'WGS84_CANONICAL', `source`, " +
+                        "'AUTO_OUTSIDE_MAINLAND_IDENTITY', '$historicalProfile', $nowMs, NULL " +
+                        "FROM `places` WHERE `coordinateState` = 'UNKNOWN' AND $safeOutside",
+            )
+            db.execSQL(
+                "UPDATE `places` SET `coordinateState` = 'WGS84_CANONICAL' " +
+                        "WHERE `coordinateState` = 'UNKNOWN' AND $safeOutside",
+            )
+
+            val directGoogle = "`coordinateState` = 'UNKNOWN' AND `source` = 'MAPS' " +
+                    "AND `anchorLatitude` IS NOT NULL AND `anchorLongitude` IS NOT NULL " +
+                    "AND `latitude` = `anchorLatitude` AND `longitude` = `anchorLongitude`"
+            db.execSQL(
+                "INSERT INTO `place_coordinate_repairs` $journalColumns SELECT " +
+                        "$unchangedValues, 'LEGACY_GOOGLE_MAP_CENTER_AND_BASELINE', " +
+                        "`source`, 'AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE', '$historicalProfile', " +
+                        "$nowMs, NULL FROM `places` WHERE $directGoogle",
+            )
+            db.execSQL(
+                "UPDATE `places` SET `coordinateState` = " +
+                        "'LEGACY_GOOGLE_MAP_CENTER_AND_BASELINE' " +
+                        "WHERE $directGoogle",
+            )
+
+            db.execSQL(
+                "ALTER TABLE `visits` ADD COLUMN `candidateCoordinateFrame` TEXT NOT NULL " +
+                        "DEFAULT 'UNKNOWN'",
+            )
+            db.execSQL(
+                "ALTER TABLE `visits` ADD COLUMN `candidateOrigin` TEXT NOT NULL " +
+                        "DEFAULT 'UNKNOWN'",
+            )
+            val safeIdentityCandidate =
+                "`candidateName` IS NOT NULL AND `candidateGooglePlaceId` IS NOT NULL AND " +
+                        "`candidateLatitude` IS NOT NULL AND `candidateLongitude` IS NOT NULL AND " +
+                        "`candidateLatitude` BETWEEN -90.0 AND 90.0 AND " +
+                        "`candidateLongitude` BETWEEN -180.0 AND 180.0 AND " +
+                        "(`candidateLatitude` < 18.1520757 OR " +
+                        "`candidateLatitude` > 53.590963401 OR " +
+                        "`candidateLongitude` < 73.586083281 OR " +
+                        "`candidateLongitude` > 134.760415954)"
+            db.execSQL(
+                "UPDATE `visits` SET `candidateCoordinateFrame` = 'WGS84', " +
+                        "`candidateOrigin` = 'MAPS' WHERE $safeIdentityCandidate",
+            )
+            db.execSQL(
+                "UPDATE `visits` SET `candidateName` = NULL, " +
+                        "`candidateGooglePlaceId` = NULL, `candidateLatitude` = NULL, " +
+                        "`candidateLongitude` = NULL, `candidateCoordinateFrame` = 'UNKNOWN', " +
+                        "`candidateOrigin` = 'UNKNOWN' WHERE NOT ($safeIdentityCandidate)",
+            )
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
+        MIGRATION_2_3,
     )
 }

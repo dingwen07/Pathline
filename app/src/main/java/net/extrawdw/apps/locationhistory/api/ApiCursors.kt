@@ -99,6 +99,7 @@ internal object ApiCursors {
     fun places(places: List<PlaceEntity>, distances: Map<Long, Double>? = null): Cursor {
         val cursor = MatrixCursor(PathlineContract.Places.COLUMNS, places.size)
         for (p in places) {
+            val geometry = p.apiGeometry()
             cursor.addRow(
                 arrayOf<Any?>(
                     p.id,
@@ -108,9 +109,10 @@ internal object ApiCursors {
                     p.types,
                     p.source.name,
                     p.googlePlaceId,
-                    p.latitude,
-                    p.longitude,
-                    p.radiusMeters,
+                    geometry.latitude,
+                    geometry.longitude,
+                    p.coordinateState.name,
+                    geometry.radiusMeters,
                     distances?.get(p.id),
                 ),
             )

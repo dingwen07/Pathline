@@ -2,7 +2,10 @@ package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Constants
+import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
@@ -124,6 +127,7 @@ class TimelineMerger @Inject constructor(
      */
     private suspend fun isInPlaceJitter(trip: TripEntity, placeId: Long): Boolean {
         val place = placeDao.byId(placeId) ?: return false
+        if (place.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) return false
         val radius = maxOf(place.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
         val fixes = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
         if (fixes.isEmpty()) {
@@ -318,12 +322,20 @@ class TimelineMerger @Inject constructor(
         val aDuration = (a.endMs - a.startMs).coerceAtLeast(1L).toDouble()
         val bDuration = (b.endMs - b.startMs).coerceAtLeast(1L).toDouble()
         val total = aDuration + bDuration
+        val placeId = a.placeId ?: b.placeId
+        // Candidate metadata is one atomic tuple. Never independently coalesce its name/id/pair.
+        val candidate = if (placeId != null) null else listOf(a, b)
+            .filter { it.hasCompleteCanonicalCandidate() }
+            .maxByOrNull { it.confidence }
         return a.copy(
-            placeId = a.placeId ?: b.placeId,
-            candidateName = a.candidateName ?: b.candidateName,
-            candidateGooglePlaceId = a.candidateGooglePlaceId ?: b.candidateGooglePlaceId,
-            candidateLatitude = a.candidateLatitude ?: b.candidateLatitude,
-            candidateLongitude = a.candidateLongitude ?: b.candidateLongitude,
+            placeId = placeId,
+            candidateName = candidate?.candidateName,
+            candidateGooglePlaceId = candidate?.candidateGooglePlaceId,
+            candidateLatitude = candidate?.candidateLatitude,
+            candidateLongitude = candidate?.candidateLongitude,
+            candidateCoordinateFrame = candidate?.candidateCoordinateFrame
+                ?: CandidateCoordinateFrame.UNKNOWN,
+            candidateOrigin = candidate?.candidateOrigin ?: CandidateOrigin.UNKNOWN,
             startMs = startMs,
             endMs = endMs,
             centroidLatitude = (a.centroidLatitude * aDuration + b.centroidLatitude * bDuration) / total,
@@ -334,6 +346,11 @@ class TimelineMerger @Inject constructor(
             isOngoing = a.isOngoing || b.isOngoing,
         )
     }
+
+    private fun VisitEntity.hasCompleteCanonicalCandidate(): Boolean =
+        candidateName != null && candidateLatitude != null && candidateLongitude != null &&
+                candidateCoordinateFrame == CandidateCoordinateFrame.WGS84 &&
+                candidateOrigin == CandidateOrigin.MAPS
 
     private suspend fun tripExistsBetween(
         spanStartMs: Long,

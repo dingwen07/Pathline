@@ -100,7 +100,11 @@ fun rememberAnnotationEditState(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifier) {
+fun AnnotationEditorBody(
+    state: AnnotationEditState,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     var tagInput by remember { mutableStateOf("") }
     fun commitTag() {
         state.addTag(tagInput)
@@ -117,6 +121,7 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
                 .fillMaxWidth()
                 .padding(top = 4.dp),
             minLines = 3,
+            enabled = enabled,
         )
 
         SectionLabel(
@@ -134,6 +139,7 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
                     InputChip(
                         selected = false,
                         onClick = { state.removeTag(tag) },
+                        enabled = enabled,
                         label = { Text(tag) },
                         trailingIcon = {
                             Icon(
@@ -153,10 +159,14 @@ fun AnnotationEditorBody(state: AnnotationEditState, modifier: Modifier = Modifi
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp),
+            enabled = enabled,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { commitTag() }),
             trailingIcon = {
-                IconButton(onClick = { commitTag() }, enabled = tagInput.isNotBlank()) {
+                IconButton(
+                    onClick = { commitTag() },
+                    enabled = enabled && tagInput.isNotBlank(),
+                ) {
                     Icon(
                         Icons.Filled.Add,
                         contentDescription = stringResource(R.string.annotations_add_tag),

@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.extrawdw.apps.locationhistory.BuildConfig
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import java.io.IOException
 import java.security.MessageDigest
@@ -105,6 +106,12 @@ class RoutesGateway @Inject constructor(
         request: TravelTimeRequest,
         nowMs: Long,
     ): List<TravelTimeEstimate> = withContext(Dispatchers.IO) {
+        require(origin.coordinateState == PlaceCoordinateState.WGS84_CANONICAL) {
+            "origin place coordinate is not canonical"
+        }
+        require(destination.coordinateState == PlaceCoordinateState.WGS84_CANONICAL) {
+            "destination place coordinate is not canonical"
+        }
         val key = BuildConfig.MAPS_API_KEY
         check(key.isNotBlank()) { "Google Maps API key is not configured" }
 

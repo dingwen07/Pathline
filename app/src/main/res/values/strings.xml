@@ -521,4 +521,23 @@
     <string name="api_notify_hold_text_one">%1$s has access to your timeline and location history.</string>
     <!-- "<app> and <N> more apps have access…" -->
     <string name="api_notify_hold_text_many">%1$s and %2$d more apps have access to your timeline and location history.</string>
+    <string name="place_edit_location_write_disabled">Location moves are disabled in this region until this Google map runtime’s coordinate output is verified. Name, radius, lock, note, and tag edits are still safe.</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="place_coordinate_review_badge">Location review required</string>
+    <string name="place_coordinate_review_message">This place was saved before coordinate provenance was recorded. Pathline will not use its location for matching, routes, or API proximity until you confirm its interpretation.</string>
+    <string name="place_coordinate_legacy_preview">The map is a legacy Google-baseline preview. Visit markers are canonical GPS history; do not treat their relative position as repaired data.</string>
+    <string name="place_repair_google_historical">Use the historical Google location</string>
+    <string name="place_repair_google_wgs84">Treat the Google baseline as WGS‑84</string>
+    <string name="place_repair_saved_wgs84">Treat the saved center as WGS‑84</string>
+    <string name="place_repair_saved_historical">Treat the saved center as an old Google-map point</string>
+    <string name="place_repair_confirm_title">Confirm coordinate interpretation</string>
+    <string name="place_repair_confirm_google_historical">Choose this for a place added through Google Places on the affected mainland Android runtime. Pathline will normalize the original Google baseline with the frozen July 2026 profile; it will never transform the mixed saved center.</string>
+    <string name="place_repair_confirm_google_wgs84">Choose this only if the original Google baseline was already WGS‑84. The numbers will be kept exactly as stored.</string>
+    <string name="place_repair_confirm_saved_wgs84">Choose this only if you know the current saved center is already WGS‑84. The numbers will be kept exactly as stored.</string>
+    <string name="place_repair_confirm_saved_historical">Choose this only if the saved center was a pure point selected on the affected old Google map. Do not choose it for an automatically drifting or mixed center. Pathline will normalize that point with the frozen July 2026 map profile.</string>
+    <string name="place_repair_unsaved_warning">Other unsaved edits in this screen will not be applied.</string>
+    <string name="place_repair_failed">The place changed before this operation completed. Reopen it and review the latest values.</string>
+    <string name="place_coordinate_preview_google_baseline">The map below previews only the stored Google baseline. The selected interpretation can move the final saved ring.</string>
+    <string name="place_repair_undo">Undo coordinate interpretation</string>
+    <string name="place_repair_undo_confirm">Restore the exact coordinate numbers and provenance state saved in the repair journal? This is allowed only if no later geometry update has changed the repaired place.</string>
 </resources>

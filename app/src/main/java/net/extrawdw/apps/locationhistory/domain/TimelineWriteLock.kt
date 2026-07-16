@@ -16,6 +16,7 @@ import javax.inject.Singleton
  *  - the whole rebuild invocation in `TimelineMaintenanceWorker`;
  *  - `TimelineRepository.confirmVisitPlace` / `confirmTripMode`;
  *  - [TimelineEditor.splitItem] / [TimelineEditor.convertItemType].
+ *  - place editor writes and legacy coordinate classification/repair.
  * None of these calls into another locked entry point — the editor only *enqueues* maintenance
  * work (which runs later, in the worker, on its own lock acquisition) — so the non-reentrant mutex
  * cannot self-deadlock. Keep it that way when adding callers.
