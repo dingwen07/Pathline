@@ -53,6 +53,9 @@ object Constants {
     const val PLACE_MIN_RADIUS_METERS = 25.0
     const val PLACE_MAX_RADIUS_METERS = 150.0
 
+    /** Largest radius offered by the manual editor. Values above the automatic cap stay fixed. */
+    const val PLACE_MANUAL_MAX_RADIUS_METERS = 300.0
+
     /** Samples worse than this accuracy (m) are ignored when computing a place's center/radius. */
     const val SAMPLE_ACCURACY_GATE_METERS = 60f
 

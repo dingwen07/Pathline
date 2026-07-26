@@ -33,6 +33,9 @@ interface PlaceDao {
     @Query("SELECT * FROM places ORDER BY name")
     suspend fun all(): List<PlaceEntity>
 
+    @Query("SELECT * FROM places WHERE coordinateState != 'WGS84_CANONICAL' ORDER BY id")
+    suspend fun unresolvedCoordinates(): List<PlaceEntity>
+
     @Query("SELECT * FROM places WHERE id = :id")
     fun observeById(id: Long): Flow<PlaceEntity?>
 
@@ -47,6 +50,10 @@ interface PlaceDao {
     suspend fun inBoundingBox(
         minLat: Double, minLon: Double, maxLat: Double, maxLon: Double,
     ): List<PlaceEntity>
+
+    /** Restored/manual outliers larger than the normal prefilter must still reach exact matching. */
+    @Query("SELECT * FROM places WHERE radiusMeters > :radiusMeters")
+    suspend fun withRadiusAbove(radiusMeters: Double): List<PlaceEntity>
 
     @Query("UPDATE places SET latitude = :lat, longitude = :lon, radiusMeters = :radius WHERE id = :id")
     suspend fun updateCenterRadius(id: Long, lat: Double, lon: Double, radius: Double)

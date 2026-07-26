@@ -45,11 +45,14 @@ private const val DialogTransitionMs = 220
  * animation plays before [action] runs (e.g. the parent dropping this dialog from composition).
  *
  * @param dim when false the platform scrim is cleared (for dialogs stacked over another dialog).
+ * @param dismissEnabled when false, close actions and predictive back are held while an atomic
+ * operation is in flight.
  */
 @Composable
 fun FullScreenDialog(
     onDismiss: () -> Unit,
     dim: Boolean = true,
+    dismissEnabled: Boolean = true,
     content: @Composable (requestClose: (() -> Unit) -> Unit) -> Unit,
 ) {
     // openness: 1 = fully shown, 0 = gone. Starts at 0 and animates up on first composition (open);
@@ -73,7 +76,7 @@ fun FullScreenDialog(
     )
 
     fun requestClose(andThen: () -> Unit) {
-        if (!visible) return
+        if (!dismissEnabled || !visible) return
         pendingAction = andThen
         visible = false
     }
@@ -92,12 +95,12 @@ fun FullScreenDialog(
     )
 
     Dialog(
-        onDismissRequest = { requestClose(onDismiss) },
+        onDismissRequest = { if (dismissEnabled) requestClose(onDismiss) },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false),
     ) {
         if (!dim) DisableDialogDim()
 
-        PredictiveBackHandler(enabled = visible) { events ->
+        PredictiveBackHandler(enabled = visible && dismissEnabled) { events ->
             try {
                 events.collect { event ->
                     gestureInProgress = true

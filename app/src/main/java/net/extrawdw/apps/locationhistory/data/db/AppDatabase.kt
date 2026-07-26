@@ -8,6 +8,7 @@ import androidx.room.TypeConverters
     entities = [
         LocationSampleEntity::class,
         PlaceEntity::class,
+        PlaceCoordinateRepairEntity::class,
         VisitEntity::class,
         TripEntity::class,
         GeofenceEntity::class,
@@ -18,13 +19,14 @@ import androidx.room.TypeConverters
         ConceptEntity::class,
         ConceptMemberEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun locationSampleDao(): LocationSampleDao
     abstract fun placeDao(): PlaceDao
+    abstract fun placeCoordinateRepairDao(): PlaceCoordinateRepairDao
     abstract fun visitDao(): VisitDao
     abstract fun tripDao(): TripDao
     abstract fun geofenceDao(): GeofenceDao
@@ -38,7 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
         const val NAME = "pathline.db"
 
         /** Must equal the `version` above; used by the backup engine for restore compatibility. */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         /**
          * SQL that creates the backup dirty-partition triggers. Run from a

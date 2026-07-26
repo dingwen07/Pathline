@@ -5,7 +5,9 @@ import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
-import net.extrawdw.apps.locationhistory.data.places.PlacesGateway
+import net.extrawdw.apps.locationhistory.data.places.PlacesPort
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,7 +32,7 @@ sealed interface PlaceMatch {
 @Singleton
 class PlaceMatcher @Inject constructor(
     private val placeDao: PlaceDao,
-    private val placesGateway: PlacesGateway,
+    private val placesPort: PlacesPort,
 ) {
 
     suspend fun match(lat: Double, lon: Double): PlaceMatch {
@@ -43,7 +45,10 @@ class PlaceMatcher @Inject constructor(
             return PlaceMatch.Local(place, confidence.toFloat())
         }
 
-        val candidate = placesGateway.nearestPlace(lat, lon, Constants.PLACE_MATCH_RADIUS_METERS)
+        val candidate = placesPort.nearestPlace(
+            Wgs84Coordinate(lat, lon),
+            Constants.PLACE_MATCH_RADIUS_METERS,
+        )
         return if (candidate != null) {
             PlaceMatch.Candidate(candidate, confidence = 0.5f) // unconfirmed by definition
         } else {
@@ -53,8 +58,14 @@ class PlaceMatcher @Inject constructor(
 
     /** @return the nearest local place within the match radius and its distance, or null. */
     private suspend fun nearestLocalPlace(lat: Double, lon: Double): Pair<PlaceEntity, Double>? {
-        val box = Geo.boundingBox(lat, lon, Constants.PLACE_MATCH_RADIUS_METERS)
-        return placeDao.inBoundingBox(box[0], box[1], box[2], box[3])
+        val prefilterRadius = Constants.PLACE_MANUAL_MAX_RADIUS_METERS
+        val box = Geo.boundingBox(lat, lon, prefilterRadius)
+        val candidates = (
+                placeDao.inBoundingBox(box[0], box[1], box[2], box[3]) +
+                        placeDao.withRadiusAbove(prefilterRadius)
+                ).distinctBy { it.id }
+        return candidates
+            .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
             .map { it to Geo.distanceMeters(lat, lon, it.latitude, it.longitude) }
             .filter {
                 it.second <= maxOf(

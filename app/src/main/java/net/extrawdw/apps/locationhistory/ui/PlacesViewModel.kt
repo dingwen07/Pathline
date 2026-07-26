@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.tasks.CancellationTokenSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -20,10 +19,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateRepairDecision
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
+import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
@@ -38,6 +41,8 @@ class PlacesViewModel @Inject constructor(
     private val timelineRepository: TimelineRepository,
     private val locationRepository: LocationRepository,
     private val annotationStore: AnnotationStore,
+    private val mapProjector: GoogleMapProjector,
+    private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
 ) : ViewModel() {
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
@@ -64,9 +69,9 @@ class PlacesViewModel @Inject constructor(
     suspend fun searchPlaces(query: String, lat: Double, lon: Double): List<PlaceCandidate> =
         timelineRepository.searchPlaces(query, lat, lon)
 
-    suspend fun placeSearchAnchor(): LatLng? =
+    suspend fun placeSearchAnchor(): Wgs84Coordinate? =
         currentLatLng() ?: locationRepository.mostRecent()
-            ?.let { LatLng(it.latitude, it.longitude) }
+            ?.let { Wgs84Coordinate(it.latitude, it.longitude) }
 
     fun addGooglePlace(candidate: PlaceCandidate) = viewModelScope.launch {
         placeRepository.confirmPlace(
@@ -90,18 +95,41 @@ class PlacesViewModel @Inject constructor(
         longitude: Double,
         radiusMeters: Double,
         fixed: Boolean,
+        centerChanged: Boolean,
+        radiusChanged: Boolean,
     ) = viewModelScope.launch {
-        placeRepository.update(
-            place.copy(
-                name = name,
-                address = address,
-                latitude = latitude,
-                longitude = longitude,
-                radiusMeters = radiusMeters,
-                fixed = fixed,
-            ),
+        placeRepository.updateFromEditor(
+            place,
+            name,
+            address,
+            latitude,
+            longitude,
+            radiusMeters,
+            fixed,
+            centerChanged,
+            radiusChanged,
         )
     }
+
+    fun projectPlaceForMap(place: PlaceEntity): ProjectedPlaceCircle? =
+        mapProjector.placePreviewCircle(place)
+
+    fun projectCoordinateForMap(value: Wgs84Coordinate): GoogleMapCoordinate? =
+        mapProjector.coordinate(value)
+
+    fun normalizeMapInteraction(value: GoogleMapCoordinate): Wgs84Coordinate? =
+        mapProjector.fromMap(value)
+
+    suspend fun canUndoCoordinateRepair(placeId: Long): Boolean =
+        legacyPlaceCoordinates.hasUndo(placeId)
+
+    suspend fun repairCoordinates(
+        place: PlaceEntity,
+        decision: PlaceCoordinateRepairDecision,
+    ): Boolean = legacyPlaceCoordinates.repair(place, decision)
+
+    suspend fun undoCoordinateRepair(place: PlaceEntity): Boolean =
+        legacyPlaceCoordinates.undo(place)
 
     fun deleteIfUnvisited(placeId: Long) = viewModelScope.launch {
         placeRepository.deleteIfUnvisited(placeId)
@@ -116,7 +144,7 @@ class PlacesViewModel @Inject constructor(
     fun saveAnnotations(target: AnnotationTarget, id: Long, note: String, tags: List<String>) =
         viewModelScope.launch { annotationStore.saveEdits(target, id, note, tags) }
 
-    private suspend fun currentLatLng(): LatLng? {
+    private suspend fun currentLatLng(): Wgs84Coordinate? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) return null
@@ -124,7 +152,7 @@ class PlacesViewModel @Inject constructor(
             fusedClient.getCurrentLocation(
                 Priority.PRIORITY_HIGH_ACCURACY,
                 CancellationTokenSource().token
-            ).await()?.let { LatLng(it.latitude, it.longitude) }
+            ).await()?.let { Wgs84Coordinate(it.latitude, it.longitude) }
         }.getOrNull()
     }
 }

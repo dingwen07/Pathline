@@ -2,6 +2,8 @@ package net.extrawdw.apps.locationhistory.domain
 
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
@@ -198,7 +200,12 @@ class TimelineEditor @Inject constructor(
     private fun applyMatch(visit: VisitEntity, match: PlaceMatch?): VisitEntity = when (match) {
         is PlaceMatch.Local -> visit.copy(
             placeId = match.place.id,
-            candidateName = match.place.name
+            candidateName = null,
+            candidateGooglePlaceId = null,
+            candidateLatitude = null,
+            candidateLongitude = null,
+            candidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+            candidateOrigin = CandidateOrigin.UNKNOWN,
         )
 
         is PlaceMatch.Candidate -> visit.copy(
@@ -206,8 +213,17 @@ class TimelineEditor @Inject constructor(
             candidateGooglePlaceId = match.candidate.googlePlaceId,
             candidateLatitude = match.candidate.latitude,
             candidateLongitude = match.candidate.longitude,
+            candidateCoordinateFrame = CandidateCoordinateFrame.WGS84,
+            candidateOrigin = match.candidate.origin,
         )
 
-        PlaceMatch.None, null -> visit
+        PlaceMatch.None, null -> visit.copy(
+            candidateName = null,
+            candidateGooglePlaceId = null,
+            candidateLatitude = null,
+            candidateLongitude = null,
+            candidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+            candidateOrigin = CandidateOrigin.UNKNOWN,
+        )
     }
 }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessDao
 import net.extrawdw.apps.locationhistory.data.db.ApiAccessEventEntity
@@ -479,7 +480,9 @@ class PathlineProvider : ContentProvider() {
             entryPoint.apiPlaceGrantDao().grantedAmong(caller.pkgOrUnknown, requested)
         }
         if (allowed.isEmpty()) return emptyMap()
-        return entryPoint.placeDao().byIds(allowed).associateBy { it.id }
+        return entryPoint.placeDao().byIds(allowed)
+            .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
+            .associateBy { it.id }
     }
 
     private fun travelTimeRequest(uri: Uri, now: Long): TravelTimeRequest {
@@ -603,6 +606,7 @@ class PathlineProvider : ContentProvider() {
                     else entryPoint.placeDao()
                         .inBoundingBox(box.latMin, box.lngMin, box.latMax, box.lngMax)
                 var nearby = candidates
+                    .filter { it.coordinateState == PlaceCoordinateState.WGS84_CANONICAL }
                     .map { it to GeoSearch.haversineMeters(lat, lng, it.latitude, it.longitude) }
                     .filter { (_, d) -> d <= radius }
                     .sortedBy { (_, d) -> d }
@@ -658,11 +662,17 @@ class PathlineProvider : ContentProvider() {
                 val allowed: Set<Long> =
                     if (allPlaces || matched.isEmpty()) matched
                     else grantDao.grantedAmong(pkg, matched.toList()).toSet()
-                val filtered = matched.filter {
+                val scoped = matched.filter {
                     it in allowed && (requested == null || it in requested.toSet())
-                }.let { if (limit == null) it else it.take(limit) }
-                if (filtered.isEmpty()) emptyList()
-                else sortByIdOrder(entryPoint.placeDao().byIds(filtered), filtered) { it.id }
+                }
+                if (scoped.isEmpty()) {
+                    emptyList()
+                } else {
+                    val byId = entryPoint.placeDao().byIds(scoped).associateBy { it.id }
+                    val filtered = scoped.filter(byId::containsKey)
+                        .let { if (limit == null) it else it.take(limit) }
+                    filtered.mapNotNull(byId::get)
+                }
             }
         }
         val cursor = ApiCursors.places(places, distances)

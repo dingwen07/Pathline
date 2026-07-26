@@ -43,3 +43,5 @@ google-services.json
 
 # macOS
 .DS_Store
+
+/docs/notes/

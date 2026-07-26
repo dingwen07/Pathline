@@ -3,6 +3,8 @@ package net.extrawdw.apps.locationhistory.domain
 import net.extrawdw.apps.locationhistory.core.Constants
 import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
@@ -496,7 +498,12 @@ internal class TimelineRebuilder(
     private fun applyMatch(visit: VisitEntity, match: PlaceMatch?): VisitEntity = when (match) {
         is PlaceMatch.Local -> visit.copy(
             placeId = match.place.id,
-            candidateName = match.place.name,
+            candidateName = null,
+            candidateGooglePlaceId = null,
+            candidateLatitude = null,
+            candidateLongitude = null,
+            candidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+            candidateOrigin = CandidateOrigin.UNKNOWN,
             confidence = match.confidence,
             // Maintenance can be highly confident, but user/editor confirmations are the only
             // ground truth rows that should survive future rebuilds unchanged.
@@ -508,11 +515,20 @@ internal class TimelineRebuilder(
             candidateGooglePlaceId = match.candidate.googlePlaceId,
             candidateLatitude = match.candidate.latitude,
             candidateLongitude = match.candidate.longitude,
+            candidateCoordinateFrame = CandidateCoordinateFrame.WGS84,
+            candidateOrigin = match.candidate.origin,
             confidence = match.confidence,
             confirmed = false,
         )
 
-        PlaceMatch.None, null -> visit
+        PlaceMatch.None, null -> visit.copy(
+            candidateName = null,
+            candidateGooglePlaceId = null,
+            candidateLatitude = null,
+            candidateLongitude = null,
+            candidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
+            candidateOrigin = CandidateOrigin.UNKNOWN,
+        )
     }
 
     private fun VisitCandidate.overlaps(startMs: Long, endMs: Long): Boolean =

@@ -7,6 +7,10 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import net.extrawdw.apps.locationhistory.data.places.PlacesGateway
+import net.extrawdw.apps.locationhistory.data.places.PlacesPort
+import net.extrawdw.apps.locationhistory.core.coordinates.MainlandChinaRegion
+import net.extrawdw.apps.locationhistory.core.coordinates.MainlandRegionClassifier
 import javax.inject.Singleton
 
 @Module
@@ -17,4 +21,13 @@ object AppModule {
     @Singleton
     fun provideWorkManager(@ApplicationContext context: Context): WorkManager =
         WorkManager.getInstance(context)
+
+    @Provides
+    @Singleton
+    fun providePlacesPort(gateway: PlacesGateway): PlacesPort = gateway
+
+    @Provides
+    @Singleton
+    fun provideMainlandRegionClassifier(region: MainlandChinaRegion): MainlandRegionClassifier =
+        region
 }

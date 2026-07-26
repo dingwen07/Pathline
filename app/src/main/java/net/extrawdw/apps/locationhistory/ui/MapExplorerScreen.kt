@@ -91,13 +91,25 @@ fun MapExplorerScreen(
 
     // Without a track line the dots stand on their own, so shrink them further to cut clutter.
     val density = LocalDensity.current
-    val drawingTrack = state.trackPoints.size >= 2
+    val drawingTrack = state.trackPaths.any { it.size >= 2 }
     val dotSizePx =
         with(density) { (if (drawingTrack) DOT_DP else DOT_DP_NO_TRACK).dp.toPx() }
-    val dotIndex = remember(state.dotPoints) { MapDotIndex(state.dotPoints) }
+    val sdkDotPoints = remember(state.dotPoints, state.profileId) {
+        state.dotPoints.map { it.toLatLng() }
+    }
+    val dotIndex = remember(sdkDotPoints) { MapDotIndex(sdkDotPoints) }
     val cameraPosition = cameraPositionState.position
     val cameraMoving = cameraPositionState.isMoving
     val overlayFrame = remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(state.profileId) {
+        val previous = viewModel.cameraProfileId
+        if (previous != null && previous != state.profileId) {
+            viewModel.lastFittedPoints = null
+            viewModel.cameraFramed = false
+        }
+        viewModel.cameraProfileId = state.profileId
+    }
 
     LaunchedEffect(cameraMoving) {
         while (cameraMoving) {
@@ -112,19 +124,26 @@ fun MapExplorerScreen(
         if (viewModel.cameraFramed) return@LaunchedEffect
         val target = viewModel.initialCameraTarget()
         if (!viewModel.cameraFramed && target != null) {
-            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(target, 14f))
+            cameraPositionState.move(
+                CameraUpdateFactory.newLatLngZoom(target.toLatLng(), 14f)
+            )
         }
     }
 
     // Fit the camera when the plotted dataset actually changes (range switch / fresh load). Skipped
-    // on a plain tab re-entry, where the points are the same instance, so the user's zoom is kept.
+    // on a plain tab re-entry. The StateFlow query may restart after its 5s subscription timeout,
+    // so compare structurally rather than relying on the freshly allocated list instance.
     LaunchedEffect(state.dotPoints) {
         val pts = state.dotPoints
-        if (pts.isEmpty() || viewModel.lastFittedPoints === pts) return@LaunchedEffect
+        if (pts.isEmpty() || viewModel.lastFittedPoints == pts) return@LaunchedEffect
         if (pts.size == 1) {
-            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(pts.first(), 15f))
+            cameraPositionState.move(
+                CameraUpdateFactory.newLatLngZoom(pts.first().toLatLng(), 15f)
+            )
         } else {
-            val bounds = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
+            val bounds = LatLngBounds.builder().apply {
+                pts.forEach { include(it.toLatLng()) }
+            }.build()
             runCatching {
                 cameraPositionState.animate(
                     CameraUpdateFactory.newLatLngBounds(
@@ -163,8 +182,12 @@ fun MapExplorerScreen(
                     tiltGesturesEnabled = false
                 ),
             ) {
-                if (state.trackPoints.size >= 2) {
-                    Polyline(points = state.trackPoints, color = TRACK_RED, width = 6f)
+                state.trackPaths.filter { it.size >= 2 }.forEach { path ->
+                    Polyline(
+                        points = path.map { it.toLatLng() },
+                        color = TRACK_RED,
+                        width = 6f,
+                    )
                 }
             }
 

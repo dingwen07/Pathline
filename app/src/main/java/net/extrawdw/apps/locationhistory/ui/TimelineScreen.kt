@@ -96,6 +96,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.TransportMode
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
@@ -167,7 +168,7 @@ fun TimelineScreen(
             return@LaunchedEffect
         }
         viewModel.mostRecentLatLng()?.let {
-            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(it, 15f))
+            cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(it.toLatLng(), 15f))
         }
         cameraSeeded = true
     }
@@ -189,19 +190,40 @@ fun TimelineScreen(
     var detailPlaceId by remember { mutableStateOf<Long?>(null) }
 
     val editing = editItem != null
-    val editPoints = remember(editSamples) { editSamples.map { LatLng(it.latitude, it.longitude) } }
+    val editPoints = remember(editSamples, mapState.profileId) {
+        viewModel.projectEditSamples(editSamples).map { it.toLatLng() }
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     fun fineLocationGranted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
 
     var hasFineLocation by remember { mutableStateOf(fineLocationGranted()) }
+    var screenResumed by remember { mutableStateOf(false) }
+    var projectedCurrentLocation by remember { mutableStateOf<GoogleMapCoordinate?>(null) }
+    // Null means the current raw fix has not yet established whether the SDK-owned dot is safe.
+    // Keep the built-in layer off until that decision is known to avoid a transient mainland jump.
+    var currentLocationNeedsProjection by remember { mutableStateOf<Boolean?>(null) }
     // Both can change while the process stays alive (settings toggle, day rollover in background):
     // re-read whenever the screen returns to the foreground.
     LifecycleResumeEffect(Unit) {
+        screenResumed = true
         hasFineLocation = fineLocationGranted()
         today = viewModel.today
-        onPauseOrDispose { }
+        onPauseOrDispose { screenResumed = false }
+    }
+
+    LaunchedEffect(hasFineLocation, screenResumed, mapOnScreen, mapState.profileId) {
+        if (!hasFineLocation || !screenResumed || !mapOnScreen) {
+            projectedCurrentLocation = null
+            currentLocationNeedsProjection = null
+            return@LaunchedEffect
+        }
+        currentLocationNeedsProjection = null
+        viewModel.deviceLocationsForMap().collect { current ->
+            projectedCurrentLocation = current.coordinate
+            currentLocationNeedsProjection = current.mainlandCompatibilityActive
+        }
     }
 
     val editBackProgress by rememberPredictiveBackProgress(enabled = editItem != null) {
@@ -240,7 +262,7 @@ fun TimelineScreen(
                 cameraPositionState.move(
                     CameraUpdateFactory.newCameraPosition(
                         CameraPosition.fromLatLngZoom(
-                            it,
+                            it.toLatLng(),
                             15f
                         )
                     )
@@ -452,19 +474,28 @@ fun TimelineScreen(
                     cameraPositionState = cameraPositionState,
                     mapColorScheme = rememberMapColorScheme(),
                     contentPadding = contentPadding,
-                    properties = MapProperties(isMyLocationEnabled = hasFineLocation),
+                    properties = MapProperties(
+                        // The SDK-owned dot bypasses Pathline's adapter. In the guarded mainland
+                        // profile render a projected Pathline marker instead.
+                        isMyLocationEnabled = hasFineLocation &&
+                                currentLocationNeedsProjection == false,
+                    ),
                     uiSettings = MapUiSettings(
                         zoomControlsEnabled = false,
                         myLocationButtonEnabled = false,
                     ),
                 ) {
                     val dim = editing
-                    if (mapState.rawPath.size >= 2) {
-                        Polyline(points = mapState.rawPath, color = Color(0x33888888), width = 5f)
+                    mapState.rawPaths.filter { it.size >= 2 }.forEach { rawPath ->
+                        Polyline(
+                            points = rawPath.map { it.toLatLng() },
+                            color = Color(0x33888888),
+                            width = 5f,
+                        )
                     }
                     mapState.segments.forEach { seg ->
                         Polyline(
-                            points = seg.points,
+                            points = seg.points.map { it.toLatLng() },
                             color = if (dim) Color(0x33888888) else modeColor(seg.mode),
                             width = if (seg.confirmed) 16f else 11f,
                         )
@@ -472,7 +503,7 @@ fun TimelineScreen(
                     // Yellow place rings (fill only, no edge).
                     mapState.placeRings.forEach { ring ->
                         Circle(
-                            center = ring.center,
+                            center = ring.center.toLatLng(),
                             radius = ring.radiusMeters,
                             strokeColor = Color.Transparent,
                             strokeWidth = 0f,
@@ -482,7 +513,7 @@ fun TimelineScreen(
                     // Visits: translucent radius circle plus a fixed screen-size center dot.
                     mapState.visits.forEach { v ->
                         Circle(
-                            center = v.center,
+                            center = v.center.toLatLng(),
                             radius = v.radiusMeters,
                             strokeColor = Color.Transparent,
                             strokeWidth = 0f,
@@ -492,12 +523,25 @@ fun TimelineScreen(
                             v.center.latitude,
                             v.center.longitude,
                             dim,
-                            state = rememberUpdatedMarkerState(position = v.center),
+                            state = rememberUpdatedMarkerState(position = v.center.toLatLng()),
                             anchor = Offset(0.5f, 0.5f),
                             flat = true,
                             zIndex = 10f,
                         ) {
                             VisitCenterDot(VISIT_BLUE, alpha = if (dim) 0.55f else 1f)
+                        }
+                    }
+                    if (currentLocationNeedsProjection == true) {
+                        projectedCurrentLocation?.let { current ->
+                            MarkerComposable(
+                                "projected-current-location",
+                                state = rememberUpdatedMarkerState(position = current.toLatLng()),
+                                anchor = Offset(0.5f, 0.5f),
+                                flat = true,
+                                zIndex = 20f,
+                            ) {
+                                VisitCenterDot(VISIT_BLUE)
+                            }
                         }
                     }
                     // Split/reclassify preview.
@@ -528,8 +572,13 @@ fun TimelineScreen(
                 FloatingActionButton(
                     onClick = {
                         scope.launch {
-                            viewModel.currentLatLng()?.let {
-                                cameraPositionState.animate(CameraUpdateFactory.newLatLng(it))
+                            viewModel.currentDeviceLocationForMap()?.let { current ->
+                                projectedCurrentLocation = current.coordinate
+                                currentLocationNeedsProjection =
+                                    current.mainlandCompatibilityActive
+                                cameraPositionState.animate(
+                                    CameraUpdateFactory.newLatLng(current.coordinate.toLatLng())
+                                )
                             }
                         }
                     },
@@ -616,21 +665,36 @@ fun TimelineScreen(
         PlaceEditDialog(
             place = place,
             loadAnnotations = { target, id -> viewModel.loadAnnotations(target, id) },
-            onSave = { name, address, lat, lon, radius, fixed ->
+            projectPlace = viewModel::projectPlaceForMap,
+            projectCoordinate = viewModel::projectCoordinateForMap,
+            normalizeMapCoordinate = viewModel::normalizeMapInteraction,
+            canUndoRepair = { viewModel.canUndoCoordinateRepair(place.id) },
+            onSave = { name, address, lat, lon, radius, fixed, centerChanged, radiusChanged ->
                 viewModel.updatePlace(
-                    place.copy(
-                        name = name,
-                        address = address,
-                        latitude = lat,
-                        longitude = lon,
-                        radiusMeters = radius,
-                        fixed = fixed
-                    )
+                    place,
+                    name,
+                    address,
+                    lat,
+                    lon,
+                    radius,
+                    fixed,
+                    centerChanged,
+                    radiusChanged,
                 )
                 editPlace = null
             },
             onSaveAnnotations = { note, tags ->
                 viewModel.saveAnnotations(AnnotationTarget.PLACE, place.id, note, tags)
+            },
+            onRepair = { decision ->
+                val repaired = viewModel.repairCoordinates(place, decision)
+                if (repaired) editPlace = null
+                repaired
+            },
+            onUndoRepair = {
+                val undone = viewModel.undoCoordinateRepair(place)
+                if (undone) editPlace = null
+                undone
             },
             onDismiss = { editPlace = null },
         )
@@ -753,18 +817,10 @@ private fun typeColor(type: SegmentType?): Color = when (type) {
 
 private fun MapState.boundsOrNull(): LatLngBounds? {
     val points = ArrayList<LatLng>()
-    val rings =
-        visits.map { it.center to it.radiusMeters } + placeRings.map { it.center to it.radiusMeters }
-    rings.forEach { (center, radius) ->
-        val box = net.extrawdw.apps.locationhistory.core.Geo.boundingBox(
-            center.latitude,
-            center.longitude,
-            radius.coerceAtLeast(60.0)
-        )
-        points.add(LatLng(box[0], box[1])); points.add(LatLng(box[2], box[3]))
-    }
-    segments.forEach { points.addAll(it.points) }
-    if (points.isEmpty()) points.addAll(rawPath)
+    visits.forEach { marker -> points += marker.boundsPoints.map { it.toLatLng() } }
+    placeRings.forEach { ring -> points += ring.boundsPoints.map { it.toLatLng() } }
+    segments.forEach { segment -> points += segment.points.map { it.toLatLng() } }
+    if (points.isEmpty()) rawPaths.forEach { path -> points += path.map { it.toLatLng() } }
     if (points.isEmpty()) return null
     val b = LatLngBounds.builder()
     points.forEach { b.include(it) }
@@ -784,7 +840,7 @@ private fun MapState.fitKey(): String {
     val placeKey = placeRings.joinToString("|") {
         "${it.center.latitude.formatFit()},${it.center.longitude.formatFit()},${it.radiusMeters.toInt()}"
     }
-    return "$dayEpoch;$visitKey;$segmentKey;$placeKey"
+    return "$profileId;$dayEpoch;$visitKey;$segmentKey;$placeKey"
 }
 
 private fun Double.formatFit(): String = java.lang.String.format(java.util.Locale.US, "%.5f", this)

@@ -2,7 +2,6 @@ package net.extrawdw.apps.locationhistory.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.CameraPositionState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +17,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import java.time.LocalDate
@@ -35,12 +36,13 @@ enum class MapRange(@param:androidx.annotation.StringRes val labelRes: Int) {
 
 data class MapExplorerState(
     /** Positions to draw as red dots (already thinned/deduped off the UI thread). */
-    val dotPoints: List<LatLng> = emptyList(),
-    /** Ordered points for the connecting track polyline; empty when no track is drawn. */
-    val trackPoints: List<LatLng> = emptyList(),
+    val dotPoints: List<GoogleMapCoordinate> = emptyList(),
+    /** Ordered track polylines, split wherever projection rejected a vertex. */
+    val trackPaths: List<List<GoogleMapCoordinate>> = emptyList(),
     /** Raw sample count for the window, before thinning (shown in the control bar). */
     val totalCount: Int = 0,
     val loading: Boolean = false,
+    val profileId: String = "",
 )
 
 /** Backs the standalone "Map" tab: plots raw recorded samples for a chosen time window. */
@@ -48,6 +50,7 @@ data class MapExplorerState(
 @HiltViewModel
 class MapExplorerViewModel @Inject constructor(
     private val locationRepository: LocationRepository,
+    private val mapProjector: GoogleMapProjector,
 ) : ViewModel() {
 
     // Camera state lives in the ViewModel so the map keeps its zoom/center across tab switches
@@ -56,7 +59,8 @@ class MapExplorerViewModel @Inject constructor(
     // never on a plain re-entry. `cameraFramed` guards the one-time initial centering.
     val cameraPositionState = CameraPositionState()
     var cameraFramed = false
-    var lastFittedPoints: List<LatLng>? = null
+    var lastFittedPoints: List<GoogleMapCoordinate>? = null
+    var cameraProfileId: String? = null
 
     private val _range = MutableStateFlow(MapRange.TODAY)
     val range: StateFlow<MapRange> = _range.asStateFlow()
@@ -77,10 +81,15 @@ class MapExplorerViewModel @Inject constructor(
         }
             .flatMapLatest { key ->
                 flow {
-                    emit(MapExplorerState(loading = true))
+                    emit(
+                        MapExplorerState(
+                            loading = true,
+                            profileId = mapProjector.profileId,
+                        )
+                    )
                     val window = rangeMillis(key.range, key.customStart, key.customEnd)
                     if (window == null) {
-                        emit(MapExplorerState())
+                        emit(MapExplorerState(profileId = mapProjector.profileId))
                         return@flow
                     }
                     val drawTrack = shouldDrawTrack(key.range, key.drawTrackCustom)
@@ -94,27 +103,32 @@ class MapExplorerViewModel @Inject constructor(
                     // All point processing happens here on Dispatchers.IO — never on the UI thread.
                     val state = if (drawTrack) {
                         // Thin stationary stretches so the polyline + dots stay light.
-                        val track = thinTrack(samples)
+                        val trackPaths = projectPaths(thinTrack(samples))
                         MapExplorerState(
-                            dotPoints = track,
-                            trackPoints = track,
-                            totalCount = samples.size
+                            dotPoints = trackPaths.flatten(),
+                            trackPaths = trackPaths,
+                            totalCount = samples.size,
+                            profileId = mapProjector.profileId,
                         )
                     } else {
                         // Keep coverage but collapse coordinates that land in the same ~1 m cell
                         // (true duplicate fixes), which tames stacked stationary samples.
                         MapExplorerState(
-                            dotPoints = dedupeByCell(samples),
-                            totalCount = samples.size
+                            dotPoints = project(dedupeByCell(samples)),
+                            totalCount = samples.size,
+                            profileId = mapProjector.profileId,
                         )
                     }
                     emit(state)
-                }.flowOn(Dispatchers.IO)
+                }.flowOn(Dispatchers.Default)
             }
             .stateIn(
                 viewModelScope,
                 SharingStarted.WhileSubscribed(5_000),
-                MapExplorerState(loading = true)
+                MapExplorerState(
+                    loading = true,
+                    profileId = mapProjector.profileId,
+                )
             )
 
     private data class QueryKey(
@@ -177,22 +191,22 @@ class MapExplorerViewModel @Inject constructor(
      * [MIN_MOVE_METERS] from the last kept point, or [MAX_STATIONARY_GAP_MS] has elapsed. While the
      * device is stationary (no movement) this yields ~12 points/hour instead of one per fix.
      */
-    private fun thinTrack(samples: List<LocationSampleEntity>): List<LatLng> {
+    private fun thinTrack(samples: List<LocationSampleEntity>): List<Wgs84Coordinate> {
         if (samples.isEmpty()) return emptyList()
-        val out = ArrayList<LatLng>(samples.size / 4 + 1)
+        val out = ArrayList<Wgs84Coordinate>(samples.size / 4 + 1)
         var lastLat = 0.0
         var lastLon = 0.0
         var lastTime = 0L
         var seeded = false
         for (s in samples) {
             if (!seeded) {
-                out.add(LatLng(s.latitude, s.longitude))
+                out.add(Wgs84Coordinate(s.latitude, s.longitude))
                 lastLat = s.latitude; lastLon = s.longitude; lastTime = s.timestampMs; seeded = true
                 continue
             }
             val moved = Geo.distanceMeters(lastLat, lastLon, s.latitude, s.longitude)
             if (moved >= MIN_MOVE_METERS || s.timestampMs - lastTime >= MAX_STATIONARY_GAP_MS) {
-                out.add(LatLng(s.latitude, s.longitude))
+                out.add(Wgs84Coordinate(s.latitude, s.longitude))
                 lastLat = s.latitude; lastLon = s.longitude; lastTime = s.timestampMs
             }
         }
@@ -200,21 +214,29 @@ class MapExplorerViewModel @Inject constructor(
     }
 
     /** Collapse samples whose coordinates round to the same ~1 m grid cell into a single dot. */
-    private fun dedupeByCell(samples: List<LocationSampleEntity>): List<LatLng> {
+    private fun dedupeByCell(samples: List<LocationSampleEntity>): List<Wgs84Coordinate> {
         val seen = HashSet<Long>(samples.size)
-        val out = ArrayList<LatLng>(samples.size)
+        val out = ArrayList<Wgs84Coordinate>(samples.size)
         for (s in samples) {
             val latCell = (s.latitude * CELLS_PER_DEGREE).roundToLong()
             val lonCell = (s.longitude * CELLS_PER_DEGREE).roundToLong()
             val key = (latCell shl 32) xor (lonCell and 0xFFFFFFFFL)
-            if (seen.add(key)) out.add(LatLng(s.latitude, s.longitude))
+            if (seen.add(key)) out.add(Wgs84Coordinate(s.latitude, s.longitude))
         }
         return out
     }
 
     /** Where to point the camera before any data loads: the most recent recorded sample. */
-    suspend fun initialCameraTarget(): LatLng? =
-        locationRepository.mostRecent()?.let { LatLng(it.latitude, it.longitude) }
+    suspend fun initialCameraTarget(): GoogleMapCoordinate? =
+        locationRepository.mostRecent()?.let {
+            mapProjector.coordinate(Wgs84Coordinate(it.latitude, it.longitude))
+        }
+
+    private fun project(points: List<Wgs84Coordinate>): List<GoogleMapCoordinate> =
+        points.mapNotNull(mapProjector::coordinate)
+
+    private fun projectPaths(points: List<Wgs84Coordinate>): List<List<GoogleMapCoordinate>> =
+        mapProjector.paths(points.map { it.latitude to it.longitude })
 
     private companion object {
         const val MIN_MOVE_METERS = 11.0

@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -38,7 +39,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.GoogleMap
@@ -56,7 +56,9 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
+import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
@@ -64,7 +66,8 @@ import javax.inject.Inject
 
 data class PlaceVisitMarker(
     val visitId: Long,
-    val center: LatLng,
+    val center: GoogleMapCoordinate,
+    val boundsPoints: List<GoogleMapCoordinate>,
     val radiusMeters: Double,
 )
 
@@ -72,7 +75,9 @@ data class PlaceVisitMarker(
 @HiltViewModel
 class PlaceDetailViewModel @Inject constructor(
     private val placeRepository: PlaceRepository,
+    private val mapProjector: GoogleMapProjector,
 ) : ViewModel() {
+    val mapProfileId: String get() = mapProjector.profileId
     private val placeId = MutableStateFlow<Long?>(null)
     fun load(id: Long) {
         placeId.value = id
@@ -90,18 +95,30 @@ class PlaceDetailViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    fun projectPlace(place: PlaceEntity): ProjectedPlaceCircle? =
+        mapProjector.placePreviewCircle(place)
+
     val visitMarkers: StateFlow<List<PlaceVisitMarker>> = placeId
         .flatMapLatest {
             if (it == null) {
                 flowOf(emptyList())
             } else {
                 placeRepository.observeVisitsForPlace(it).map { visits ->
-                    visits.map { visit ->
-                        PlaceVisitMarker(
-                            visitId = visit.id,
-                            center = LatLng(visit.centroidLatitude, visit.centroidLongitude),
-                            radiusMeters = visit.radiusMeters,
-                        )
+                    visits.mapNotNull { visit ->
+                        mapProjector.circle(
+                            Wgs84Coordinate(
+                                visit.centroidLatitude,
+                                visit.centroidLongitude,
+                            ),
+                            visit.radiusMeters,
+                        )?.let { circle ->
+                            PlaceVisitMarker(
+                                visitId = visit.id,
+                                center = circle.center,
+                                boundsPoints = circle.boundsPoints,
+                                radiusMeters = visit.radiusMeters,
+                            )
+                        }
                     }
                 }
             }
@@ -122,9 +139,20 @@ fun PlaceDetailDialog(
     viewModel: PlaceDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(placeId) { viewModel.load(placeId) }
-    val place by viewModel.place.collectAsStateWithLifecycle()
-    val visits by viewModel.visits.collectAsStateWithLifecycle()
-    val visitMarkers by viewModel.visitMarkers.collectAsStateWithLifecycle()
+    val observedPlace by viewModel.place.collectAsStateWithLifecycle()
+    val observedVisits by viewModel.visits.collectAsStateWithLifecycle()
+    val observedVisitMarkers by viewModel.visitMarkers.collectAsStateWithLifecycle()
+    // The WhileSubscribed flows switch independently. Never pair a newly requested place with
+    // the previous dialog's projection/visits during their brief hand-off window.
+    val place = observedPlace?.takeIf { it.id == placeId }
+    val projectedPlace = remember(place, viewModel.mapProfileId) {
+        place?.let(viewModel::projectPlace)
+    }
+    val visits = if (place == null) emptyList() else observedVisits.filter { it.placeId == placeId }
+    val activeVisitIds = visits.mapTo(HashSet()) { it.id }
+    val visitMarkers = if (place == null) emptyList() else {
+        observedVisitMarkers.filter { it.visitId in activeVisitIds }
+    }
 
     val listState = rememberLazyListState()
     val visibleVisitIds by remember(visits) {
@@ -175,14 +203,33 @@ fun PlaceDetailDialog(
                     // Compose the map only once the place is loaded, so its camera can be seeded
                     // at the place in the constructor (no world-view flash, like the editor).
                     place?.let { p ->
-                        PlaceDetailMap(
-                            place = p,
-                            visibleMarkers = visibleMarkers,
-                            followList = hasScrolled,
-                        )
+                        projectedPlace?.let { projected ->
+                            key(p.id, projected.circle.center, viewModel.mapProfileId) {
+                                PlaceDetailMap(
+                                    placeCircle = projected.circle,
+                                    visibleMarkers = visibleMarkers,
+                                    followList = hasScrolled,
+                                    profileId = viewModel.mapProfileId,
+                                )
+                            }
+                        }
                     }
                 }
                 place?.let { p ->
+                    if (p.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) {
+                        Text(
+                            stringResource(
+                                if (projectedPlace != null) {
+                                    R.string.place_coordinate_legacy_preview
+                                } else {
+                                    R.string.place_coordinate_review_message
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
                     val visitsLabel =
                         pluralStringResource(R.plurals.visits_count, visits.size, visits.size)
                     Text(
@@ -264,14 +311,15 @@ fun PlaceDetailDialog(
  */
 @Composable
 private fun PlaceDetailMap(
-    place: PlaceEntity,
+    placeCircle: ProjectedMapCircle,
     visibleMarkers: List<PlaceVisitMarker>,
     followList: Boolean,
+    profileId: String,
 ) {
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(LatLng(place.latitude, place.longitude), 16f)
+        position = CameraPosition.fromLatLngZoom(placeCircle.center.toLatLng(), 16f)
     }
-    LaunchedEffect(followList, visibleMarkers.map { it.visitId }) {
+    LaunchedEffect(followList, visibleMarkers.map { it.visitId }, profileId) {
         if (!followList || visibleMarkers.isEmpty()) return@LaunchedEffect
         val bounds = visibleVisitBounds(visibleMarkers)
         if (bounds != null) {
@@ -286,7 +334,7 @@ private fun PlaceDetailMap(
                 .onFailure {
                     cameraPositionState.animate(
                         CameraUpdateFactory.newLatLngZoom(
-                            visibleMarkers.first().center,
+                            visibleMarkers.first().center.toLatLng(),
                             16f
                         )
                     )
@@ -301,8 +349,8 @@ private fun PlaceDetailMap(
     ) {
         // The saved place's own radius, drawn as a yellow ring (matches the timeline map).
         Circle(
-            center = LatLng(place.latitude, place.longitude),
-            radius = place.radiusMeters,
+            center = placeCircle.center.toLatLng(),
+            radius = placeCircle.radiusMeters,
             strokeColor = Color.Transparent,
             strokeWidth = 0f,
             fillColor = Color(0xFFFFD54F).copy(alpha = 0.18f),
@@ -311,7 +359,7 @@ private fun PlaceDetailMap(
         val blue = Color(0xFF4285F4)
         visibleMarkers.forEach { marker ->
             Circle(
-                center = marker.center,
+                center = marker.center.toLatLng(),
                 radius = marker.radiusMeters,
                 strokeColor = Color.Transparent,
                 strokeWidth = 0f,
@@ -319,7 +367,7 @@ private fun PlaceDetailMap(
             )
             MarkerComposable(
                 marker.visitId,
-                state = rememberUpdatedMarkerState(position = marker.center),
+                state = rememberUpdatedMarkerState(position = marker.center.toLatLng()),
                 anchor = Offset(0.5f, 0.5f),
                 flat = true,
                 zIndex = 10f,
@@ -334,13 +382,7 @@ private fun visibleVisitBounds(markers: List<PlaceVisitMarker>): LatLngBounds? {
     if (markers.isEmpty()) return null
     val builder = LatLngBounds.builder()
     markers.forEach { marker ->
-        val box = Geo.boundingBox(
-            marker.center.latitude,
-            marker.center.longitude,
-            marker.radiusMeters.coerceAtLeast(45.0),
-        )
-        builder.include(LatLng(box[0], box[1]))
-        builder.include(LatLng(box[2], box[3]))
+        marker.boundsPoints.forEach { builder.include(it.toLatLng()) }
     }
     return runCatching { builder.build() }.getOrNull()
 }
