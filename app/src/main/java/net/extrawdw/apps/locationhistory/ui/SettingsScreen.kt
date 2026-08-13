@@ -160,6 +160,8 @@ fun SettingsScreen(
             // Backup
             BackupCard()
 
+            MapsPlatformSettingsCard(settings, viewModel)
+
             // GPX export (open format, independent of backup)
             GpxCard()
 

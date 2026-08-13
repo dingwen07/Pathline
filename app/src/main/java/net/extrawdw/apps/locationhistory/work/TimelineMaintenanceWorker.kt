@@ -1,6 +1,8 @@
 package net.extrawdw.apps.locationhistory.work
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
@@ -17,13 +19,17 @@ import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
+import net.extrawdw.apps.locationhistory.data.repo.AutomaticNearbyClaim
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.domain.PlaceMatcher
+import net.extrawdw.apps.locationhistory.domain.PlaceMatch
 import net.extrawdw.apps.locationhistory.domain.TimelineMerger
 import net.extrawdw.apps.locationhistory.domain.TimelineRebuilder
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import net.extrawdw.apps.locationhistory.domain.TripSegmenter
 import net.extrawdw.apps.locationhistory.domain.VisitDetector
 import net.extrawdw.apps.locationhistory.service.Perf
+import net.extrawdw.apps.locationhistory.security.MapsApiKeyVault
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -47,6 +53,8 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
     private val visitDetector: VisitDetector,
     private val placeMatcher: PlaceMatcher,
+    private val settingsRepository: SettingsRepository,
+    private val mapsApiKeyVault: MapsApiKeyVault,
     private val tripSegmenter: TripSegmenter,
     private val merger: TimelineMerger,
     private val timelineWriteLock: TimelineWriteLock,
@@ -55,15 +63,16 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val day = inputData.getLong(KEY_DAY, TimeBuckets.dayEpoch(System.currentTimeMillis()))
         val reason = inputData.getString(KEY_REASON) ?: "unspecified"
+        val userStarted = reason == REASON_PULL_REFRESH
         AppLog.i(TAG, "maintenance day=$day reason=$reason")
 
         // Idempotent and lock-serialized: prove any exact-identity legacy rows before a rebuild
         // considers place geometry. Ambiguous rows remain excluded.
         legacyPlaceCoordinates.classifySafeRows()
 
-        // Count and time each Google Places resolution -- the rebuild's only network I/O -- by
-        // wrapping the place-match seam the (deliberately Firebase-free) rebuilder already takes,
-        // instead of reaching into it.
+        // Only actual remote Nearby calls count here. Local-place matching is always free. Automatic
+        // maintenance never calls Places for the ongoing visit; a pull-to-refresh may. Finalized
+        // visits share the durable checked-through floor and daily allowance in every maintenance mode.
         val placeLookups = AtomicInteger(0)
 
         val rebuilder = TimelineRebuilder(
@@ -75,9 +84,42 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
             placeRepository = placeRepository,
             visitDetector = visitDetector,
             merger = merger,
-            matchPlace = { lat, lon ->
-                placeLookups.incrementAndGet()
-                Perf.trace("place_match") { placeMatcher.match(lat, lon) }
+            matchPlace = { visitStartMs, visitEndMs, lat, lon, isOngoing ->
+                val local = placeMatcher.matchLocal(lat, lon)
+                if (local is PlaceMatch.Local) {
+                    local
+                } else if (isOngoing) {
+                    if (userStarted && mapsApiKeyVault.configured.value) {
+                        placeLookups.incrementAndGet()
+                        Perf.trace("place_match_manual_current") {
+                            placeMatcher.lookupNearby(lat, lon)
+                        }
+                    } else {
+                        PlaceMatch.None
+                    }
+                } else {
+                    when (
+                        settingsRepository.claimAutomaticNearbyLookup(
+                            visitStartMs = visitStartMs,
+                            visitEndMs = visitEndMs,
+                            nowMs = System.currentTimeMillis(),
+                            // The claim consumes this visit's durable at-most-once allowance, so key
+                            // presence alone is insufficient: do not consume it while offline or
+                            // behind an unvalidated/captive network.
+                            networkEligible = mapsApiKeyVault.configured.value &&
+                                    hasValidatedInternet(),
+                        )
+                    ) {
+                        AutomaticNearbyClaim.ALLOWED -> {
+                            placeLookups.incrementAndGet()
+                            Perf.trace("place_match_finalized") {
+                                placeMatcher.lookupNearby(lat, lon)
+                            }
+                        }
+                        AutomaticNearbyClaim.BELOW_FLOOR,
+                        AutomaticNearbyClaim.SKIPPED -> PlaceMatch.None
+                    }
+                }
             },
             segmentTrips = tripSegmenter::segment,
             inTransaction = { block -> db.withTransaction { block() } },
@@ -97,9 +139,19 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
         return Result.success()
     }
 
+    private fun hasValidatedInternet(): Boolean {
+        val connectivity = applicationContext.getSystemService(ConnectivityManager::class.java)
+            ?: return false
+        val network = connectivity.activeNetwork ?: return false
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     companion object {
         const val KEY_DAY = "day_epoch"
         const val KEY_REASON = "reason"
+        const val REASON_PULL_REFRESH = "pull_refresh"
         private const val TAG = "TimelineMaintenance"
     }
 }

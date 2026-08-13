@@ -179,7 +179,7 @@ class TimelineDryRunTest {
             placeRepository = PlaceRepository(placeDao, visitDao, store),
             visitDetector = VisitDetector(),
             merger = TimelineMerger(visitDao, tripDao, sampleDao, placeDao, store),
-            matchPlace = { lat, lon -> matchPlace(lat, lon) },
+            matchPlace = { _, _, lat, lon, _ -> matchPlace(lat, lon) },
             segmentTrips = TripSegmenter(HeuristicClassifier())::segment,
             inTransaction = { block -> block() }, now = { nowMs }, log = {},
         )

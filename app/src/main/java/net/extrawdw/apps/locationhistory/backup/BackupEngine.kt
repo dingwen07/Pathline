@@ -19,6 +19,7 @@ import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.security.BackupCrypto
 import net.extrawdw.apps.locationhistory.security.CryptoHeader
+import net.extrawdw.apps.locationhistory.security.MapsApiKeyVault
 import net.extrawdw.apps.locationhistory.service.Perf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
@@ -72,6 +73,7 @@ class BackupEngine @Inject constructor(
     private val db: AppDatabase,
     private val backupDao: BackupDao,
     private val settingsRepository: SettingsRepository,
+    private val mapsApiKeyVault: MapsApiKeyVault,
     private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
@@ -535,8 +537,20 @@ class BackupEngine @Inject constructor(
         )
 
         // App settings
-        val settings =
-            BackupSettings(powerProfile = settingsRepository.settings.first().powerProfile.name)
+        val currentSettings = settingsRepository.settings.first()
+        val mapsPlatform = if (
+            currentSettings.includeMapsPlatformInBackup && material.cipher.encrypted
+        ) {
+            BackupMapsPlatformConfig(
+                apiKey = mapsApiKeyVault.apiKey(),
+                googleCloudProjectId = currentSettings.googleCloudProjectId,
+                automaticNearbyDailyLimit = currentSettings.automaticNearbyDailyLimit,
+            )
+        } else null
+        val settings = BackupSettings(
+            powerProfile = currentSettings.powerProfile.name,
+            mapsPlatform = mapsPlatform,
+        )
         val settingsBytes =
             json.encodeToString(BackupSettings.serializer(), settings).encodeToByteArray()
         out += snapshotBlob(
@@ -651,6 +665,18 @@ class BackupEngine @Inject constructor(
             s?.powerProfile?.let { name ->
                 runCatching { PowerProfile.valueOf(name) }.getOrNull()
                     ?.let { settingsRepository.setPowerProfile(it) }
+            }
+            // A plaintext backup can never legitimately contain a key produced by Pathline. Keep
+            // that invariant on restore too, even if a hand-edited/foreign snapshot adds the field.
+            if (cipher.encrypted) s?.mapsPlatform?.let { maps ->
+                maps.apiKey?.let { runCatching { mapsApiKeyVault.store(it) } }
+                settingsRepository.setGoogleCloudProjectId(maps.googleCloudProjectId)
+                runCatching {
+                    settingsRepository.setAutomaticNearbyDailyLimit(
+                        maps.automaticNearbyDailyLimit,
+                    )
+                }
+                settingsRepository.setIncludeMapsPlatformInBackup(true)
             }
         }
     }

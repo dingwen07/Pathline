@@ -24,7 +24,7 @@ import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
  * Extracted from `TimelineMaintenanceWorker` so the historically regressing rules (overnight
  * split, vanishing trips, resurrected converted stays) are a plain class over DAO interfaces —
  * JVM-testable with the in-memory fakes, like [TimelineMerger]. The worker keeps WorkManager
- * plumbing and supplies the Android-bound seams: [matchPlace] (Google Places gateway),
+ * plumbing and supplies the Android-bound seams: [matchPlace] (policy-aware place matching),
  * [segmentTrips] (LiteRT classifier), [inTransaction] (Room), [now] and [log].
  *
  * The rebuild runs in two phases: phase 1 (no transaction) does every read and resolves the place
@@ -43,8 +43,14 @@ internal class TimelineRebuilder(
     private val placeRepository: PlaceRepository,
     private val visitDetector: VisitDetector,
     private val merger: TimelineMerger,
-    /** Resolve a visit centroid to a place — [PlaceMatcher.match] in production. */
-    private val matchPlace: suspend (lat: Double, lon: Double) -> PlaceMatch,
+    /** Resolve a visit centroid according to the worker's automatic/manual policy. */
+    private val matchPlace: suspend (
+        visitStartMs: Long,
+        visitEndMs: Long,
+        lat: Double,
+        lon: Double,
+        isOngoing: Boolean,
+    ) -> PlaceMatch,
     /** Split moving samples into single-mode runs — [TripSegmenter.segment] in production. */
     private val segmentTrips: (List<LocationSampleEntity>) -> List<SegmentResult>,
     /** Atomicity for the whole write phase (delete -> materialize -> trips -> merge -> sweep) —
@@ -103,6 +109,7 @@ internal class TimelineRebuilder(
             return 0
         }
 
+        val priorUnconfirmed = visitDao.overlapping(loadStart, loadEnd).filterNot { it.confirmed }
         val confirmedVisits = visitDao.confirmedOverlapping(loadStart, loadEnd)
         // A confirmed trip hand-classifies a span as movement, so it must suppress stay re-detection
         // there like a confirmed visit does -- otherwise converting a stay to a moving segment instantly
@@ -138,8 +145,15 @@ internal class TimelineRebuilder(
         }
 
         // Resolve every candidate's place match up front — these are the (potentially slow) Google
-        // Places lookups, and they must not run while the write transaction below is held.
-        val resolved = candidates.mapNotNull { resolveCandidate(it, samples) }
+        // Places lookups, and they must not run while the write transaction below is held. Reuse an
+        // existing unconfirmed row's attribution when the detector produced the same logical stay;
+        // the delete/reinsert phase must not erase a previous result or cause another billed lookup.
+        val claimedPriorIds = mutableSetOf<Long>()
+        val resolved = candidates.sortedBy { it.startMs }.mapNotNull { candidate ->
+            val prior = findPriorVisit(candidate, priorUnconfirmed, claimedPriorIds)
+            if (prior != null) claimedPriorIds += prior.id
+            resolveCandidate(candidate, samples, latest, prior)
+        }
 
         // --- Phase 2: one transaction over every write ------------------------------------------
 
@@ -185,6 +199,8 @@ internal class TimelineRebuilder(
         val match: PlaceMatch?,
         val initialGeom: StayGeometry,
         val usable: List<LocationSampleEntity>,
+        val prior: VisitEntity?,
+        val isOngoing: Boolean,
     )
 
     /** Phase-1 half of materialization: derive the candidate's initial geometry from the in-memory
@@ -193,6 +209,8 @@ internal class TimelineRebuilder(
     private suspend fun resolveCandidate(
         candidate: VisitCandidate,
         samples: List<LocationSampleEntity>,
+        latest: LocationSampleEntity?,
+        prior: VisitEntity?,
     ): ResolvedCandidate? {
         val span = samples.inRange(candidate.startMs, candidate.endMs + 1)
         val usable = span.filter { it.includedInComputation }.ifEmpty { span }
@@ -203,12 +221,23 @@ internal class TimelineRebuilder(
             candidate.centroidLatitude,
             candidate.centroidLongitude,
         )
-        val match = runCatching {
-            matchPlace(initialGeom.latitude, initialGeom.longitude)
+        val isOngoing = latest != null &&
+                latest.timestampMs in candidate.startMs..candidate.endMs &&
+                latest.devicePhysicalState == DevicePhysicalState.STATIONARY
+        // An already-attributed reconstructed row is authoritative for this unconfirmed stay.
+        // Local/manual confirmation still happens elsewhere; rebuilds only carry this suggestion.
+        val match = if (!isOngoing && prior.hasAttribution()) null else runCatching {
+            matchPlace(
+                candidate.startMs,
+                candidate.endMs,
+                initialGeom.latitude,
+                initialGeom.longitude,
+                isOngoing,
+            )
         }.onFailure {
             log("place match failed; keeping visit unmatched")
         }.getOrNull()
-        return ResolvedCandidate(candidate, match, initialGeom, usable)
+        return ResolvedCandidate(candidate, match, initialGeom, usable, prior, isOngoing)
     }
 
     /** Phase-2 half of materialization: persist a resolved candidate using its pre-resolved match —
@@ -217,7 +246,7 @@ internal class TimelineRebuilder(
         resolved: ResolvedCandidate,
         latest: LocationSampleEntity?,
     ): Long? {
-        val (candidate, match, initialGeom, usable) = resolved
+        val (candidate, match, initialGeom, usable, prior, isOngoing) = resolved
 
         if (match is PlaceMatch.Local) {
             locationRepository.excludeDriftOutside(
@@ -234,13 +263,7 @@ internal class TimelineRebuilder(
         val fallbackLat = (match as? PlaceMatch.Local)?.place?.latitude ?: initialGeom.latitude
         val fallbackLon = (match as? PlaceMatch.Local)?.place?.longitude ?: initialGeom.longitude
         val geom = VisitGeometry.compute(clean, fallbackLat, fallbackLon)
-        val isOngoing = latest != null &&
-                latest.timestampMs in candidate.startMs..candidate.endMs &&
-                latest.devicePhysicalState == DevicePhysicalState.STATIONARY
-
-        return visitDao.insert(
-            applyMatch(
-                VisitEntity(
+        val base = VisitEntity(
                     placeId = null,
                     candidateName = null,
                     candidateGooglePlaceId = null,
@@ -257,11 +280,57 @@ internal class TimelineRebuilder(
                     confirmed = false,
                     confidence = 0f,
                     isOngoing = isOngoing,
-                ),
-                match,
-            )
+                )
+        return visitDao.insert(
+            when {
+                match is PlaceMatch.Local || match is PlaceMatch.Candidate -> applyMatch(base, match)
+                prior.hasAttribution() -> carryAttribution(base, prior!!)
+                else -> applyMatch(base, match)
+            }
         )
     }
+
+    /** Conservative reconstruction identity: exact start wins; otherwise require near-total
+     * temporal overlap and nearby geometry. This keeps an attribution through harmless detector
+     * jitter without transferring it to an adjacent stay. */
+    private fun findPriorVisit(
+        candidate: VisitCandidate,
+        prior: List<VisitEntity>,
+        claimedIds: Set<Long>,
+    ): VisitEntity? {
+        val available = prior.filterNot { it.id in claimedIds }
+        available.firstOrNull { it.startMs == candidate.startMs }?.let { return it }
+        return available.mapNotNull { visit ->
+            val overlap = minOf(candidate.endMs, visit.endMs) - maxOf(candidate.startMs, visit.startMs)
+            if (overlap <= 0) return@mapNotNull null
+            val shorter = minOf(
+                (candidate.endMs - candidate.startMs).coerceAtLeast(1L),
+                (visit.endMs - visit.startMs).coerceAtLeast(1L),
+            )
+            val overlapRatio = overlap.toDouble() / shorter
+            val distance = Geo.distanceMeters(
+                candidate.centroidLatitude, candidate.centroidLongitude,
+                visit.centroidLatitude, visit.centroidLongitude,
+            )
+            if (overlapRatio >= 0.8 && distance <= PRIOR_VISIT_MAX_DISTANCE_METERS) {
+                visit to overlapRatio
+            } else null
+        }.maxByOrNull { it.second }?.first
+    }
+
+    private fun VisitEntity?.hasAttribution(): Boolean =
+        this != null && (placeId != null || candidateGooglePlaceId != null || candidateName != null)
+
+    private fun carryAttribution(target: VisitEntity, prior: VisitEntity): VisitEntity = target.copy(
+        placeId = prior.placeId,
+        candidateName = prior.candidateName,
+        candidateGooglePlaceId = prior.candidateGooglePlaceId,
+        candidateLatitude = prior.candidateLatitude,
+        candidateLongitude = prior.candidateLongitude,
+        candidateCoordinateFrame = prior.candidateCoordinateFrame,
+        candidateOrigin = prior.candidateOrigin,
+        confidence = prior.confidence,
+    )
 
     /**
      * Keep the *single* current confirmed visit's end time tracking the present while the device is
@@ -533,6 +602,10 @@ internal class TimelineRebuilder(
 
     private fun VisitCandidate.overlaps(startMs: Long, endMs: Long): Boolean =
         this.startMs < endMs && this.endMs > startMs
+
+    private companion object {
+        const val PRIOR_VISIT_MAX_DISTANCE_METERS = 100.0
+    }
 
     private fun VisitEntity.overlaps(startMs: Long, endMs: Long): Boolean =
         this.startMs < endMs && this.endMs > startMs

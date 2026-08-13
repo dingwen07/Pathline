@@ -17,13 +17,14 @@ if (firebaseConfigured) {
     pluginManager.apply("com.google.firebase.firebase-perf")
 }
 
-// Read the Google Maps / Places API key from local.properties (never committed) so it can be
-// injected as a manifest placeholder and a BuildConfig field. Falls back to an empty string
-// so CI / fresh checkouts still build (maps simply won't load).
-val mapsApiKey: String = Properties().apply {
+// The only bundled Maps Platform credential is restricted to the inexpensive Maps SDK for Android.
+// Places and Routes read the user's Keystore-wrapped key at runtime and never use this value.
+val mapsSdkApiKeyFromFile: String = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
-}.getProperty("MAPS_API_KEY", "")
+}.getProperty("MAPS_SDK_API_KEY", "")
+val mapsSdkApiKey: String = providers.environmentVariable("PATHLINE_MAPS_SDK_API_KEY")
+    .orNull?.takeIf { it.isNotBlank() } ?: mapsSdkApiKeyFromFile
 
 android {
     namespace = "net.extrawdw.apps.locationhistory"
@@ -40,11 +41,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+        manifestPlaceholders["MAPS_SDK_API_KEY"] = mapsSdkApiKey
         // Telemetry defaults ON for every build type
         manifestPlaceholders["FIREBASE_CRASHLYTICS_COLLECTION_ENABLED"] = true
         manifestPlaceholders["FIREBASE_PERFORMANCE_COLLECTION_ENABLED"] = true
-        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
     }
 
     buildTypes {
@@ -137,14 +137,10 @@ dependencies {
     implementation(libs.maps.compose.utils)
     implementation(libs.places)
 
-    // Firebase services. Crashlytics and Performance Monitoring collect in release builds only;
-    // App Check attests the Routes API web-service call when app/google-services.json is present.
+    // Firebase is retained only for opt-out Crashlytics and Performance Monitoring telemetry.
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.crashlytics)
     implementation(libs.firebase.perf)
-    implementation(libs.firebase.appcheck.playintegrity)
-    debugImplementation(libs.firebase.appcheck.debug)
-    implementation(libs.androidx.concurrent.futures)
 
     // Serialization & coroutines
     implementation(libs.kotlinx.serialization.json)

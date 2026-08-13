@@ -130,6 +130,7 @@ fun TimelineScreen(
     val places by viewModel.places.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val recordingEnabled by viewModel.recordingEnabled.collectAsStateWithLifecycle()
+    val mapsApiKeyConfigured by viewModel.mapsApiKeyConfigured.collectAsStateWithLifecycle()
 
     // "Today" must stay live: this screen never leaves composition (MainActivity keeps it mounted)
     // and the recording FGS keeps the process alive overnight, so a once-captured value would leave
@@ -656,6 +657,7 @@ fun TimelineScreen(
             localPlaces = places,
             loadNearby = { lat, lon -> viewModel.nearbySuggestions(lat, lon) },
             searchPlaces = { q, lat, lon -> viewModel.searchPlaces(q, lat, lon) },
+            mapsApiKeyConfigured = mapsApiKeyConfigured,
             onConfirm = { choice -> viewModel.confirmVisit(visit.id, choice); confirmVisit = null },
             onDismiss = { confirmVisit = null },
         )

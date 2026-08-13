@@ -1,5 +1,5 @@
 [versions]
-agp = "9.2.1"
+agp = "9.3.1"
 coreKtx = "1.19.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
@@ -30,7 +30,6 @@ firebaseBom = "34.15.0"
 googleServices = "4.5.0"
 firebaseCrashlyticsGradle = "3.0.7"
 firebasePerfGradle = "2.0.2"
-concurrentFutures = "1.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -92,13 +91,6 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 # Crashlytics + Performance Monitoring
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
 firebase-perf = { group = "com.google.firebase", name = "firebase-perf" }
-# App Check attests the Routes API web-service call (Play Integrity in release, debug provider
-# locally).
-firebase-appcheck-playintegrity = { group = "com.google.firebase", name = "firebase-appcheck-playintegrity" }
-firebase-appcheck-debug = { group = "com.google.firebase", name = "firebase-appcheck-debug" }
-# Adapts the Firebase App Check Task into the ListenableFuture the Places SDK token provider expects.
-androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrentFutures" }
-
 # On-device ML (LiteRT / TensorFlow Lite)
 
 # Serialization & coroutines

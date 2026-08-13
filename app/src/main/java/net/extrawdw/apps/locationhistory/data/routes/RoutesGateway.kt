@@ -1,7 +1,6 @@
 package net.extrawdw.apps.locationhistory.data.routes
 
 import android.content.Context
-import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,17 +14,17 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import net.extrawdw.apps.locationhistory.BuildConfig
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import java.io.IOException
-import java.security.MessageDigest
 import java.time.Instant
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.net.HttpURLConnection
 import java.net.URL
+import net.extrawdw.apps.locationhistory.data.places.AppSigningIdentity
+import net.extrawdw.apps.locationhistory.security.MapsApiKeyVault
 
 /**
  * A single Google Routes `computeRoutes` request between two Pathline saved places. Travel mode and
@@ -79,26 +78,19 @@ data class TravelTimeEstimate(
 @Singleton
 class RoutesGateway @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val keyVault: MapsApiKeyVault,
+    private val signingIdentity: AppSigningIdentity,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Pathline's own signing-cert SHA-1 (hex, no separators). The MAPS_API_KEY is Android-app
+     * Pathline's own signing-cert SHA-1 (hex, no separators). The user-provided key is Android-app
      * restricted, so a raw web-service call to Routes must present this app's identity via the
      * `X-Android-Package` / `X-Android-Cert` headers -- otherwise Google answers 403
      * API_KEY_ANDROID_APP_BLOCKED ("Requests from this Android client application <empty> are
      * blocked"). The provider runs in Pathline's process, so this cert is one of the key's allowlist.
      */
-    private val androidCertSha1: String by lazy {
-        val info = context.packageManager.getPackageInfo(
-            context.packageName,
-            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
-        )
-        val signer = info.signingInfo?.apkContentsSigners?.firstOrNull()
-            ?: error("No signing certificate for ${context.packageName}")
-        MessageDigest.getInstance("SHA-1").digest(signer.toByteArray())
-            .joinToString("") { "%02X".format(it) }
-    }
+    private val androidCertSha1: String by lazy(signingIdentity::currentSha1)
 
     suspend fun travelTimes(
         origin: PlaceEntity,
@@ -112,8 +104,8 @@ class RoutesGateway @Inject constructor(
         require(destination.coordinateState == PlaceCoordinateState.WGS84_CANONICAL) {
             "destination place coordinate is not canonical"
         }
-        val key = BuildConfig.MAPS_API_KEY
-        check(key.isNotBlank()) { "Google Maps API key is not configured" }
+        val key = keyVault.apiKey()
+            ?: error("Google Maps Platform user key is not configured")
 
         val body = requestBody(origin, destination, request, nowMs)
         val response = postRoutes(key, body.toString())

@@ -32,6 +32,7 @@ import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
+import net.extrawdw.apps.locationhistory.security.MapsApiKeyVault
 import javax.inject.Inject
 
 @HiltViewModel
@@ -43,12 +44,15 @@ class PlacesViewModel @Inject constructor(
     private val annotationStore: AnnotationStore,
     private val mapProjector: GoogleMapProjector,
     private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
+    mapsApiKeyVault: MapsApiKeyVault,
 ) : ViewModel() {
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
     val places: StateFlow<List<PlaceEntity>> = placeRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val mapsApiKeyConfigured: StateFlow<Boolean> = mapsApiKeyVault.configured
 
     /** Live, accurate visit count per place (derived from the visits table). */
     val visitCounts: StateFlow<Map<Long, Int>> = placeRepository.observeVisitCounts()

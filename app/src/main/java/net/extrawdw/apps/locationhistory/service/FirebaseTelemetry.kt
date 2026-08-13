@@ -12,8 +12,8 @@ import net.extrawdw.apps.locationhistory.core.AppLog
  * the next cold start -- before [android.app.Application.onCreate] runs -- so an opted-out state
  * survives process death with no startup collection window.
  *
- * Scoped to telemetry only: App Check (Routes attestation) is deliberately left untouched, since it
- * is a security control rather than diagnostics.
+ * Firebase is scoped to telemetry only. Maps Platform credentials are protected independently with
+ * Android package/certificate and API restrictions.
  */
 object FirebaseTelemetry {
 

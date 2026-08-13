@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -51,6 +52,12 @@ data class AppSettings(
      * to every build type -- debug honors it too.
      */
     val telemetryEnabled: Boolean = true,
+    /** Cloud project used only to render the local gcloud setup command; never an OAuth identity. */
+    val googleCloudProjectId: String = "",
+    /** 0 disables automatic Nearby, -1 is unlimited, otherwise the per-device UTC-day cap. */
+    val automaticNearbyDailyLimit: Int = 30,
+    /** Include Maps Platform settings/key only in encrypted Pathline backup/export artifacts. */
+    val includeMapsPlatformInBackup: Boolean = false,
 )
 
 /**
@@ -65,6 +72,7 @@ data class BackupConfig(
     val encryption: BackupEncryption,
     val cryptoHeaderJson: String?,
     val lastBackupMs: Long,
+    val includeMapsPlatformConfig: Boolean = false,
 )
 
 /**
@@ -76,6 +84,8 @@ data class GpxConfig(
     val treeUri: String?,
     val lastExportMs: Long,
 )
+
+enum class AutomaticNearbyClaim { ALLOWED, BELOW_FLOOR, SKIPPED }
 
 @Singleton
 class SettingsRepository @Inject constructor(
@@ -90,6 +100,13 @@ class SettingsRepository @Inject constructor(
     private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
     private val keyRouteApiEnabled = booleanPreferencesKey("route_api_enabled")
     private val keyTelemetryEnabled = booleanPreferencesKey("telemetry_enabled")
+    private val keyGoogleCloudProjectId = stringPreferencesKey("google_cloud_project_id")
+    private val keyAutomaticNearbyDailyLimit = intPreferencesKey("automatic_nearby_daily_limit")
+    private val keyIncludeMapsPlatformInBackup =
+        booleanPreferencesKey("backup_include_maps_platform")
+    private val keyAutomaticNearbyDay = longPreferencesKey("automatic_nearby_utc_day")
+    private val keyAutomaticNearbyCount = intPreferencesKey("automatic_nearby_day_count")
+    private val keyAutomaticNearbyFloor = longPreferencesKey("automatic_nearby_visit_start_floor")
 
     /** Whether the first-run onboarding flow has been completed or skipped. */
     val onboardingComplete: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -111,6 +128,9 @@ class SettingsRepository @Inject constructor(
             apiAccessConsentNeverAsk = prefs[keyApiNeverAsk] ?: false,
             routeApiEnabled = prefs[keyRouteApiEnabled] ?: true,
             telemetryEnabled = prefs[keyTelemetryEnabled] ?: true,
+            googleCloudProjectId = prefs[keyGoogleCloudProjectId] ?: "",
+            automaticNearbyDailyLimit = prefs[keyAutomaticNearbyDailyLimit] ?: 30,
+            includeMapsPlatformInBackup = prefs[keyIncludeMapsPlatformInBackup] ?: false,
         )
     }
 
@@ -136,6 +156,70 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setTelemetryEnabled(enabled: Boolean) {
         context.dataStore.edit { it[keyTelemetryEnabled] = enabled }
+    }
+
+    suspend fun setGoogleCloudProjectId(projectId: String) {
+        context.dataStore.edit { prefs ->
+            val normalized = projectId.trim()
+            if (normalized.isEmpty()) prefs.remove(keyGoogleCloudProjectId)
+            else prefs[keyGoogleCloudProjectId] = normalized
+        }
+    }
+
+    suspend fun setAutomaticNearbyDailyLimit(limit: Int) {
+        require(limit in setOf(-1, 0, 10, 30, 60, 120))
+        context.dataStore.edit { it[keyAutomaticNearbyDailyLimit] = limit }
+    }
+
+    /** Establish the upgrade/install watermark before maintenance sees its first candidate. */
+    suspend fun ensureAutomaticNearbyFloor(nowMs: Long) {
+        context.dataStore.edit { prefs ->
+            if (prefs[keyAutomaticNearbyFloor] == null) prefs[keyAutomaticNearbyFloor] = nowMs
+        }
+    }
+
+    /**
+     * When a genuinely new visit is eligible, atomically reserves one request in the UTC day's
+     * allowance and advances the "already checked with Places" floor. No key / disabled / exhausted
+     * allowance leaves the floor unchanged so the visit may be considered later. The floor advances
+     * immediately before dispatch, favoring at-most-once billing if the process dies before the
+     * rebuilt row is committed.
+     */
+    suspend fun claimAutomaticNearbyLookup(
+        visitStartMs: Long,
+        visitEndMs: Long,
+        nowMs: Long,
+        networkEligible: Boolean,
+    ): AutomaticNearbyClaim {
+        var result = AutomaticNearbyClaim.SKIPPED
+        context.dataStore.edit { prefs ->
+            val floor = prefs[keyAutomaticNearbyFloor] ?: nowMs.also {
+                prefs[keyAutomaticNearbyFloor] = it
+            }
+            if (visitStartMs < floor) {
+                result = AutomaticNearbyClaim.BELOW_FLOOR
+                return@edit
+            }
+            if (!networkEligible) return@edit
+            val limit = prefs[keyAutomaticNearbyDailyLimit] ?: 30
+            if (limit == 0) return@edit
+            val day = Math.floorDiv(nowMs, UTC_DAY_MS)
+            val storedDay = prefs[keyAutomaticNearbyDay]
+            val count = if (storedDay == day) prefs[keyAutomaticNearbyCount] ?: 0 else 0
+            if (limit < 0 || count < limit) {
+                // Mark the whole finalized span as checked. A later detector pass may nudge this
+                // logical visit's start forward, but it will still remain below this end boundary.
+                prefs[keyAutomaticNearbyFloor] = maxOf(floor, visitEndMs)
+                prefs[keyAutomaticNearbyDay] = day
+                prefs[keyAutomaticNearbyCount] = (count + 1).coerceAtMost(Int.MAX_VALUE)
+                result = AutomaticNearbyClaim.ALLOWED
+            }
+        }
+        return result
+    }
+
+    suspend fun setIncludeMapsPlatformInBackup(include: Boolean) {
+        context.dataStore.edit { it[keyIncludeMapsPlatformInBackup] = include }
     }
 
     /** Suppress the first-run API-access consent screen (the "don't ask again" choice). */
@@ -188,6 +272,7 @@ class SettingsRepository @Inject constructor(
             } ?: BackupEncryption.NONE,
             cryptoHeaderJson = prefs[keyBackupHeader],
             lastBackupMs = prefs[keyLastBackup] ?: 0L,
+            includeMapsPlatformConfig = prefs[keyIncludeMapsPlatformInBackup] ?: false,
         )
     }
 
@@ -232,5 +317,9 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setLastBackup(ms: Long) {
         context.dataStore.edit { it[keyLastBackup] = ms }
+    }
+
+    private companion object {
+        const val UTC_DAY_MS = 86_400_000L
     }
 }

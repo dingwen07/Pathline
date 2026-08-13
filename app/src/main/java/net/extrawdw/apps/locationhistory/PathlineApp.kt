@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.google.firebase.FirebaseApp
-import com.google.firebase.appcheck.FirebaseAppCheck
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +47,7 @@ class PathlineApp : Application(), Configuration.Provider {
         AppLog.logRecentApplicationExitInfo(this)
         AppLog.i("App", "onCreate")
         Notifications.ensureChannel(this)
+        appScope.launch { settingsRepository.ensureAutomaticNearbyFloor(System.currentTimeMillis()) }
         appScope.launch {
             runCatching { legacyPlaceCoordinates.classifySafeRows() }
                 .onFailure { AppLog.w("Coordinates", "legacy classification failed: ${it.message}") }
@@ -57,11 +57,11 @@ class PathlineApp : Application(), Configuration.Provider {
 
     /**
      * Configure Firebase services when google-services.json is present. Without it (CI / fresh
-     * checkout), [FirebaseApp.initializeApp] returns null and the app still runs; routes simply won't
-     * carry an App Check token and telemetry stays off. Crashlytics / Performance collection follows
-     * the in-app "Share crash & performance reports" switch via [FirebaseTelemetry]; here we reconcile
-     * the stored preference into the SDKs. Reading it asynchronously is safe -- each SDK persists its
-     * own last value and honors it at the next cold start, so there's no startup collection window.
+     * checkout), [FirebaseApp.initializeApp] returns null and the app still runs. Crashlytics /
+     * Performance collection follows the in-app "Share crash & performance reports" switch via
+     * [FirebaseTelemetry]; here we reconcile the stored preference into the SDKs. Reading it
+     * asynchronously is safe -- each SDK persists its own last value and honors it at the next cold
+     * start, so there's no startup collection window.
      */
     private fun initFirebase() {
         runCatching {
@@ -70,7 +70,6 @@ class PathlineApp : Application(), Configuration.Provider {
                 return
             }
 
-            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(appCheckProviderFactory())
             appScope.launch { FirebaseTelemetry.apply(settingsRepository.telemetryEnabled()) }
             AppLog.i("App", "Firebase services configured")
         }.onFailure { AppLog.w("App", "Firebase init failed: ${it.message}") }

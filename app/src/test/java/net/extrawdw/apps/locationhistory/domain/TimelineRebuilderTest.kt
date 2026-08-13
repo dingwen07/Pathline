@@ -5,12 +5,15 @@ import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import net.extrawdw.apps.locationhistory.core.TransportMode
+import net.extrawdw.apps.locationhistory.core.CandidateOrigin
+import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
 import net.extrawdw.apps.locationhistory.data.repo.RecordingRepository
+import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -40,6 +43,7 @@ class TimelineRebuilderTest {
     private val store = AnnotationStore(FakeTagDao(), FakeAnnotationDao(), FakeConceptDao())
 
     private var matchPlace: suspend (Double, Double) -> PlaceMatch = { _, _ -> PlaceMatch.None }
+    private val matchOngoingFlags = mutableListOf<Boolean>()
 
     /** One single-mode WALKING run per non-trivial sample span — the segmenter seam scripted. */
     private val segmentTrips: (List<LocationSampleEntity>) -> List<SegmentResult> = { samples ->
@@ -68,7 +72,10 @@ class TimelineRebuilderTest {
         placeRepository = PlaceRepository(placeDao, visitDao, store),
         visitDetector = VisitDetector(),
         merger = TimelineMerger(visitDao, tripDao, sampleDao, placeDao, store),
-        matchPlace = { lat, lon -> matchPlace(lat, lon) },
+        matchPlace = { _, _, lat, lon, ongoing ->
+            matchOngoingFlags += ongoing
+            matchPlace(lat, lon)
+        },
         segmentTrips = segmentTrips,
         inTransaction = { block -> block() },
         now = { nowMs },
@@ -190,6 +197,34 @@ class TimelineRebuilderTest {
         assertEquals(TransportMode.WALKING, trip.mode)
         assertFalse(trip.confirmed)
         assertTrue(trip.distanceMeters > 1_000)
+    }
+
+    @Test
+    fun rebuild_carriesGoogleAttributionWithoutCallingMatcherAgain() {
+        stay(600, 630, lat = 40.0)
+        walk(631, 640, fromLat = 40.001)
+        matchPlace = { _, _ ->
+            PlaceMatch.Candidate(
+                PlaceCandidate(
+                    name = "Test cafe",
+                    googlePlaceId = "test-place-id",
+                    coordinate = Wgs84Coordinate(40.0, -74.0),
+                    address = null,
+                    primaryType = "cafe",
+                    origin = CandidateOrigin.MAPS,
+                ),
+                confidence = 0.5f,
+            )
+        }
+
+        rebuild()
+        assertEquals(1, matchOngoingFlags.size)
+        assertFalse(matchOngoingFlags.single())
+        assertEquals("test-place-id", visitDao.visits.single().candidateGooglePlaceId)
+
+        rebuild()
+        assertEquals("an attributed reconstructed visit must not be looked up again", 1, matchOngoingFlags.size)
+        assertEquals("test-place-id", visitDao.visits.single().candidateGooglePlaceId)
     }
 
     @Test

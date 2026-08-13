@@ -82,4 +82,13 @@ data class SnapshotEntry(
 @Serializable
 data class BackupSettings(
     val powerProfile: String? = null,
+    val mapsPlatform: BackupMapsPlatformConfig? = null,
+)
+
+/** Present only when the user opted in and the containing Pathline backup is encrypted. */
+@Serializable
+data class BackupMapsPlatformConfig(
+    val apiKey: String? = null,
+    val googleCloudProjectId: String = "",
+    val automaticNearbyDailyLimit: Int = 30,
 )

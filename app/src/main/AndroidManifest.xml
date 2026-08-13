@@ -236,10 +236,10 @@
             android:name="firebase_performance_collection_enabled"
             android:value="${FIREBASE_PERFORMANCE_COLLECTION_ENABLED}" />
 
-        <!-- Google Maps / Places API key, injected from local.properties (see build.gradle.kts) -->
+        <!-- Maps-SDK-only key, injected from local.properties/environment (see build.gradle.kts). -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="${MAPS_API_KEY}" />
+            android:value="${MAPS_SDK_API_KEY}" />
 
         <!-- Foreground location recorder; stays alive for the whole tracking session, dropping to a
              low-power cadence while stationary rather than stopping. -->

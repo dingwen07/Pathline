@@ -17,13 +17,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,11 +32,13 @@ import androidx.compose.runtime.setValue
 import android.content.Context
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.Geo
@@ -63,6 +65,7 @@ fun ConfirmPlaceSheet(
     localPlaces: List<PlaceEntity>,
     loadNearby: suspend (Double, Double) -> List<PlaceCandidate>,
     searchPlaces: suspend (String, Double, Double) -> List<PlaceCandidate>,
+    mapsApiKeyConfigured: Boolean,
     onConfirm: (PlaceChoice) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -74,11 +77,12 @@ fun ConfirmPlaceSheet(
     var nearbyLoading by remember(anchor) { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var searchLoading by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf(visit.candidateName ?: "") }
     val scope = rememberCoroutineScope()
 
     fun requestNearby() {
-        if (nearbyRequested || nearbyLoading) return
+        if (!mapsApiKeyConfigured || nearbyRequested || nearbyLoading) return
         nearbyRequested = true
         nearbyLoading = true
         scope.launch {
@@ -87,13 +91,16 @@ fun ConfirmPlaceSheet(
             nearbyLoading = false
         }
     }
-    // Debounced text search against the Maps API.
-    LaunchedEffect(query, anchor) {
-        if (query.isBlank()) {
-            results = emptyList(); return@LaunchedEffect
+    fun requestSearch() {
+        val requested = query.trim()
+        if (!mapsApiKeyConfigured || requested.isEmpty() || searchLoading) return
+        searchLoading = true
+        scope.launch {
+            results = runCatching {
+                searchPlaces(requested, anchor.latitude, anchor.longitude)
+            }.getOrDefault(emptyList())
+            searchLoading = false
         }
-        delay(350)
-        results = searchPlaces(query, anchor.latitude, anchor.longitude)
     }
 
     val context = LocalContext.current
@@ -128,18 +135,41 @@ fun ConfirmPlaceSheet(
 
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = {
+                    query = it
+                    if (it.isBlank()) results = emptyList()
+                },
                 label = { Text(stringResource(R.string.search_places_label)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(
+                        onClick = ::requestSearch,
+                        enabled = mapsApiKeyConfigured && query.isNotBlank() && !searchLoading,
+                    ) {
+                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search))
+                    }
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { requestSearch() }),
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp),
             )
 
+            if (!mapsApiKeyConfigured) {
+                Text(
+                    stringResource(R.string.maps_api_key_required_for_search),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+
             NearbyPlacesButton(
                 visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
                 loading = nearbyLoading,
+                enabled = mapsApiKeyConfigured,
                 onClick = ::requestNearby,
             )
 
@@ -234,6 +264,7 @@ fun AddGooglePlaceSheet(
     anchor: PlaceSearchAnchor,
     loadNearby: suspend (Double, Double) -> List<PlaceCandidate>,
     searchPlaces: suspend (String, Double, Double) -> List<PlaceCandidate>,
+    mapsApiKeyConfigured: Boolean,
     onAdd: (PlaceCandidate) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -242,10 +273,11 @@ fun AddGooglePlaceSheet(
     var nearbyLoading by remember(anchor) { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
+    var searchLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun requestNearby() {
-        if (nearbyRequested || nearbyLoading) return
+        if (!mapsApiKeyConfigured || nearbyRequested || nearbyLoading) return
         nearbyRequested = true
         nearbyLoading = true
         scope.launch {
@@ -254,12 +286,16 @@ fun AddGooglePlaceSheet(
             nearbyLoading = false
         }
     }
-    LaunchedEffect(query, anchor) {
-        if (query.isBlank()) {
-            results = emptyList(); return@LaunchedEffect
+    fun requestSearch() {
+        val requested = query.trim()
+        if (!mapsApiKeyConfigured || requested.isEmpty() || searchLoading) return
+        searchLoading = true
+        scope.launch {
+            results = runCatching {
+                searchPlaces(requested, anchor.latitude, anchor.longitude)
+            }.getOrDefault(emptyList())
+            searchLoading = false
         }
-        delay(350)
-        results = searchPlaces(query, anchor.latitude, anchor.longitude)
     }
 
     val context = LocalContext.current
@@ -278,18 +314,41 @@ fun AddGooglePlaceSheet(
 
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = {
+                    query = it
+                    if (it.isBlank()) results = emptyList()
+                },
                 label = { Text(stringResource(R.string.search_places_label)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(
+                        onClick = ::requestSearch,
+                        enabled = mapsApiKeyConfigured && query.isNotBlank() && !searchLoading,
+                    ) {
+                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search))
+                    }
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { requestSearch() }),
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp),
             )
 
+            if (!mapsApiKeyConfigured) {
+                Text(
+                    stringResource(R.string.maps_api_key_required_for_search),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+
             NearbyPlacesButton(
                 visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
                 loading = nearbyLoading,
+                enabled = mapsApiKeyConfigured,
                 onClick = ::requestNearby,
             )
 
@@ -330,12 +389,13 @@ fun AddGooglePlaceSheet(
 private fun NearbyPlacesButton(
     visible: Boolean,
     loading: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     if (!visible) return
     OutlinedButton(
         onClick = onClick,
-        enabled = !loading,
+        enabled = enabled && !loading,
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp),

@@ -22,7 +22,7 @@
 # ---------------------------------------------------------------------------
 # Firebase component discovery — registrars are named from manifest metadata
 # and instantiated reflectively. Preserve their constructors in minified
-# release builds so App Check providers register correctly.
+# release builds so Crashlytics and Performance components register correctly.
 # ---------------------------------------------------------------------------
 -keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
 

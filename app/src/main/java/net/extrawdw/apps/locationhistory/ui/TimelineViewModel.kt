@@ -60,6 +60,8 @@ import net.extrawdw.apps.locationhistory.domain.TimelineEditor
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
 import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
+import net.extrawdw.apps.locationhistory.work.TimelineMaintenanceWorker
+import net.extrawdw.apps.locationhistory.security.MapsApiKeyVault
 import javax.inject.Inject
 
 /** A polyline segment to draw on the map, coloured by its transport mode. */
@@ -111,6 +113,7 @@ class TimelineViewModel @Inject constructor(
     private val workManager: WorkManager,
     private val mapProjector: GoogleMapProjector,
     private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
+    mapsApiKeyVault: MapsApiKeyVault,
     settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
@@ -122,6 +125,8 @@ class TimelineViewModel @Inject constructor(
     val recordingEnabled: StateFlow<Boolean> = settingsRepository.settings
         .map { it.trackingEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val mapsApiKeyConfigured: StateFlow<Boolean> = mapsApiKeyVault.configured
 
     val refreshing = MutableStateFlow(false)
     private var lastRefreshMs = 0L
@@ -170,7 +175,7 @@ class TimelineViewModel @Inject constructor(
                 runCatching {
                     val id = workScheduler.enqueueTimelineMaintenanceNow(
                         selectedDay.value,
-                        "pull_refresh"
+                        TimelineMaintenanceWorker.REASON_PULL_REFRESH
                     )
                     val finished = withTimeoutOrNull(6_000) {
                         workManager.getWorkInfoByIdFlow(id)

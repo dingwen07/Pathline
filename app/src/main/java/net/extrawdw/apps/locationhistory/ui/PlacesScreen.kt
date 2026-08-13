@@ -52,6 +52,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     val places by viewModel.places.collectAsStateWithLifecycle()
     val pending by viewModel.unconfirmedVisits.collectAsStateWithLifecycle()
     val visitCounts by viewModel.visitCounts.collectAsStateWithLifecycle()
+    val mapsApiKeyConfigured by viewModel.mapsApiKeyConfigured.collectAsStateWithLifecycle()
 
     var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
     var deletePlace by remember { mutableStateOf<PlaceEntity?>(null) }
@@ -266,6 +267,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             localPlaces = places,
             loadNearby = { lat, lon -> viewModel.nearbySuggestions(lat, lon) },
             searchPlaces = { q, lat, lon -> viewModel.searchPlaces(q, lat, lon) },
+            mapsApiKeyConfigured = mapsApiKeyConfigured,
             onConfirm = { choice -> viewModel.confirmVisit(visit.id, choice); assignVisit = null },
             onDismiss = { assignVisit = null },
         )
@@ -276,6 +278,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             anchor = anchor,
             loadNearby = { lat, lon -> viewModel.nearbySuggestions(lat, lon) },
             searchPlaces = { q, lat, lon -> viewModel.searchPlaces(q, lat, lon) },
+            mapsApiKeyConfigured = mapsApiKeyConfigured,
             onAdd = { candidate ->
                 viewModel.addGooglePlace(candidate)
                 addPlaceAnchor = null

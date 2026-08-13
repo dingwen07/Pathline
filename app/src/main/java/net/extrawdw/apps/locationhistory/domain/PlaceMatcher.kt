@@ -36,6 +36,13 @@ class PlaceMatcher @Inject constructor(
 ) {
 
     suspend fun match(lat: Double, lon: Double): PlaceMatch {
+        val local = matchLocal(lat, lon)
+        if (local is PlaceMatch.Local) return local
+        return runCatching { lookupNearby(lat, lon) }.getOrDefault(PlaceMatch.None)
+    }
+
+    /** Cheap, offline-only match used by every timeline rebuild. */
+    suspend fun matchLocal(lat: Double, lon: Double): PlaceMatch {
         nearestLocalPlace(lat, lon)?.let { (place, distance) ->
             // Confidence falls off with distance within the match radius; confirmed places get a
             // floor so a known home/work is trusted even with sloppy GPS.
@@ -45,6 +52,11 @@ class PlaceMatcher @Inject constructor(
             return PlaceMatch.Local(place, confidence.toFloat())
         }
 
+        return PlaceMatch.None
+    }
+
+    /** One remote Nearby request. Callers own all frequency/floor policy. */
+    suspend fun lookupNearby(lat: Double, lon: Double): PlaceMatch {
         val candidate = placesPort.nearestPlace(
             Wgs84Coordinate(lat, lon),
             Constants.PLACE_MATCH_RADIUS_METERS,
