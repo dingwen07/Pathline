@@ -1,6 +1,6 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
-import androidx.room.withTransaction
+import androidx.room3.withWriteTransaction
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateRepairDecision
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -40,7 +40,7 @@ class LegacyPlaceCoordinateManager @Inject constructor(
 
     /** Idempotently classify only rows whose persisted geometry proves one safe interpretation. */
     suspend fun classifySafeRows() = writeLock.withLock {
-        db.withTransaction {
+        db.withWriteTransaction {
             placeDao.unresolvedCoordinates().forEach { current ->
                 val classification = when {
                     isExactHistoricalIdentity(current) ->
@@ -86,15 +86,15 @@ class LegacyPlaceCoordinateManager @Inject constructor(
         original: PlaceEntity,
         decision: PlaceCoordinateRepairDecision,
     ): Boolean = writeLock.withLock {
-        db.withTransaction {
-            val current = placeDao.byId(original.id) ?: return@withTransaction false
+        db.withWriteTransaction {
+            val current = placeDao.byId(original.id) ?: return@withWriteTransaction false
             if (current.coordinateState == PlaceCoordinateState.WGS84_CANONICAL ||
                 !current.geometryRawEquals(original)
-            ) return@withTransaction false
+            ) return@withWriteTransaction false
             if (current.coordinateState ==
                 PlaceCoordinateState.LEGACY_MIXED_CENTER_GOOGLE_MAP_BASELINE &&
                 decision.usesSavedCenter()
-            ) return@withTransaction false
+            ) return@withWriteTransaction false
 
             val canonical = when (decision) {
                 PlaceCoordinateRepairDecision.SAVED_CENTER_AS_WGS84 ->
@@ -130,7 +130,7 @@ class LegacyPlaceCoordinateManager @Inject constructor(
                 PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_GOOGLE_PROVIDER_BASELINE,
                 PlaceCoordinateRepairDecision.AUTO_CLASSIFIED_MIXED_GOOGLE_PROVIDER_BASELINE,
                 PlaceCoordinateRepairDecision.UNKNOWN -> null
-            } ?: return@withTransaction false
+            } ?: return@withWriteTransaction false
 
             // A legacy mixed center is never interpreted or inverse-transformed. Baseline choices
             // replace it with the normalized baseline; saved-center choices were rejected above.
@@ -170,12 +170,12 @@ class LegacyPlaceCoordinateManager @Inject constructor(
 
     /** Undo only if no later maintenance/editor write changed the repaired geometry. */
     suspend fun undo(currentSnapshot: PlaceEntity): Boolean = writeLock.withLock {
-        db.withTransaction {
-            val current = placeDao.byId(currentSnapshot.id) ?: return@withTransaction false
-            if (!current.geometryRawEquals(currentSnapshot)) return@withTransaction false
-            val repair = repairDao.latestActive(current.id) ?: return@withTransaction false
+        db.withWriteTransaction {
+            val current = placeDao.byId(currentSnapshot.id) ?: return@withWriteTransaction false
+            if (!current.geometryRawEquals(currentSnapshot)) return@withWriteTransaction false
+            val repair = repairDao.latestActive(current.id) ?: return@withWriteTransaction false
             if (!repair.decision.isUserRepair() || !current.matchesRepaired(repair)) {
-                return@withTransaction false
+                return@withWriteTransaction false
             }
 
             placeDao.update(

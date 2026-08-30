@@ -1,9 +1,10 @@
 package net.extrawdw.apps.locationhistory.di
 
 import android.content.Context
-import androidx.room.Room
-import androidx.room.RoomDatabase
-import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room3.RoomDatabase
+import androidx.room3.Room
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -27,8 +28,7 @@ import net.extrawdw.apps.locationhistory.data.db.TripDao
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.security.DatabaseKeyStore
 import net.extrawdw.apps.locationhistory.security.SqlCipherSupport
-import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
-import java.io.File
+import net.zetetic.database.sqlcipher.driver.SQLCipherDriver
 import javax.inject.Singleton
 
 @Module
@@ -41,18 +41,23 @@ object DatabaseModule {
         @ApplicationContext context: Context,
         keyStore: DatabaseKeyStore,
     ): AppDatabase {
-        // The net.zetetic:sqlcipher-android artifact does not auto-load its native library; it must
-        // be loaded before any SQLCipher use (the migration helper and the open-helper factory).
+        // SQLCipher does not auto-load its native library; load it before plaintext detection or
+        // the Room 3 SQLiteDriver opens a connection.
         System.loadLibrary("sqlcipher")
         val rawKey = keyStore.databasePassphrase()
-        // Transparently upgrade any pre-encryption plaintext DB before Room opens the file.
-        SqlCipherSupport.migratePlaintextIfNeeded(
-            context, File(context.getDatabasePath(AppDatabase.NAME).absolutePath), rawKey,
-        )
-        val factory = SupportOpenHelperFactory(SqlCipherSupport.passphrase(rawKey))
+        val databaseFile = context.getDatabasePath(AppDatabase.NAME)
+        val driver = try {
+            // Transparently upgrade any pre-encryption plaintext DB before Room opens the file.
+            SqlCipherSupport.migratePlaintextIfNeeded(context, databaseFile, rawKey)
+            SQLCipherDriver(SqlCipherSupport.passphrase(rawKey), null, null)
+        } finally {
+            // The driver owns its derived SQLCipher literal; the Keystore-unwrapped raw key no
+            // longer needs to remain in this scope.
+            rawKey.fill(0)
+        }
 
-        return Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME)
-            .openHelperFactory(factory)
+        return Room.databaseBuilder(context, AppDatabase::class.java, databaseFile.absolutePath)
+            .setDriver(driver)
             // WAL keeps writes fast and is the right journal mode for an append-heavy fact table.
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addCallback(TriggerCallback)
@@ -100,34 +105,16 @@ object DatabaseModule {
     fun provideSearchDao(db: AppDatabase): SearchDao = db.searchDao()
 
     /**
-     * Standalone, unencrypted log DB for the third-party API audit trail (which app read what, when).
-     * Kept apart from [AppDatabase] so logging never touches the frozen v1 schema or the backup
-     * engine. A schema change here may rebuild destructively — the audit log is disposable.
+     * Standalone, unencrypted database for the third-party API audit trail and durable place-grant
+     * ledger. It stays separate from [AppDatabase], but its schema is migrated normally so recovery
+     * never discards consumer-app authorization scope.
      */
     @Provides
     @Singleton
-    fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase {
-        fun build(): ApiAccessDatabase =
-            Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
-                // A real migration where one is known (it also carries the place-grant ledger,
-                // which is worth keeping); anything unexpected still rebuilds destructively.
-                .addMigrations(ApiAccessDatabase.MIGRATION_1_2)
-                .fallbackToDestructiveMigration(dropAllTables = true)
-                .build()
-
-        val db = build()
-        return try {
-            // The schema of this disposable audit DB can change without a version bump. Force the open
-            // now: a schema-identity mismatch throws here, and since the log is disposable we simply
-            // drop the file and recreate it fresh with the current schema (no migration).
-            db.openHelper.writableDatabase
-            db
-        } catch (t: Throwable) {
-            runCatching { db.close() }
-            context.deleteDatabase(ApiAccessDatabase.NAME)
-            build()
-        }
-    }
+    fun provideApiAccessDatabase(@ApplicationContext context: Context): ApiAccessDatabase =
+        Room.databaseBuilder(context, ApiAccessDatabase::class.java, ApiAccessDatabase.NAME)
+            .addMigrations(ApiAccessDatabase.MIGRATION_1_2)
+            .build()
 
     @Provides
     fun provideApiAccessDao(db: ApiAccessDatabase): ApiAccessDao = db.apiAccessDao()
@@ -136,14 +123,12 @@ object DatabaseModule {
     fun provideApiPlaceGrantDao(db: ApiAccessDatabase): ApiPlaceGrantDao = db.apiPlaceGrantDao()
 
     /**
-     * Room creates entity tables on a fresh install but never triggers or virtual tables — add the
-     * backup dirty-partition triggers and the FTS5 search tables/triggers here. (On upgrade these come
-     * from the migration instead; a fresh DB has no rows to backfill.)
+     * Room owns the entity tables and FTS5 sync triggers. The backup dirty-partition triggers remain
+     * application-specific and therefore must be installed for a fresh database here.
      */
     private val TriggerCallback = object : RoomDatabase.Callback() {
-        override fun onCreate(db: SupportSQLiteDatabase) {
-            AppDatabase.DIRTY_TRIGGERS.forEach(db::execSQL)
-            AppDatabase.FTS_CREATE.forEach(db::execSQL)
+        override suspend fun onCreate(connection: SQLiteConnection) {
+            AppDatabase.DIRTY_TRIGGERS.forEach(connection::execSQL)
         }
     }
 }

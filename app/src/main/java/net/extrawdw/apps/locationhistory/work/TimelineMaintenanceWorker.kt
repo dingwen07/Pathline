@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.hilt.work.HiltWorker
-import androidx.room.withTransaction
+import androidx.room3.withWriteTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
@@ -122,7 +122,7 @@ class TimelineMaintenanceWorker @AssistedInject constructor(
                 }
             },
             segmentTrips = tripSegmenter::segment,
-            inTransaction = { block -> db.withTransaction { block() } },
+            inTransaction = { block -> db.withWriteTransaction { block() } },
             log = { AppLog.w(TAG, it) },
         )
         // The whole rebuild holds the timeline write lock, so a user confirmation or hand edit can

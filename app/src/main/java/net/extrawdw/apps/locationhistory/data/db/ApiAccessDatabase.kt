@@ -1,14 +1,17 @@
 package net.extrawdw.apps.locationhistory.data.db
 
-import androidx.room.Dao
-import androidx.room.Database
-import androidx.room.Entity
-import androidx.room.Index
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.PrimaryKey
-import androidx.room.Query
-import androidx.room.RoomDatabase
+import androidx.room3.Dao
+import androidx.room3.Database
+import androidx.room3.Entity
+import androidx.room3.Index
+import androidx.room3.Insert
+import androidx.room3.OnConflictStrategy
+import androidx.room3.PrimaryKey
+import androidx.room3.Query
+import androidx.room3.RoomDatabase
+import androidx.room3.migration.Migration
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -161,14 +164,14 @@ interface ApiAccessDao {
 }
 
 /**
- * Standalone, unencrypted database for the API access audit log. Separate from [AppDatabase] on
- * purpose — see [ApiAccessEventEntity]. Schema export is off because there is nothing sensitive to
- * migrate; if the shape ever changes, a destructive rebuild of just this log is acceptable.
+ * Standalone, unencrypted database for the API access audit log and place-grant ledger. It is
+ * separate from [AppDatabase] so access logging never opens the encrypted history database, but its
+ * schema is exported and migrated because [ApiPlaceGrantEntity] is durable authorization state.
  */
 @Database(
     entities = [ApiAccessEventEntity::class, ApiPlaceGrantEntity::class],
     version = 2,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class ApiAccessDatabase : RoomDatabase() {
     abstract fun apiAccessDao(): ApiAccessDao
@@ -179,12 +182,11 @@ abstract class ApiAccessDatabase : RoomDatabase() {
 
         /**
          * v2: the [ApiAccessEventEntity.isWrite] column (annotation writes land in the same log).
-         * A destructive rebuild would be acceptable for the *log*, but this DB also holds the
-         * place-grant ledger — a real migration keeps consumer apps' place scoping intact.
+         * The database also holds the place-grant ledger, so this migration preserves both tables.
          */
-        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
-            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                db.execSQL(
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override suspend fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "ALTER TABLE api_access_events ADD COLUMN isWrite INTEGER NOT NULL DEFAULT 0",
                 )
             }

@@ -54,7 +54,7 @@ internal class TimelineRebuilder(
     /** Split moving samples into single-mode runs — [TripSegmenter.segment] in production. */
     private val segmentTrips: (List<LocationSampleEntity>) -> List<SegmentResult>,
     /** Atomicity for the whole write phase (delete -> materialize -> trips -> merge -> sweep) —
-     *  `db.withTransaction` in production. Place matches are resolved *before* it so no network
+     *  `db.withWriteTransaction` in production. Place matches are resolved *before* it so no network
      *  call ever runs inside the transaction. */
     private val inTransaction: suspend (block: suspend () -> Unit) -> Unit,
     private val now: () -> Long = System::currentTimeMillis,

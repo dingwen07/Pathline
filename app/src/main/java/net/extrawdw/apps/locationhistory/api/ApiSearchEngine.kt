@@ -1,6 +1,5 @@
 package net.extrawdw.apps.locationhistory.api
 
-import androidx.sqlite.db.SimpleSQLiteQuery
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.data.db.AnnotationDao
@@ -81,13 +80,7 @@ internal class ApiSearchEngine(
         val ids = LinkedHashSet<Long>()
         val ftsColumns = fields.filter { it in PLACE_DETAIL_FIELDS }
         if (ftsColumns.isNotEmpty()) {
-            ids += searchDao.matchRowIds(
-                SimpleSQLiteQuery(
-                    "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ? " +
-                            "ORDER BY bm25(places_fts)",
-                    arrayOf(ApiSearch.ftsQuery(q, ftsColumns)),
-                ),
-            ).map { it.id }
+            ids += searchDao.matchPlaces(ApiSearch.ftsQuery(q, ftsColumns)).map { it.id }
         }
         if (PathlineContract.SearchFields.TAGS in fields) {
             val tagIds = ftsTagIds(q)
@@ -208,12 +201,8 @@ internal class ApiSearchEngine(
 
     /** Tag ids whose display name matches [q] — **relevance-ordered** (bm25, best first). */
     suspend fun ftsTagIds(q: String): LinkedHashSet<Long> =
-        searchDao.matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM tags_fts WHERE tags_fts MATCH ? ORDER BY bm25(tags_fts)",
-                arrayOf(ApiSearch.ftsQuery(q, listOf("displayName"))),
-            ),
-        ).mapTo(LinkedHashSet()) { it.id }
+        searchDao.matchTags(ApiSearch.ftsQuery(q, listOf("displayName")))
+            .mapTo(LinkedHashSet()) { it.id }
 
     /** Union of the concept ids matching [q] in name/kind/description (FTS, **bm25-ranked** and
      *  first) plus the concept's own tags/notes/memories (no score, appended in stable order) — the
@@ -221,12 +210,8 @@ internal class ApiSearchEngine(
      *  (see [PathlineProvider]'s concepts route), so the annotation legs need no extra gate. */
     suspend fun matchedConceptIds(q: String): LinkedHashSet<Long> {
         val ids = LinkedHashSet<Long>()
-        ids += searchDao.matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM concepts_fts WHERE concepts_fts MATCH ? " +
-                        "ORDER BY bm25(concepts_fts)",
-                arrayOf(ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description"))),
-            ),
+        ids += searchDao.matchConcepts(
+            ApiSearch.ftsQuery(q, listOf("displayName", "kind", "description")),
         ).map { it.id }
         val tagIds = ftsTagIds(q)
         if (tagIds.isNotEmpty()) {
@@ -256,11 +241,8 @@ internal class ApiSearchEngine(
     /** Place ids whose **name** matches [q] — the place-name leg of visit/trip search (order
      *  irrelevant there: timeline search results stay chronological). */
     suspend fun ftsPlaceIdsByName(q: String): Set<Long> =
-        searchDao.matchRowIds(
-            SimpleSQLiteQuery(
-                "SELECT rowid AS id FROM places_fts WHERE places_fts MATCH ?",
-                arrayOf(ApiSearch.ftsQuery(q, listOf(PathlineContract.SearchFields.NAME))),
-            ),
+        searchDao.matchPlaces(
+            ApiSearch.ftsQuery(q, listOf(PathlineContract.SearchFields.NAME)),
         ).mapTo(HashSet()) { it.id }
 
     companion object {

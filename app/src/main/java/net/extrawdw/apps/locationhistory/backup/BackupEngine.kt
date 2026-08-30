@@ -1,7 +1,7 @@
 package net.extrawdw.apps.locationhistory.backup
 
 import android.content.Context
-import androidx.room.withTransaction
+import androidx.room3.withWriteTransaction
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -358,7 +358,7 @@ class BackupEngine @Inject constructor(
         val total = (inventory.partitions.size + 1).coerceAtLeast(1)
         var rows = 0
         var done = 0
-        db.withTransaction {
+        db.withWriteTransaction {
             backupDao.wipeForRestore()
             // Time-series partitions first (visits, trips, samples), then snapshots (places,
             // geofences, models) below. No FK constraints are enforced today, so order is not

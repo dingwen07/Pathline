@@ -1,0 +1,4 @@
+# SQLCipher classes are reached through JNI.
+-keep,includedescriptorclasses class net.sqlcipher.** { *; }
+-keep,includedescriptorclasses interface net.sqlcipher.** { *; }
+-dontwarn net.sqlcipher.**

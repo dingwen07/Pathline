@@ -1,37 +1,44 @@
 package net.extrawdw.apps.locationhistory.data.db
 
-import androidx.room.testing.MigrationTestHelper
-import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room3.testing.MigrationTestHelper
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
+import net.zetetic.database.sqlcipher.driver.SQLCipherDriver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.Closeable
 
 @RunWith(AndroidJUnit4::class)
 class AppMigrationsTest {
 
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
     @get:Rule
     val helper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        AppDatabase::class.java,
+        instrumentation = instrumentation,
+        file = instrumentation.targetContext.getDatabasePath(TEST_DATABASE),
+        driver = SQLCipherDriver(TEST_PASSPHRASE.copyOf(), null, null),
+        databaseClass = AppDatabase::class,
     )
 
     @Test
-    fun migration2To3_preservesGeometry_classifiesPlaces_andRetainsOnlyIdentityCandidates() {
-        helper.createDatabase(TEST_DATABASE, 2).use { database ->
+    fun migration2To3_preservesGeometry_classifiesPlaces_andRetainsOnlyIdentityCandidates() =
+        runBlocking {
+        helper.createDatabase(2).use { database ->
             PLACES.forEach { place -> database.insertPlace(place) }
             VISITS.forEach { visit -> database.insertVisit(visit) }
         }
 
         helper.runMigrationsAndValidate(
-            TEST_DATABASE,
-            3,
-            true,
-            AppMigrations.MIGRATION_2_3,
+            version = 3,
+            migrations = listOf(AppMigrations.MIGRATION_2_3),
         ).use { database ->
             assertPlaces(database)
             assertRepairJournal(database)
@@ -39,7 +46,7 @@ class AppMigrationsTest {
         }
     }
 
-    private fun assertPlaces(database: SupportSQLiteDatabase) {
+    private fun assertPlaces(database: SQLiteConnection) {
         database.query(
             "SELECT id, latitude, longitude, radiusMeters, anchorLatitude, anchorLongitude, " +
                 "anchorRadiusMeters, coordinateState FROM places ORDER BY id",
@@ -83,7 +90,7 @@ class AppMigrationsTest {
         }
     }
 
-    private fun assertVisit(database: SupportSQLiteDatabase) {
+    private fun assertVisit(database: SQLiteConnection) {
         database.query(
             "SELECT id, placeId, candidateName, candidateGooglePlaceId, candidateLatitude, " +
                 "candidateLongitude, startMs, endMs, dayEpoch, centroidLatitude, " +
@@ -155,7 +162,7 @@ class AppMigrationsTest {
         }
     }
 
-    private fun assertRepairJournal(database: SupportSQLiteDatabase) {
+    private fun assertRepairJournal(database: SQLiteConnection) {
         database.query(
             "SELECT placeId, originalCoordinateState, repairedCoordinateState, decision, " +
                     "originalSource, repairedSource, originalLatitude, repairedLatitude, " +
@@ -185,7 +192,7 @@ class AppMigrationsTest {
         }
     }
 
-    private fun SupportSQLiteDatabase.insertPlace(place: V2Place) {
+    private fun SQLiteConnection.insertPlace(place: V2Place) {
         execSQL(
             "INSERT INTO places (id, name, latitude, longitude, radiusMeters, category, types, " +
                 "source, googlePlaceId, address, confirmed, createdAtMs, fixed, anchorLatitude, " +
@@ -211,7 +218,7 @@ class AppMigrationsTest {
         )
     }
 
-    private fun SupportSQLiteDatabase.insertVisit(visit: V2Visit) {
+    private fun SQLiteConnection.insertVisit(visit: V2Visit) {
         execSQL(
             "INSERT INTO visits (id, placeId, candidateName, candidateGooglePlaceId, " +
                 "candidateLatitude, candidateLongitude, startMs, endMs, dayEpoch, " +
@@ -241,6 +248,42 @@ class AppMigrationsTest {
 
     private fun assertDoubleUnchanged(label: String, expected: Double, actual: Double) {
         assertEquals(label, expected.toRawBits(), actual.toRawBits())
+    }
+
+    private fun SQLiteConnection.query(sql: String): StatementCursor =
+        StatementCursor(prepare(sql))
+
+    private fun SQLiteConnection.execSQL(sql: String, bindArgs: Array<out Any?>) {
+        prepare(sql).use { statement ->
+            bindArgs.forEachIndexed { index, value -> statement.bindValue(index + 1, value) }
+            statement.step()
+        }
+    }
+
+    private fun SQLiteStatement.bindValue(index: Int, value: Any?) {
+        when (value) {
+            null -> bindNull(index)
+            is String -> bindText(index, value)
+            is Long -> bindLong(index, value)
+            is Int -> bindLong(index, value.toLong())
+            is Double -> bindDouble(index, value)
+            is Float -> bindDouble(index, value.toDouble())
+            is Boolean -> bindLong(index, if (value) 1 else 0)
+            is ByteArray -> bindBlob(index, value)
+            else -> error("unsupported SQLite bind type: ${value::class}")
+        }
+    }
+
+    private class StatementCursor(
+        private val statement: SQLiteStatement,
+    ) : Closeable {
+        fun moveToNext(): Boolean = statement.step()
+        fun getLong(index: Int): Long = statement.getLong(index)
+        fun getInt(index: Int): Int = statement.getLong(index).toInt()
+        fun getDouble(index: Int): Double = statement.getDouble(index)
+        fun getString(index: Int): String = statement.getText(index)
+        fun isNull(index: Int): Boolean = statement.isNull(index)
+        override fun close() = statement.close()
     }
 
     private data class V2Place(
@@ -278,6 +321,13 @@ class AppMigrationsTest {
 
     private companion object {
         const val TEST_DATABASE = "migration-2-3-test"
+        val TEST_PASSPHRASE: ByteArray =
+            "x'000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'"
+                .toByteArray(Charsets.US_ASCII)
+
+        init {
+            System.loadLibrary("sqlcipher")
+        }
 
         val PLACES = listOf(
             // The sole classified legacy shape: an untouched MAPS center with a complete,

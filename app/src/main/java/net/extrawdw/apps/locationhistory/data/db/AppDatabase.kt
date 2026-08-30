@@ -1,8 +1,8 @@
 package net.extrawdw.apps.locationhistory.data.db
 
-import androidx.room.Database
-import androidx.room.RoomDatabase
-import androidx.room.TypeConverters
+import androidx.room3.Database
+import androidx.room3.RoomDatabase
+import androidx.room3.ColumnTypeConverters
 
 @Database(
     entities = [
@@ -18,11 +18,14 @@ import androidx.room.TypeConverters
         AnnotationEntity::class,
         ConceptEntity::class,
         ConceptMemberEntity::class,
+        PlaceFtsEntity::class,
+        TagFtsEntity::class,
+        ConceptFtsEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
-@TypeConverters(Converters::class)
+@ColumnTypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun locationSampleDao(): LocationSampleDao
     abstract fun placeDao(): PlaceDao
@@ -40,7 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
         const val NAME = "pathline.db"
 
         /** Must equal the `version` above; used by the backup engine for restore compatibility. */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         /**
          * SQL that creates the backup dirty-partition triggers. Run from a
@@ -145,64 +148,5 @@ abstract class AppDatabase : RoomDatabase() {
             )
         }
 
-        /**
-         * FTS5 virtual tables + content-sync triggers for full-text search over places and tags.
-         * SQLCipher 4.6.1 ships fts5 compiled in (verified), so this works on the current stable Room
-         * 2.8.4 (which has only `@Fts4`) via raw SQL; queried later through `@RawQuery`. A move to room3
-         * `@Fts5` entities is a deferred, internal-only refactor that needs no API change.
-         *
-         * External-content tables (`content='<table>'`, `content_rowid='id'`): the index references
-         * the base row by rowid and is kept in sync by the triggers. Run from
-         * [net.extrawdw.apps.locationhistory.di.DatabaseModule]'s `onCreate` (fresh install) and from
-         * `Migration(1,2)` (upgrade); the migration additionally runs [FTS_BACKFILL] for existing rows.
-         */
-        val FTS_CREATE: List<String> = listOf(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS places_fts USING fts5(" +
-                    "name, address, category, types, content='places', content_rowid='id')",
-            "CREATE TRIGGER IF NOT EXISTS trg_places_fts_ai AFTER INSERT ON places BEGIN " +
-                    "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                    "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_places_fts_ad AFTER DELETE ON places BEGIN " +
-                    "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
-                    "VALUES('delete', old.id, old.name, old.address, old.category, old.types); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_places_fts_au AFTER UPDATE ON places BEGIN " +
-                    "INSERT INTO places_fts(places_fts, rowid, name, address, category, types) " +
-                    "VALUES('delete', old.id, old.name, old.address, old.category, old.types); " +
-                    "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                    "VALUES (new.id, new.name, new.address, new.category, new.types); END;",
-            "CREATE VIRTUAL TABLE IF NOT EXISTS tags_fts USING fts5(" +
-                    "displayName, content='tags', content_rowid='id')",
-            "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_ai AFTER INSERT ON tags BEGIN " +
-                    "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_ad AFTER DELETE ON tags BEGIN " +
-                    "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
-                    "VALUES('delete', old.id, old.displayName); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_tags_fts_au AFTER UPDATE ON tags BEGIN " +
-                    "INSERT INTO tags_fts(tags_fts, rowid, displayName) " +
-                    "VALUES('delete', old.id, old.displayName); " +
-                    "INSERT INTO tags_fts(rowid, displayName) VALUES (new.id, new.displayName); END;",
-            "CREATE VIRTUAL TABLE IF NOT EXISTS concepts_fts USING fts5(" +
-                    "displayName, kind, description, content='concepts', content_rowid='id')",
-            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_ai AFTER INSERT ON concepts BEGIN " +
-                    "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
-                    "VALUES (new.id, new.displayName, new.kind, new.description); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_ad AFTER DELETE ON concepts BEGIN " +
-                    "INSERT INTO concepts_fts(concepts_fts, rowid, displayName, kind, description) " +
-                    "VALUES('delete', old.id, old.displayName, old.kind, old.description); END;",
-            "CREATE TRIGGER IF NOT EXISTS trg_concepts_fts_au AFTER UPDATE ON concepts BEGIN " +
-                    "INSERT INTO concepts_fts(concepts_fts, rowid, displayName, kind, description) " +
-                    "VALUES('delete', old.id, old.displayName, old.kind, old.description); " +
-                    "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
-                    "VALUES (new.id, new.displayName, new.kind, new.description); END;",
-        )
-
-        /** Populate the FTS indexes from rows that already exist (upgrade path only). */
-        val FTS_BACKFILL: List<String> = listOf(
-            "INSERT INTO places_fts(rowid, name, address, category, types) " +
-                    "SELECT id, name, address, category, types FROM places",
-            "INSERT INTO tags_fts(rowid, displayName) SELECT id, displayName FROM tags",
-            "INSERT INTO concepts_fts(rowid, displayName, kind, description) " +
-                    "SELECT id, displayName, kind, description FROM concepts",
-        )
     }
 }

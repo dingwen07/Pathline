@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.room)
 }
 
 // Firebase services need google-services.json (gitignored, like the Maps key). Apply the plugins
@@ -36,8 +37,8 @@ android {
         applicationId = "net.extrawdw.apps.locationhistory"
         minSdk = 34
         targetSdk = 37
-        versionCode = 22
-        versionName = "1.8.5-rc.1"
+        versionCode = 23
+        versionName = "1.9.0-rc.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -49,15 +50,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            optimization {
+                enable = true
+            }
             ndk {
                 debugSymbolLevel = "FULL"
             }
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
     }
     compileOptions {
@@ -81,14 +79,11 @@ android {
             System.getProperty("user.timezone")?.let { test.systemProperty("user.timezone", it) }
         }
     }
-    sourceSets {
-        getByName("androidTest").assets.directories.add("$projectDir/schemas")
-    }
 }
 
-// Emit Room schemas to a versioned directory so migrations can be validated/tested.
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
+// Emit reproducible, cacheable Room schemas for migration validation and tests.
+room3 {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {
@@ -116,8 +111,8 @@ dependencies {
 
     // Persistence (Room + DataStore)
     implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.sqlite)
     implementation(libs.androidx.datastore.preferences)
 
     // Encrypted database + SAF backup destinations

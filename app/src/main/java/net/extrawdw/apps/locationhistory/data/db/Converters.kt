@@ -1,6 +1,6 @@
 package net.extrawdw.apps.locationhistory.data.db
 
-import androidx.room.TypeConverter
+import androidx.room3.ColumnTypeConverter
 import net.extrawdw.apps.locationhistory.core.AnnotationKind
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.CandidateCoordinateFrame
@@ -14,73 +14,73 @@ import net.extrawdw.apps.locationhistory.core.TransportMode
 
 /** Stores enums by stable name so reordering ordinals never corrupts persisted data. */
 class Converters {
-    @TypeConverter
+    @ColumnTypeConverter
     fun stateToString(v: DevicePhysicalState): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToState(v: String): DevicePhysicalState =
         runCatching { DevicePhysicalState.valueOf(v) }.getOrDefault(DevicePhysicalState.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun modeToString(v: TransportMode): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToMode(v: String): TransportMode =
         runCatching { TransportMode.valueOf(v) }.getOrDefault(TransportMode.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun sourceToString(v: PlaceSource): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToSource(v: String): PlaceSource =
         runCatching { PlaceSource.valueOf(v) }.getOrDefault(PlaceSource.INFERRED)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun placeCoordinateStateToString(v: PlaceCoordinateState): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToPlaceCoordinateState(v: String): PlaceCoordinateState =
         runCatching { PlaceCoordinateState.valueOf(v) }.getOrDefault(PlaceCoordinateState.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun repairDecisionToString(v: PlaceCoordinateRepairDecision): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToRepairDecision(v: String): PlaceCoordinateRepairDecision =
         runCatching { PlaceCoordinateRepairDecision.valueOf(v) }
             .getOrDefault(PlaceCoordinateRepairDecision.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun candidateFrameToString(v: CandidateCoordinateFrame): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToCandidateFrame(v: String): CandidateCoordinateFrame =
         runCatching { CandidateCoordinateFrame.valueOf(v) }
             .getOrDefault(CandidateCoordinateFrame.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun candidateOriginToString(v: CandidateOrigin): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToCandidateOrigin(v: String): CandidateOrigin =
         runCatching { CandidateOrigin.valueOf(v) }.getOrDefault(CandidateOrigin.UNKNOWN)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun transportToString(v: NetworkTransport?): String? = v?.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToTransport(v: String?): NetworkTransport? =
         v?.let { runCatching { NetworkTransport.valueOf(it) }.getOrNull() }
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun annotationTargetToString(v: AnnotationTarget): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToAnnotationTarget(v: String): AnnotationTarget = AnnotationTarget.valueOf(v)
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun annotationKindToString(v: AnnotationKind): String = v.name
 
-    @TypeConverter
+    @ColumnTypeConverter
     fun stringToAnnotationKind(v: String): AnnotationKind = AnnotationKind.valueOf(v)
 }

@@ -1,0 +1,2 @@
+# Firebase component registrars are named by manifest metadata and instantiated reflectively.
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }

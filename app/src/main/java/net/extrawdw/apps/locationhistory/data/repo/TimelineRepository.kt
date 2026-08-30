@@ -1,6 +1,6 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
-import androidx.room.withTransaction
+import androidx.room3.withWriteTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -104,13 +104,13 @@ class TimelineRepository @Inject constructor(
      * zero-row `@Update` silently swallows the user's input.
      */
     suspend fun confirmVisitPlace(visitId: Long, choice: PlaceChoice): Unit = writeLock.withLock {
-        db.withTransaction {
-            val visit = visitDao.byId(visitId) ?: return@withTransaction
+        db.withWriteTransaction {
+            val visit = visitDao.byId(visitId) ?: return@withWriteTransaction
             val placeId = when (choice) {
                 is PlaceChoice.Existing -> {
-                    val chosen = placeDao.byId(choice.placeId) ?: return@withTransaction
+                    val chosen = placeDao.byId(choice.placeId) ?: return@withWriteTransaction
                     if (chosen.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) {
-                        return@withTransaction
+                        return@withWriteTransaction
                     }
                     choice.placeId
                 }
@@ -135,8 +135,8 @@ class TimelineRepository @Inject constructor(
 
                 PlaceChoice.PromoteCandidate -> {
                     val candidateCoordinate = visit.promotableCandidateCoordinate()
-                        ?: return@withTransaction
-                    val candidateName = visit.candidateName ?: return@withTransaction
+                        ?: return@withWriteTransaction
+                    val candidateName = visit.candidateName ?: return@withWriteTransaction
                     placeRepository.confirmPlace(
                         name = candidateName,
                         latitude = candidateCoordinate.latitude,
@@ -199,8 +199,8 @@ class TimelineRepository @Inject constructor(
      * zero-row `@Update` that silently drops the user's confirmation.
      */
     suspend fun confirmTripMode(tripId: Long, mode: TransportMode): Unit = writeLock.withLock {
-        db.withTransaction {
-            val trip = tripDao.byId(tripId) ?: return@withTransaction
+        db.withWriteTransaction {
+            val trip = tripDao.byId(tripId) ?: return@withWriteTransaction
             val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
 
             // Rebuild geometry from the fixes in recorded order, like convertItemType does -- otherwise
