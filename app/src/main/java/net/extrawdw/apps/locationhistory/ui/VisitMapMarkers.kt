@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun VisitCenterDot(color: Color, alpha: Float = 1f, modifier: Modifier = Modifier) {
+internal fun VisitCenterDot(color: Color, modifier: Modifier = Modifier, alpha: Float = 1f) {
     Canvas(modifier.size(13.dp)) {
         val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
         drawCircle(

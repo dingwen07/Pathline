@@ -6,6 +6,7 @@ import android.graphics.drawable.Drawable
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import androidx.annotation.StringRes
+import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -132,10 +133,10 @@ class ApiAccessRepository @Inject constructor(
     }
 
     fun setCleanupConfig(config: CleanupConfig) {
-        cleanupPrefs.edit()
-            .putBoolean(KEY_CLEANUP_ENABLED, config.enabled)
-            .putInt(KEY_CLEANUP_RETENTION_DAYS, config.retentionDays)
-            .apply()
+        cleanupPrefs.edit {
+            putBoolean(KEY_CLEANUP_ENABLED, config.enabled)
+            putInt(KEY_CLEANUP_RETENTION_DAYS, config.retentionDays)
+        }
     }
 
     /** Deletes log rows older than [retentionDays]; returns the number removed. */
@@ -164,7 +165,7 @@ class ApiAccessRepository @Inject constructor(
      * again. Backs the access manager's "reset notification timers" action.
      */
     fun resetReadNotificationBackoff() {
-        context.getSharedPreferences(READ_NOTIFY_PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        context.getSharedPreferences(READ_NOTIFY_PREFS, Context.MODE_PRIVATE).edit { clear() }
     }
 
     /**
@@ -242,7 +243,7 @@ class ApiAccessRepository @Inject constructor(
         iconFile(pkg).takeIf { it.exists() }?.let { runCatching { it.readBytes() }.getOrNull() }
 
     private fun writeCache(pkg: String, label: String, icon: ByteArray?) {
-        cachePrefs.edit().putString(pkg, label).apply()
+        cachePrefs.edit { putString(pkg, label) }
         if (icon != null) runCatching { iconFile(pkg).writeBytes(icon) }
     }
 

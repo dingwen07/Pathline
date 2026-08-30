@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.api
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 
@@ -107,6 +108,8 @@ object PathlineContract {
      */
     const val API_VERSION: Int = 3
 
+    // Keep this public contract copyable without requiring AndroidX Core in consumer apps.
+    @SuppressLint("UseKtx")
     private val BASE: Uri = Uri.parse("content://$AUTHORITY")
 
     /** Time window (in milliseconds) that is always readable with only the base permissions. A

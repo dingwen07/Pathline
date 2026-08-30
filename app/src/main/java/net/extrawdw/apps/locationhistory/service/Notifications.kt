@@ -1,5 +1,6 @@
 package net.extrawdw.apps.locationhistory.service
 
+import android.annotation.SuppressLint
 import android.app.LocaleManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -65,6 +66,9 @@ object Notifications {
      * Activity does, so plain getString() would fall back to the system locale and render in the
      * wrong language. Re-resolve strings against the locale chosen in [LocaleManager].
      */
+    // The locale is selected through Android's system per-app language UI, which coordinates
+    // language-split delivery. This only makes a Service use that already-installed app locale.
+    @SuppressLint("AppBundleLocaleChanges")
     private fun localized(context: Context): Context {
         val locales = context.getSystemService(LocaleManager::class.java)?.applicationLocales
         if (locales == null || locales.isEmpty) return context

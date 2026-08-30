@@ -196,22 +196,39 @@ class BackupOperationController @Inject constructor(
     private fun describe(result: BackupResult): String = when (result) {
         is BackupResult.Backed ->
             if (result.report.partitionsFailed > 0) {
-                context.getString(
-                    R.string.backup_result_backed_failed,
+                context.resources.getQuantityString(
+                    R.plurals.backup_result_backed_failed,
+                    result.report.partitionsWritten,
                     result.report.partitionsWritten,
                     result.report.partitionsFailed
                 )
             } else {
-                context.getString(R.string.backup_result_backed, result.report.partitionsWritten)
+                context.resources.getQuantityString(
+                    R.plurals.backup_result_backed,
+                    result.report.partitionsWritten,
+                    result.report.partitionsWritten,
+                )
             }
 
-        is BackupResult.Restored -> context.getString(
-            R.string.backup_result_restored,
-            result.report.rowsRestored,
-            result.report.partitionsRestored
-        )
+        is BackupResult.Restored -> {
+            val rows = context.resources.getQuantityString(
+                R.plurals.backup_rows_restored,
+                result.report.rowsRestored,
+                result.report.rowsRestored,
+            )
+            context.resources.getQuantityString(
+                R.plurals.backup_result_restored,
+                result.report.partitionsRestored,
+                rows,
+                result.report.partitionsRestored,
+            )
+        }
 
-        is BackupResult.Exported -> context.getString(R.string.gpx_result_exported, result.count)
+        is BackupResult.Exported -> context.resources.getQuantityString(
+            R.plurals.gpx_result_exported,
+            result.count,
+            result.count,
+        )
         BackupResult.NoDestination -> context.getString(R.string.backup_result_no_destination)
         BackupResult.NeedsReclaim -> context.getString(R.string.backup_result_needs_reclaim)
         BackupResult.KeyUnavailable -> context.getString(R.string.backup_result_key_unavailable)

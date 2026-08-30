@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.data.repo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.core.net.toUri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -188,7 +189,7 @@ class BackupRepository @Inject constructor(
     ): BackupResult = opMutex.withLock {
         val cfg = settings.backupConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
-        val tree = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
+        val tree = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
         val root = rootDir(tree, cfg.subdir)
         val material = material(cfg) ?: return BackupResult.KeyUnavailable
         return try {
@@ -240,7 +241,7 @@ class BackupRepository @Inject constructor(
     private suspend fun performGpxExport(reporter: BackupReporter): BackupResult {
         val cfg = settings.gpxConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
-        val dir = safStore.open(Uri.parse(treeUri)) ?: return BackupResult.NeedsReclaim
+        val dir = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
         return try {
             val now = System.currentTimeMillis()
             val weeks =

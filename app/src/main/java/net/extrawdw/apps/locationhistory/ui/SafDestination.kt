@@ -1,8 +1,8 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import android.content.Context
-import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
 import net.extrawdw.apps.locationhistory.R
 
 /**
@@ -25,7 +25,7 @@ object SafDestination {
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 
     fun describe(context: Context, treeUri: String, subdir: String?): String {
-        val uri = runCatching { Uri.parse(treeUri) }.getOrNull()
+        val uri = runCatching { treeUri.toUri() }.getOrNull()
             ?: return context.getString(R.string.dest_unknown)
         val authority = uri.authority
         val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()

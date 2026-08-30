@@ -15,13 +15,15 @@ import androidx.sqlite.execSQL
 import kotlinx.coroutines.flow.Flow
 
 /**
- * One row per successful read of Pathline data by another app through [net.extrawdw.apps.locationhistory.api.PathlineProvider].
- * This is the audit log that powers the in-app "API access" manager and the periodic warnings.
+ * One row per recorded Pathline data-API access by another app through
+ * [net.extrawdw.apps.locationhistory.api.PathlineProvider]. This includes successful reads,
+ * permission-denied valid requests, and annotation writes. The log powers the in-app "API access"
+ * manager and periodic warnings.
  *
  * It holds only *metadata* — which app read which collection, over what window, and when — never any
  * coordinates. It deliberately lives in its OWN unencrypted database (see [ApiAccessDatabase]) rather
- * than the encrypted [AppDatabase], so logging an access never has to touch the frozen v1 schema or
- * the backup engine, and the audit trail is not shipped off-device in backups.
+ * than the encrypted [AppDatabase], so logging an access never has to open the location-history
+ * database or involve its backup engine, and the audit trail is not shipped off-device in backups.
  */
 @Entity(
     tableName = "api_access_events",
@@ -31,7 +33,7 @@ data class ApiAccessEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     /** Calling app's package name (from `ContentProvider.getCallingPackage()`), or "unknown". */
     val packageName: String,
-    /** Which collection was read: "visits", "trips", "samples", "places", or "place_visits". */
+    /** Which collection or annotation operation was accessed. */
     val dataType: String,
     /** The time window the caller requested (epoch ms). */
     val startMs: Long,
@@ -77,8 +79,9 @@ data class AppLastAccess(val packageName: String, val lastMs: Long, val reads: I
  * This is the access-scoping ledger for the `places` collection: an app may resolve a place's details
  * (name, address) and its visit history ONLY for places it has already legitimately encountered in an
  * authorized timeline read. Reading `visits` is the sole way a grant is created; the place/history
- * endpoints only ever consult it. Like [ApiAccessEventEntity] it lives in this disposable, unencrypted
- * DB and holds no coordinates — just which package may see which saved-place id.
+ * endpoints only ever consult it. Like [ApiAccessEventEntity] it lives in the separate, unencrypted
+ * API-access DB and holds no coordinates — just durable authorization scope mapping a package to the
+ * saved-place ids it may see.
  */
 @Entity(
     tableName = "api_place_grants",
@@ -133,7 +136,7 @@ interface ApiAccessDao {
     @Query("SELECT * FROM api_access_events WHERE timestampMs >= :sinceMs ORDER BY timestampMs DESC")
     suspend fun since(sinceMs: Long): List<ApiAccessEventEntity>
 
-    /** One app's recent reads, for summarizing what it just accessed in a notification. */
+    /** One app's recent access events, for summarizing what it just accessed in a notification. */
     @Query("SELECT * FROM api_access_events WHERE packageName = :packageName AND timestampMs >= :sinceMs ORDER BY timestampMs DESC")
     suspend fun sinceForPackage(packageName: String, sinceMs: Long): List<ApiAccessEventEntity>
 
@@ -147,7 +150,7 @@ interface ApiAccessDao {
     @Query("SELECT COUNT(*) FROM api_access_events WHERE timestampMs >= :sinceMs")
     suspend fun countSince(sinceMs: Long): Int
 
-    /** Last read time + read count per app, most-recent first. */
+    /** Last access time + event count per app, most-recent first. */
     @Query(
         "SELECT packageName AS packageName, MAX(timestampMs) AS lastMs, COUNT(*) AS reads " +
                 "FROM api_access_events GROUP BY packageName ORDER BY lastMs DESC"

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Pathline</string>
+    <string name="app_name" translatable="false">Pathline</string>
 
     <!-- ============================ Notifications ============================ -->
     <string name="recording_channel_name">Location recording</string>
@@ -130,7 +130,7 @@
     <string name="search_results_header">Search results (nearest first)</string>
     <string name="saved_places_nearest_header">Saved places (nearest first)</string>
     <string name="nearby_show">Show nearby places</string>
-    <string name="nearby_loading">Loading nearby places...</string>
+    <string name="nearby_loading">Loading nearby places…</string>
     <string name="nearby_empty">No nearby places found.</string>
     <string name="nearby_header">Nearby (nearest first)</string>
     <string name="custom_places_header">Custom places</string>
@@ -254,7 +254,10 @@
     <string name="gpx_range_pick">Date range…</string>
     <string name="gpx_op_setup">Setting up GPX export</string>
     <string name="gpx_op_export">Exporting GPX</string>
-    <string name="gpx_result_exported">Exported %1$d GPX file(s).</string>
+    <plurals name="gpx_result_exported">
+        <item quantity="one">Exported %1$d GPX file.</item>
+        <item quantity="other">Exported %1$d GPX files.</item>
+    </plurals>
     <string name="action_export">Export</string>
     <string name="encrypt_title">Encrypt backup</string>
     <string name="encrypt_password_on">Protected with your password.</string>
@@ -301,9 +304,22 @@
     <string name="backup_op_restore">Restoring</string>
 
     <!-- Backup outcome / error messages -->
-    <string name="backup_result_backed">Done — %1$d partition(s) written</string>
-    <string name="backup_result_backed_failed">Done — %1$d partition(s) written, %2$d failed</string>
-    <string name="backup_result_restored">Restored %1$d rows from %2$d partition(s)</string>
+    <plurals name="backup_result_backed">
+        <item quantity="one">Done — %1$d partition written</item>
+        <item quantity="other">Done — %1$d partitions written</item>
+    </plurals>
+    <plurals name="backup_result_backed_failed">
+        <item quantity="one">Done — %1$d partition written, %2$d failed</item>
+        <item quantity="other">Done — %1$d partitions written, %2$d failed</item>
+    </plurals>
+    <plurals name="backup_rows_restored">
+        <item quantity="one">%1$d row</item>
+        <item quantity="other">%1$d rows</item>
+    </plurals>
+    <plurals name="backup_result_restored">
+        <item quantity="one">Restored %1$s from %2$d partition</item>
+        <item quantity="other">Restored %1$s from %2$d partitions</item>
+    </plurals>
     <string name="backup_result_no_destination">Choose a backup folder first</string>
     <string name="backup_result_needs_reclaim">Backup folder is no longer accessible — reconnect it</string>
     <string name="backup_result_key_unavailable">Backup key unavailable — re-enter your password/passkey</string>
@@ -324,28 +340,77 @@
     <string name="backup_notify_needs_reclaim_text">Pathline can no longer access the backup folder. Reconnect it in Settings.</string>
     <string name="backup_notify_key_unavailable_text">Pathline needs your backup password or passkey before scheduled backups can continue.</string>
 
-    <!-- ============================ Diagnostics (chrome only) ============================ -->
+    <!-- ============================ Diagnostics ============================ -->
     <string name="diagnostics_title">Diagnostics</string>
     <string name="cd_refresh_diagnostics">Refresh diagnostics</string>
     <string name="cd_delete_logs">Delete all logs</string>
     <string name="cd_export_logs">Export logs</string>
-    <string name="cd_share_logs">Share logs</string>
     <string name="cd_close_log">Close log</string>
     <string name="cd_refresh_log">Refresh this log</string>
     <string name="cd_share_log">Share this log</string>
+    <string name="diag_app_and_system">App &amp; system</string>
+    <string name="diag_app_version">App version</string>
+    <string name="diag_android_version">Android version</string>
+    <string name="diag_device">Device</string>
+    <string name="diag_location_services">Location services</string>
+    <string name="diag_precise_location_permission">Precise location</string>
+    <string name="diag_background_location_permission">Background location</string>
+    <string name="diag_notifications">Notifications</string>
+    <string name="diag_status_enabled">Enabled</string>
+    <string name="diag_status_disabled">Disabled</string>
+    <string name="diag_permission_granted">Granted</string>
+    <string name="diag_permission_not_granted">Not granted</string>
+    <string name="diag_recorder">Recording</string>
+    <string name="diag_tracking_enabled">Recording enabled</string>
+    <string name="diag_foreground_service_running">Recorder service running</string>
+    <string name="diag_recorder_state">Recorder cadence state</string>
+    <string name="diag_motion_state">Displayed motion state</string>
+    <string name="diag_power_profile">Power profile</string>
+    <string name="diag_recorder_updated">Service status updated</string>
+    <string name="diag_last_service_detail">Last stop/start detail</string>
+    <string name="diag_internal_data">Internal data</string>
+    <string name="diag_location_samples">Location samples</string>
+    <string name="diag_location_samples_value">%1$d (excluded from computation: %2$d)</string>
+    <string name="diag_visits">Visits</string>
+    <string name="diag_trips">Trips</string>
+    <string name="diag_places">Places</string>
+    <string name="diag_latest_sample">Latest sample</string>
+    <string name="diag_workers">Scheduled work</string>
+    <string name="diag_worker_timeline_delayed">Timeline (today, delayed)</string>
+    <string name="diag_worker_timeline_now">Timeline (today, immediate)</string>
+    <string name="diag_worker_timeline_periodic">Timeline (periodic)</string>
+    <string name="diag_worker_recording_watchdog">Recording watchdog</string>
+    <string name="diag_worker_backup_periodic">Backup (periodic)</string>
+    <string name="diag_worker_backup_now">Backup (immediate)</string>
+    <string name="diag_worker_api_access">API access maintenance</string>
+    <string name="diag_worker_summary">%1$s · run attempts %2$d · ID %3$s</string>
     <string name="diag_session_logs">Session logs (newest first) — tap to view</string>
     <string name="diag_no_logs">No logs yet.</string>
     <string name="diag_log_empty">(empty)</string>
+    <plurals name="diag_log_truncated">
+        <item quantity="one">Only the last %1$d character is shown.</item>
+        <item quantity="other">Only the last %1$d characters are shown.</item>
+    </plurals>
+    <string name="diag_log_read_failed">(could not read %1$s)</string>
     <string name="diag_delete_log_title">Delete log?</string>
     <string name="diag_delete_log_message">Delete %1$s from this device?</string>
     <string name="diag_delete_log_done">Log deleted.</string>
     <string name="diag_delete_log_failed">Couldn\'t delete that log.</string>
     <string name="diag_delete_all_logs_title">Delete all session logs?</string>
     <string name="diag_delete_all_logs_message">This removes every session log from this device.</string>
-    <string name="diag_delete_all_logs_done">Deleted %1$d session log(s).</string>
+    <plurals name="diag_delete_all_logs_done">
+        <item quantity="one">Deleted %1$d session log.</item>
+        <item quantity="other">Deleted %1$d session logs.</item>
+    </plurals>
     <string name="diag_delete_all_logs_none">No session logs to delete.</string>
-    <string name="diag_export_logs_done">Exported %1$d session log(s).</string>
-    <string name="diag_export_logs_partial">Exported %1$d session log(s); %2$d failed.</string>
+    <plurals name="diag_export_logs_done">
+        <item quantity="one">Exported %1$d session log.</item>
+        <item quantity="other">Exported %1$d session logs.</item>
+    </plurals>
+    <plurals name="diag_export_logs_partial">
+        <item quantity="one">Exported %1$d session log; %2$d failed.</item>
+        <item quantity="other">Exported %1$d session logs; %2$d failed.</item>
+    </plurals>
     <string name="diag_export_logs_none">No session logs to export.</string>
     <string name="diag_export_logs_failed">Couldn\'t export session logs.</string>
     <string name="share_logs_chooser">Share Pathline logs</string>
@@ -443,19 +508,31 @@
     <string name="api_access_yesterday">Yesterday</string>
     <string name="api_access_export">Export log</string>
     <string name="api_access_export_chooser">Export API access log</string>
-    <string name="api_access_group_requests">%1$d requests</string>
+    <plurals name="api_access_group_requests">
+        <item quantity="one">%1$d request</item>
+        <item quantity="other">%1$d requests</item>
+    </plurals>
     <string name="api_access_reset_backoff">Reset notification timers</string>
     <string name="api_access_backoff_reset">Notification timers reset — the next access will alert again.</string>
     <string name="api_access_maintenance">Log maintenance</string>
     <string name="api_access_maintenance_title">Log maintenance</string>
     <string name="api_access_cleanup_enable">Auto-delete old logs</string>
     <string name="api_access_cleanup_retention_header">Keep logs for</string>
-    <string name="api_access_cleanup_days">%1$d days</string>
+    <plurals name="api_access_cleanup_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
     <string name="api_access_cleanup_now">Delete old logs now</string>
-    <string name="api_access_cleanup_done">Deleted %1$d old log entries.</string>
+    <plurals name="api_access_cleanup_done">
+        <item quantity="one">Deleted %1$d old log entry.</item>
+        <item quantity="other">Deleted %1$d old log entries.</item>
+    </plurals>
     <string name="api_access_cleanup_none">No logs old enough to delete.</string>
     <string name="api_access_clear_all">Clear all logs now</string>
-    <string name="api_access_clear_all_done">Cleared the access log (%1$d entries).</string>
+    <plurals name="api_access_clear_all_done">
+        <item quantity="one">Cleared the access log (%1$d entry).</item>
+        <item quantity="other">Cleared the access log (%1$d entries).</item>
+    </plurals>
     <string name="api_access_clear_all_none">The access log is already empty.</string>
     <string name="api_access_notif_off_title">Notifications are off</string>
     <string name="api_access_notif_off_desc">Pathline can\'t alert you when another app reads your timeline or location history. Turn on notifications to stay aware of who accesses your data.</string>
@@ -520,7 +597,10 @@
     <string name="api_notify_hold_title">App still has access to your Pathline data</string>
     <string name="api_notify_hold_text_one">%1$s has access to your timeline and location history.</string>
     <!-- "<app> and <N> more apps have access…" -->
-    <string name="api_notify_hold_text_many">%1$s and %2$d more apps have access to your timeline and location history.</string>
+    <plurals name="api_notify_hold_text_many">
+        <item quantity="one">%1$s and %2$d more app have access to your timeline and location history.</item>
+        <item quantity="other">%1$s and %2$d more apps have access to your timeline and location history.</item>
+    </plurals>
     <string name="place_edit_location_write_disabled">Location moves are disabled in this region until this Google map runtime’s coordinate output is verified. Name, radius, lock, note, and tag edits are still safe.</string>
     <string name="action_confirm">Confirm</string>
     <string name="place_coordinate_review_badge">Location review required</string>
@@ -565,13 +645,13 @@
     <string name="maps_cloud_project_id">Google Cloud project ID</string>
     <string name="maps_view_command">View command</string>
     <string name="maps_setup_command_title">Setup command</string>
-    <string name="maps_command_shell">Shell</string>
-    <string name="maps_command_powershell">PowerShell</string>
+    <string name="maps_command_shell" translatable="false">Shell</string>
+    <string name="maps_command_powershell" translatable="false">PowerShell</string>
     <string name="maps_copy_command">Copy command</string>
     <string name="maps_share_command">Share command</string>
     <string name="maps_command_hint">Run the command in a regular terminal shell, then paste the key above.</string>
     <string name="maps_cloud_project_id_invalid">Check the project ID.</string>
     <string name="maps_command_clipboard_label">Pathline setup command</string>
     <string name="maps_share_command_chooser">Share setup command</string>
-    <string name="maps_api_key_required_for_search">Add an API key in Settings to search Google Places.</string>
+    <string name="maps_api_key_required_for_search">Configure Google Maps Platform in Settings to search Google Places.</string>
 </resources>

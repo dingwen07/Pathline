@@ -24,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -120,7 +121,7 @@ fun SplitEditorPanel(
             return@Column
         }
 
-        var split by remember { mutableStateOf(samples.size / 2) }
+        var split by remember { mutableIntStateOf(samples.size / 2) }
         var leftType by remember { mutableStateOf(initialType) }
         var rightType by remember {
             mutableStateOf(

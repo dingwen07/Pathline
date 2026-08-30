@@ -1,6 +1,4 @@
 <resources>
-    <string name="app_name">Pathline</string>
-
     <!-- ============================ Notifications ============================ -->
     <string name="recording_channel_name">位置记录</string>
     <string name="recording_channel_desc">在 Pathline 记录您的路线时显示。</string>
@@ -126,7 +124,7 @@
     <string name="search_results_header">搜索结果（由近到远）</string>
     <string name="saved_places_nearest_header">已保存的地点（由近到远）</string>
     <string name="nearby_show">显示附近地点</string>
-    <string name="nearby_loading">正在加载附近地点...</string>
+    <string name="nearby_loading">正在加载附近地点…</string>
     <string name="nearby_empty">未找到附近地点。</string>
     <string name="nearby_header">附近（由近到远）</string>
     <string name="custom_places_header">自定义地点</string>
@@ -242,7 +240,9 @@
     <string name="gpx_range_pick">日期范围…</string>
     <string name="gpx_op_setup">正在设置 GPX 导出</string>
     <string name="gpx_op_export">正在导出 GPX</string>
-    <string name="gpx_result_exported">已导出 %1$d 个 GPX 文件。</string>
+    <plurals name="gpx_result_exported">
+        <item quantity="other">已导出 %1$d 个 GPX 文件。</item>
+    </plurals>
     <string name="action_export">导出</string>
     <string name="encrypt_title">加密备份</string>
     <string name="encrypt_password_on">已用密码保护。</string>
@@ -287,9 +287,18 @@
     <string name="backup_op_dump">正在创建数据库转储</string>
     <string name="backup_op_restore">正在恢复</string>
 
-    <string name="backup_result_backed">完成 — 已写入 %1$d 个分区</string>
-    <string name="backup_result_backed_failed">完成 — 已写入 %1$d 个分区，%2$d 个失败</string>
-    <string name="backup_result_restored">已从 %2$d 个分区恢复 %1$d 行</string>
+    <plurals name="backup_result_backed">
+        <item quantity="other">完成 — 已写入 %1$d 个分区</item>
+    </plurals>
+    <plurals name="backup_result_backed_failed">
+        <item quantity="other">完成 — 已写入 %1$d 个分区，%2$d 个失败</item>
+    </plurals>
+    <plurals name="backup_rows_restored">
+        <item quantity="other">%1$d 行</item>
+    </plurals>
+    <plurals name="backup_result_restored">
+        <item quantity="other">已从 %2$d 个分区恢复 %1$s</item>
+    </plurals>
     <string name="backup_result_no_destination">请先选择备份文件夹</string>
     <string name="backup_result_needs_reclaim">备份文件夹已无法访问 — 请重新连接</string>
     <string name="backup_result_key_unavailable">备份密钥不可用 — 请重新输入密码/通行密钥</string>
@@ -310,28 +319,73 @@
     <string name="backup_notify_needs_reclaim_text">Pathline 已无法访问备份文件夹。请在设置中重新连接。</string>
     <string name="backup_notify_key_unavailable_text">计划备份继续前，Pathline 需要您的备份密码或通行密钥。</string>
 
-    <!-- ============================ Diagnostics (chrome only) ============================ -->
+    <!-- ============================ Diagnostics ============================ -->
     <string name="diagnostics_title">诊断</string>
     <string name="cd_refresh_diagnostics">刷新诊断</string>
     <string name="cd_delete_logs">删除所有日志</string>
     <string name="cd_export_logs">导出日志</string>
-    <string name="cd_share_logs">分享日志</string>
     <string name="cd_close_log">关闭日志</string>
     <string name="cd_refresh_log">刷新此日志</string>
     <string name="cd_share_log">分享此日志</string>
+    <string name="diag_app_and_system">应用和系统</string>
+    <string name="diag_app_version">应用版本</string>
+    <string name="diag_android_version">Android 版本</string>
+    <string name="diag_device">设备</string>
+    <string name="diag_location_services">位置服务</string>
+    <string name="diag_precise_location_permission">精确位置</string>
+    <string name="diag_background_location_permission">后台位置</string>
+    <string name="diag_notifications">通知</string>
+    <string name="diag_status_enabled">已启用</string>
+    <string name="diag_status_disabled">已停用</string>
+    <string name="diag_permission_granted">已授予</string>
+    <string name="diag_permission_not_granted">未授予</string>
+    <string name="diag_recorder">记录</string>
+    <string name="diag_tracking_enabled">记录已启用</string>
+    <string name="diag_foreground_service_running">记录服务正在运行</string>
+    <string name="diag_recorder_state">记录器采样状态</string>
+    <string name="diag_motion_state">显示的运动状态</string>
+    <string name="diag_power_profile">电量模式</string>
+    <string name="diag_recorder_updated">服务状态更新时间</string>
+    <string name="diag_last_service_detail">最近一次停止/启动详情</string>
+    <string name="diag_internal_data">内部数据</string>
+    <string name="diag_location_samples">位置采样</string>
+    <string name="diag_location_samples_value">%1$d（不参与计算：%2$d）</string>
+    <string name="diag_visits">访问地点</string>
+    <string name="diag_trips">行程</string>
+    <string name="diag_places">地点</string>
+    <string name="diag_latest_sample">最新采样</string>
+    <string name="diag_workers">计划任务</string>
+    <string name="diag_worker_timeline_delayed">时间线（今日延迟）</string>
+    <string name="diag_worker_timeline_now">时间线（今日立即）</string>
+    <string name="diag_worker_timeline_periodic">时间线（定期）</string>
+    <string name="diag_worker_recording_watchdog">记录状态检查</string>
+    <string name="diag_worker_backup_periodic">备份（定期）</string>
+    <string name="diag_worker_backup_now">备份（立即）</string>
+    <string name="diag_worker_api_access">API 访问维护</string>
+    <string name="diag_worker_summary">%1$s · 运行尝试 %2$d 次 · ID %3$s</string>
     <string name="diag_session_logs">会话日志（最新在前）— 点按查看</string>
     <string name="diag_no_logs">暂无日志。</string>
     <string name="diag_log_empty">（空）</string>
+    <plurals name="diag_log_truncated">
+        <item quantity="other">仅显示最后 %1$d 个字符。</item>
+    </plurals>
+    <string name="diag_log_read_failed">（无法读取 %1$s）</string>
     <string name="diag_delete_log_title">删除日志？</string>
     <string name="diag_delete_log_message">要从此设备删除 %1$s 吗？</string>
     <string name="diag_delete_log_done">日志已删除。</string>
     <string name="diag_delete_log_failed">无法删除该日志。</string>
     <string name="diag_delete_all_logs_title">删除所有会话日志？</string>
     <string name="diag_delete_all_logs_message">这会从此设备移除所有会话日志。</string>
-    <string name="diag_delete_all_logs_done">已删除 %1$d 个会话日志。</string>
+    <plurals name="diag_delete_all_logs_done">
+        <item quantity="other">已删除 %1$d 个会话日志。</item>
+    </plurals>
     <string name="diag_delete_all_logs_none">没有可删除的会话日志。</string>
-    <string name="diag_export_logs_done">已导出 %1$d 个会话日志。</string>
-    <string name="diag_export_logs_partial">已导出 %1$d 个会话日志；%2$d 个失败。</string>
+    <plurals name="diag_export_logs_done">
+        <item quantity="other">已导出 %1$d 个会话日志。</item>
+    </plurals>
+    <plurals name="diag_export_logs_partial">
+        <item quantity="other">已导出 %1$d 个会话日志；%2$d 个失败。</item>
+    </plurals>
     <string name="diag_export_logs_none">没有可导出的会话日志。</string>
     <string name="diag_export_logs_failed">无法导出会话日志。</string>
     <string name="share_logs_chooser">分享 Pathline 日志</string>
@@ -419,19 +473,27 @@
     <string name="api_access_yesterday">昨天</string>
     <string name="api_access_export">导出日志</string>
     <string name="api_access_export_chooser">导出 API 访问日志</string>
-    <string name="api_access_group_requests">%1$d 次请求</string>
+    <plurals name="api_access_group_requests">
+        <item quantity="other">%1$d 次请求</item>
+    </plurals>
     <string name="api_access_reset_backoff">重置通知计时</string>
     <string name="api_access_backoff_reset">已重置通知计时 — 下次访问将再次提醒。</string>
     <string name="api_access_maintenance">日志维护</string>
     <string name="api_access_maintenance_title">日志维护</string>
     <string name="api_access_cleanup_enable">自动删除旧日志</string>
     <string name="api_access_cleanup_retention_header">日志保留时长</string>
-    <string name="api_access_cleanup_days">%1$d 天</string>
+    <plurals name="api_access_cleanup_days">
+        <item quantity="other">%1$d 天</item>
+    </plurals>
     <string name="api_access_cleanup_now">立即删除旧日志</string>
-    <string name="api_access_cleanup_done">已删除 %1$d 条旧日志。</string>
+    <plurals name="api_access_cleanup_done">
+        <item quantity="other">已删除 %1$d 条旧日志。</item>
+    </plurals>
     <string name="api_access_cleanup_none">没有足够旧的日志可删除。</string>
     <string name="api_access_clear_all">立即清空全部日志</string>
-    <string name="api_access_clear_all_done">已清空访问日志（%1$d 条）。</string>
+    <plurals name="api_access_clear_all_done">
+        <item quantity="other">已清空访问日志（%1$d 条）。</item>
+    </plurals>
     <string name="api_access_clear_all_none">访问日志已是空的。</string>
     <string name="api_access_notif_off_title">通知已关闭</string>
     <string name="api_access_notif_off_desc">当其他应用读取您的时间线或位置历史时，Pathline 无法提醒您。请开启通知，以便随时了解谁访问了您的数据。</string>
@@ -487,7 +549,9 @@
     <string name="api_notify_data_separator">、</string>
     <string name="api_notify_hold_title">有应用可以访问您的 Pathline 数据</string>
     <string name="api_notify_hold_text_one">%1$s 可以访问您的时间线和位置历史。</string>
-    <string name="api_notify_hold_text_many">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</string>
+    <plurals name="api_notify_hold_text_many">
+        <item quantity="other">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</item>
+    </plurals>
     <string name="place_edit_location_write_disabled">在验证此 Google 地图运行环境于该区域的坐标输出前，暂时无法移动地点。名称、半径、锁定、笔记和标签仍可安全编辑。</string>
     <string name="action_confirm">确认</string>
     <string name="place_coordinate_review_badge">需要检查位置</string>
@@ -532,13 +596,11 @@
     <string name="maps_cloud_project_id">Google Cloud 项目 ID</string>
     <string name="maps_view_command">查看命令</string>
     <string name="maps_setup_command_title">设置命令</string>
-    <string name="maps_command_shell">Shell</string>
-    <string name="maps_command_powershell">PowerShell</string>
     <string name="maps_copy_command">复制命令</string>
     <string name="maps_share_command">分享命令</string>
     <string name="maps_command_hint">在常规终端 Shell 中运行此命令，然后将生成的密钥粘贴到上方。</string>
     <string name="maps_cloud_project_id_invalid">请检查项目 ID。</string>
     <string name="maps_command_clipboard_label">Pathline 设置命令</string>
     <string name="maps_share_command_chooser">分享设置命令</string>
-    <string name="maps_api_key_required_for_search">请先在设置中添加 API 密钥，之后即可搜索 Google 地点。</string>
+    <string name="maps_api_key_required_for_search">请先在设置中配置 Google 地图平台，之后即可搜索 Google 地点。</string>
 </resources>

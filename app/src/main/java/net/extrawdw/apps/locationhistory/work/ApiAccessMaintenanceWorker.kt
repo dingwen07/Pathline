@@ -42,8 +42,9 @@ class ApiAccessMaintenanceWorker @AssistedInject constructor(
                 val text = if (holders.size == 1) {
                     ctx.getString(R.string.api_notify_hold_text_one, holders[0].label)
                 } else {
-                    ctx.getString(
-                        R.string.api_notify_hold_text_many,
+                    ctx.resources.getQuantityString(
+                        R.plurals.api_notify_hold_text_many,
+                        holders.size - 1,
                         holders[0].label,
                         holders.size - 1
                     )

@@ -5,6 +5,7 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import androidx.core.content.edit
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -92,9 +93,9 @@ object AppLog {
         exits.forEach { exitInfo ->
             i("AppExitInfo", exitInfo.toLogLine(exitInfo.writeTraceFileIfPresent()))
         }
-        prefs.edit()
-            .putLong(LAST_LOGGED_EXIT_TIMESTAMP, exits.maxOf { it.timestamp })
-            .apply()
+        prefs.edit {
+            putLong(LAST_LOGGED_EXIT_TIMESTAMP, exits.maxOf { it.timestamp })
+        }
     }
 
     private fun log(level: Char, tag: String, msg: String) {

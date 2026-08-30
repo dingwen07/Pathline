@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -195,6 +196,7 @@ fun TimelineScreen(
         viewModel.projectEditSamples(editSamples).map { it.toLatLng() }
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val resources = LocalResources.current
     fun fineLocationGranted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
@@ -396,7 +398,7 @@ fun TimelineScreen(
                                                     AnnotationTarget.VISIT,
                                                     item.visit.id,
                                                     title = item.displayName,
-                                                    subtitle = context.getString(
+                                                    subtitle = resources.getString(
                                                         R.string.time_range_duration,
                                                         Format.time(item.startMs),
                                                         Format.time(item.endMs),
@@ -436,8 +438,8 @@ fun TimelineScreen(
                                                     editAnnotation = AnnotationRef(
                                                         AnnotationTarget.TRIP,
                                                         item.trip.id,
-                                                        title = context.getString(item.trip.mode.labelRes),
-                                                        subtitle = context.getString(
+                                                        title = resources.getString(item.trip.mode.labelRes),
+                                                        subtitle = resources.getString(
                                                             R.string.trip_brief,
                                                             Format.distance(
                                                                 context,

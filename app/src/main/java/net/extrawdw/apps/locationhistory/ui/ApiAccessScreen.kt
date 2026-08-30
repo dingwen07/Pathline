@@ -83,6 +83,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontStyle
@@ -121,6 +124,7 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
     val events by viewModel.events.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val cleanupConfig by viewModel.cleanupConfig.collectAsStateWithLifecycle()
     val routeApiEnabled by viewModel.routeApiEnabled.collectAsStateWithLifecycle()
@@ -156,9 +160,13 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                 scope.launch {
                     val removed = viewModel.cleanupNow(days)
                     val msg = if (removed > 0) {
-                        context.getString(R.string.api_access_cleanup_done, removed)
+                        resources.getQuantityString(
+                            R.plurals.api_access_cleanup_done,
+                            removed,
+                            removed,
+                        )
                     } else {
-                        context.getString(R.string.api_access_cleanup_none)
+                        resources.getString(R.string.api_access_cleanup_none)
                     }
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
@@ -167,9 +175,13 @@ fun ApiAccessScreen(onBack: () -> Unit, viewModel: ApiAccessViewModel = hiltView
                 scope.launch {
                     val removed = viewModel.clearAllLogs()
                     val msg = if (removed > 0) {
-                        context.getString(R.string.api_access_clear_all_done, removed)
+                        resources.getQuantityString(
+                            R.plurals.api_access_clear_all_done,
+                            removed,
+                            removed,
+                        )
                     } else {
-                        context.getString(R.string.api_access_clear_all_none)
+                        resources.getString(R.string.api_access_clear_all_none)
                     }
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                 }
@@ -402,10 +414,11 @@ private fun EmptyText(text: String) {
 @Composable
 private fun DayHeader(date: LocalDate, zone: ZoneId) {
     val today = LocalDate.now(zone)
+    val locale = LocalLocale.current.platformLocale
     val label = when (date) {
         today -> stringResource(R.string.api_access_today)
         today.minusDays(1) -> stringResource(R.string.api_access_yesterday)
-        else -> date.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()))
+        else -> date.format(DateTimeFormatter.ofPattern("EEE, MMM d", locale))
     }
     Text(
         label,
@@ -673,7 +686,11 @@ private fun groupSummary(events: List<ApiAccessEventEntity>): String {
         maxByType["place_stats"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_place_stats)}" },
         maxByType["travel_times"]?.let { "${nf.format(it.toLong())} ${stringResource(R.string.api_data_travel_times)}" },
     )
-    val requests = stringResource(R.string.api_access_group_requests, events.size)
+    val requests = pluralStringResource(
+        R.plurals.api_access_group_requests,
+        events.size,
+        events.size,
+    )
     return if (parts.isEmpty()) requests
     else "$requests · " + parts.joinToString(stringResource(R.string.api_notify_data_separator))
 }
@@ -836,7 +853,13 @@ private fun MaintenanceDialog(
                                 count = RETENTION_DAY_OPTIONS.size,
                             ),
                         ) {
-                            Text(stringResource(R.string.api_access_cleanup_days, days))
+                            Text(
+                                pluralStringResource(
+                                    R.plurals.api_access_cleanup_days,
+                                    days,
+                                    days,
+                                )
+                            )
                         }
                     }
                 }
