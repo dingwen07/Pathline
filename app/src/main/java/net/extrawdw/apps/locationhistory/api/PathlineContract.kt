@@ -103,8 +103,8 @@ object PathlineContract {
      * nesting: `concept` as a [Concepts.Members.TARGET_TYPE] + the `concepts/<id>/concepts`
      * reverse listing) + [PlaceStats] + relevance-ordered search (see [QueryParams.Q]) +
      * proximity mode ([QueryParams.NEAR]) + [QueryParams.LIMIT] + [Concepts.MEMBER_COUNT] on
-     * concept rows. Nothing past version 2 has shipped in a release yet, so additions keep
-     * folding into 3 until one does.
+     * concept rows + [Status.TRAVEL_TIMES_ENABLED]. Nothing past version 2 has shipped in a release
+     * yet, so additions keep folding into 3 until one does.
      */
     const val API_VERSION: Int = 3
 
@@ -1276,8 +1276,9 @@ object PathlineContract {
 
     /**
      * Read-only status of the data API, for a consumer to check before reading. Returns a single row
-     * reporting whether the user's access switch is on ([ACCESS_ENABLED]) and which contract version
-     * the installed Pathline speaks ([API_VERSION]).
+     * reporting whether the user's access switch and travel-time routing switch are on
+     * ([ACCESS_ENABLED], [TRAVEL_TIMES_ENABLED]) and which contract version the installed Pathline
+     * speaks ([API_VERSION]).
      *
      * Unlike the data collections it is **always answerable** — it needs no runtime permission, is not
      * gated by the access switch ([ACCESS_ENABLED] is exactly what it reports), and is not recorded in
@@ -1297,6 +1298,9 @@ object PathlineContract {
         /** 1 when the user has turned third-party data access on, else 0 (all data reads are denied). */
         const val ACCESS_ENABLED: String = "access_enabled"
 
+        /** 1 when the user allows the billable [TravelTimes] endpoint, else 0. */
+        const val TRAVEL_TIMES_ENABLED: String = "travel_times_enabled"
+
         /**
          * The provider's live [PathlineContract.API_VERSION]. Read it defensively (the column is
          * absent on providers older than version 3) and compare against the constant in your
@@ -1305,7 +1309,7 @@ object PathlineContract {
         const val API_VERSION: String = "api_version"
 
         @JvmField
-        val COLUMNS: Array<String> = arrayOf(ACCESS_ENABLED, API_VERSION)
+        val COLUMNS: Array<String> = arrayOf(ACCESS_ENABLED, API_VERSION, TRAVEL_TIMES_ENABLED)
     }
 
     /** Intents a consumer can fire toward Pathline. */

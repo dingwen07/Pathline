@@ -173,9 +173,12 @@ enum class AnnotationTarget(internal val collection: Uri) {
     CONCEPT(PathlineContract.Concepts.CONTENT_URI),
 }
 
-/** [apiVersion] is the provider's live contract version; null when the installed Pathline predates
- *  the column (< 3). Compare against [PathlineContract.API_VERSION]. */
-data class ApiStatus(val accessEnabled: Boolean, val apiVersion: Int? = null)
+/** Optional fields are null when the installed Pathline predates their status columns. */
+data class ApiStatus(
+    val accessEnabled: Boolean,
+    val apiVersion: Int? = null,
+    val travelTimesEnabled: Boolean? = null,
+)
 
 /** Per-place aggregate over confirmed visits in a window (`place_stats`), most-visited first. */
 data class PlaceStats(
@@ -888,9 +891,15 @@ class PathlineClient(private val resolver: ContentResolver) {
             if (!c.moveToFirst()) return@use null
             // api_version is absent on providers older than contract v3 — read it leniently.
             val versionCol = c.getColumnIndex(PathlineContract.Status.API_VERSION)
+            val travelTimesCol = c.getColumnIndex(PathlineContract.Status.TRAVEL_TIMES_ENABLED)
             ApiStatus(
                 accessEnabled = c.reqInt(PathlineContract.Status.ACCESS_ENABLED) == 1,
                 apiVersion = if (versionCol >= 0 && !c.isNull(versionCol)) c.getInt(versionCol) else null,
+                travelTimesEnabled = if (travelTimesCol >= 0 && !c.isNull(travelTimesCol)) {
+                    c.getInt(travelTimesCol) == 1
+                } else {
+                    null
+                },
             )
         }
     }

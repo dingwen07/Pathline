@@ -285,9 +285,15 @@ internal object ApiCursors {
     }
 
     /** The one-row [PathlineContract.Status] cursor. */
-    fun status(accessEnabled: Boolean): Cursor {
+    fun status(accessEnabled: Boolean, travelTimesEnabled: Boolean): Cursor {
         val cursor = MatrixCursor(PathlineContract.Status.COLUMNS, 1)
-        cursor.addRow(arrayOf<Any?>(if (accessEnabled) 1 else 0, PathlineContract.API_VERSION))
+        cursor.addRow(
+            arrayOf<Any?>(
+                if (accessEnabled) 1 else 0,
+                PathlineContract.API_VERSION,
+                if (travelTimesEnabled) 1 else 0,
+            )
+        )
         return cursor
     }
 }

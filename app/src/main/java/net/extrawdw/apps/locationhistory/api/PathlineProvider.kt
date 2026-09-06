@@ -252,9 +252,11 @@ class PathlineProvider : ContentProvider() {
 
         val now = System.currentTimeMillis()
 
-        // The status route is always answerable: it reports the access switch + the caller's grants,
-        // returns no personal data, and is exempt from the switch and the audit log.
-        if (code == CODE_STATUS) return ApiCursors.status(apiAccessEnabled())
+        // The status route is always answerable: it reports the access and routing switches,
+        // returns no personal data, and is exempt from the access switch and the audit log.
+        if (code == CODE_STATUS) {
+            return ApiCursors.status(apiAccessEnabled(), travelTimesEnabled())
+        }
 
         val caller = captureCaller()
 
@@ -1334,6 +1336,10 @@ class PathlineProvider : ContentProvider() {
     /** The current access-switch state, read off the settings store (cached in memory after first read). */
     private fun apiAccessEnabled(): Boolean =
         runBlocking { entryPoint.settingsRepository().apiAccessEnabled() }
+
+    /** The current travel-time routing switch, exposed through the non-personal status route. */
+    private fun travelTimesEnabled(): Boolean =
+        runBlocking { entryPoint.settingsRepository().routeApiEnabled() }
 
     /** The request identity, captured ONCE per entry point and threaded explicitly — see [Caller]. */
     private fun captureCaller(): Caller {
