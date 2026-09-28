@@ -52,6 +52,9 @@ internal class FakeVisitDao : VisitDao {
 
     override suspend fun mostRecent(): VisitEntity? = visits.maxByOrNull { it.startMs }
 
+    override fun observeMostRecent(): Flow<VisitEntity?> =
+        flowOf(visits.maxWithOrNull(compareBy<VisitEntity> { it.startMs }.thenBy { it.id }))
+
     override suspend fun ongoing(): VisitEntity? =
         visits.filter { it.isOngoing }.maxByOrNull { it.startMs }
 

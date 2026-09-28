@@ -58,6 +58,8 @@ data class AppSettings(
     val automaticNearbyDailyLimit: Int = 30,
     /** Include Maps Platform settings/key only in encrypted Pathline backup/export artifacts. */
     val includeMapsPlatformInBackup: Boolean = false,
+    /** Visibility of pending visits in the Places tab; independent of recording and ranking. */
+    val showUnconfirmedVisitsInPlaces: Boolean = true,
 )
 
 /**
@@ -100,6 +102,8 @@ class SettingsRepository @Inject constructor(
     private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
     private val keyRouteApiEnabled = booleanPreferencesKey("route_api_enabled")
     private val keyTelemetryEnabled = booleanPreferencesKey("telemetry_enabled")
+    private val keyShowUnconfirmedVisitsInPlaces =
+        booleanPreferencesKey("places_show_unconfirmed_visits")
     private val keyGoogleCloudProjectId = stringPreferencesKey("google_cloud_project_id")
     private val keyAutomaticNearbyDailyLimit = intPreferencesKey("automatic_nearby_daily_limit")
     private val keyIncludeMapsPlatformInBackup =
@@ -131,6 +135,7 @@ class SettingsRepository @Inject constructor(
             googleCloudProjectId = prefs[keyGoogleCloudProjectId] ?: "",
             automaticNearbyDailyLimit = prefs[keyAutomaticNearbyDailyLimit] ?: 30,
             includeMapsPlatformInBackup = prefs[keyIncludeMapsPlatformInBackup] ?: false,
+            showUnconfirmedVisitsInPlaces = prefs[keyShowUnconfirmedVisitsInPlaces] ?: true,
         )
     }
 
@@ -156,6 +161,10 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setTelemetryEnabled(enabled: Boolean) {
         context.dataStore.edit { it[keyTelemetryEnabled] = enabled }
+    }
+
+    suspend fun setShowUnconfirmedVisitsInPlaces(show: Boolean) {
+        context.dataStore.edit { it[keyShowUnconfirmedVisitsInPlaces] = show }
     }
 
     suspend fun setGoogleCloudProjectId(projectId: String) {

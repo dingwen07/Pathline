@@ -1,26 +1,35 @@
 package net.extrawdw.apps.locationhistory.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.CheckableDropdownMenuItem
+import androidx.compose.material3.DropdownMenuGroup
+import androidx.compose.material3.DropdownMenuPopup
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,7 +62,10 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     val pending by viewModel.unconfirmedVisits.collectAsStateWithLifecycle()
     val visitCounts by viewModel.visitCounts.collectAsStateWithLifecycle()
     val mapsApiKeyConfigured by viewModel.mapsApiKeyConfigured.collectAsStateWithLifecycle()
+    val showUnconfirmedVisits by viewModel.showUnconfirmedVisits.collectAsStateWithLifecycle()
+    val visiblePending = if (showUnconfirmedVisits == true) pending else emptyList()
 
+    var optionsExpanded by remember { mutableStateOf(false) }
     var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
     var deletePlace by remember { mutableStateOf<PlaceEntity?>(null) }
     var assignVisit by remember { mutableStateOf<VisitEntity?>(null) }
@@ -85,6 +97,45 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                             contentDescription = stringResource(R.string.cd_place_add)
                         )
                     }
+                    Box {
+                        IconButton(onClick = { optionsExpanded = true }) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = stringResource(R.string.cd_places_options),
+                            )
+                        }
+                        DropdownMenuPopup(
+                            expanded = optionsExpanded,
+                            onDismissRequest = { optionsExpanded = false },
+                        ) {
+                            DropdownMenuGroup(shapes = MenuDefaults.groupShapes()) {
+                                CheckableDropdownMenuItem(
+                                    checked = showUnconfirmedVisits ?: true,
+                                    onCheckedChange = { show ->
+                                        viewModel.setShowUnconfirmedVisits(show)
+                                        optionsExpanded = false
+                                    },
+                                    text = { Text(stringResource(R.string.places_show_unconfirmed_visits)) },
+                                    shapes = MenuDefaults.itemShapes(),
+                                    enabled = showUnconfirmedVisits != null,
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Outlined.Visibility,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(MenuDefaults.LeadingIconSize),
+                                        )
+                                    },
+                                    checkedLeadingIcon = {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(MenuDefaults.LeadingIconSize),
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
                 },
             )
         },
@@ -96,9 +147,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (pending.isNotEmpty()) {
+            if (visiblePending.isNotEmpty()) {
                 item { SectionHeader(stringResource(R.string.places_pending_header)) }
-                items(pending, key = { "pending-${it.id}" }) { visit ->
+                items(visiblePending, key = { "pending-${it.id}" }) { visit ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Text(
@@ -189,10 +240,13 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                     }
                 }
             }
-            if (places.isEmpty() && pending.isEmpty()) {
+            if (places.isEmpty() && visiblePending.isEmpty()) {
                 item {
                     Text(
-                        stringResource(R.string.places_empty),
+                        stringResource(
+                            if (showUnconfirmedVisits == false) R.string.places_saved_empty
+                            else R.string.places_empty,
+                        ),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(32.dp),
                     )

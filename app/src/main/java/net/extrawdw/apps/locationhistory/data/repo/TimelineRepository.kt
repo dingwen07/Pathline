@@ -86,6 +86,8 @@ class TimelineRepository @Inject constructor(
 
     fun observeUnconfirmedVisits() = visitDao.observeUnconfirmed()
 
+    fun observeMostRecentVisit() = visitDao.observeMostRecent()
+
     /** Back-compat: null promotes the inline candidate, non-null links an existing place. */
     suspend fun confirmVisitPlace(visitId: Long, chosenPlaceId: Long?) =
         confirmVisitPlace(

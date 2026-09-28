@@ -37,6 +37,9 @@ interface VisitDao {
     @Query("SELECT * FROM visits ORDER BY startMs DESC LIMIT 1")
     suspend fun mostRecent(): VisitEntity?
 
+    @Query("SELECT * FROM visits ORDER BY startMs DESC, id DESC LIMIT 1")
+    fun observeMostRecent(): Flow<VisitEntity?>
+
     @Query("SELECT * FROM visits WHERE isOngoing = 1 ORDER BY startMs DESC LIMIT 1")
     suspend fun ongoing(): VisitEntity?
 

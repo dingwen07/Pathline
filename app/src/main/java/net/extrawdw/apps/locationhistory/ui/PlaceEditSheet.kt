@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -55,8 +56,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Full-screen place editor. It is a [Dialog] (not a bottom sheet) so the map can use pan and
- * two-finger zoom/rotate gestures without fighting a sheet drag, and there is no scrolling parent
- * over the map to steal vertical drags. Edits name, address, center (tap the map), radius, and the
+ * two-finger zoom/rotate gestures without fighting a sheet drag. The map explicitly owns touch
+ * gestures inside the scrollable form. Edits name, address, center (tap the map), radius, and the
  * **Fixed** flag that stops auto-updates.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,6 +110,13 @@ fun PlaceEditDialog(
     var radius by remember(place.id, place.radiusMeters) {
         mutableFloatStateOf(place.radiusMeters.toFloat())
     }
+    val radiusSliderState = remember(place.id) {
+        SliderState(
+            value = radius,
+            trackRange = 20f..Constants.PLACE_MANUAL_MAX_RADIUS_METERS.toFloat(),
+        )
+    }
+    radiusSliderState.value = radius
     // A stored adaptive radius is a Double and usually cannot round-trip through Slider's Float.
     // Track an actual user gesture so opening and saving the editor is a geometry-exact no-op.
     var radiusChanged by remember(place.id) { mutableStateOf(false) }
@@ -192,8 +200,7 @@ fun PlaceEditDialog(
             },
         ) { padding ->
             // Scrollable so the folded-in note/tags fields have room; the map sits at a fixed height.
-            // The map's own view disallows parent touch interception during pan/zoom, so its gestures
-            // still work inside the scroll container.
+            // ScrollContainerMapView keeps gestures that start on the map out of this scroll state.
             Column(
                 Modifier
                     .fillMaxSize()
@@ -291,12 +298,11 @@ fun PlaceEditDialog(
                     modifier = Modifier.padding(top = 8.dp),
                 )
                 Slider(
-                    value = radius,
+                    state = radiusSliderState,
                     onValueChange = {
                         radius = it
                         radiusChanged = true
                     },
-                    valueRange = 20f..Constants.PLACE_MANUAL_MAX_RADIUS_METERS.toFloat(),
                     enabled = !repairInFlight,
                 )
                 Row(
@@ -329,6 +335,7 @@ fun PlaceEditDialog(
                 ) {
                     GoogleMap(
                         modifier = Modifier.fillMaxSize(),
+                        mapViewFactory = ::ScrollContainerMapView,
                         cameraPositionState = cameraPositionState,
                         mapColorScheme = rememberMapColorScheme(),
                         uiSettings = MapUiSettings(zoomControlsEnabled = false),
@@ -357,9 +364,11 @@ fun PlaceEditDialog(
                         }
                     }
                 }
-                if (!mapInteractionEnabled) {
+                if (place.coordinateState == PlaceCoordinateState.WGS84_CANONICAL &&
+                    !mapInteractionEnabled
+                ) {
                     Text(
-                        stringResource(R.string.place_edit_location_write_disabled),
+                        stringResource(R.string.place_edit_location_conversion_failed),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),

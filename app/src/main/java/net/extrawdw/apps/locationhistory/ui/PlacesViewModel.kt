@@ -13,6 +13,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -29,6 +31,7 @@ import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
+import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
@@ -44,15 +47,29 @@ class PlacesViewModel @Inject constructor(
     private val annotationStore: AnnotationStore,
     private val mapProjector: GoogleMapProjector,
     private val legacyPlaceCoordinates: LegacyPlaceCoordinateManager,
+    private val settingsRepository: SettingsRepository,
     mapsApiKeyVault: MapsApiKeyVault,
 ) : ViewModel() {
 
     private val fusedClient by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
-    val places: StateFlow<List<PlaceEntity>> = placeRepository.observeAll()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val places: StateFlow<List<PlaceEntity>> = combine(
+        placeRepository.observeAll(),
+        timelineRepository.observeMostRecentVisit(),
+        ::sortSavedPlacesByLatestVisit,
+    ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val mapsApiKeyConfigured: StateFlow<Boolean> = mapsApiKeyVault.configured
+
+    // Wait for the persisted value before showing pending visits, avoiding a flash when hidden.
+    val showUnconfirmedVisits: StateFlow<Boolean?> = settingsRepository.settings
+        .map { it.showUnconfirmedVisitsInPlaces }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun setShowUnconfirmedVisits(show: Boolean) = viewModelScope.launch {
+        settingsRepository.setShowUnconfirmedVisitsInPlaces(show)
+    }
 
     /** Live, accurate visit count per place (derived from the visits table). */
     val visitCounts: StateFlow<Map<Long, Int>> = placeRepository.observeVisitCounts()

@@ -69,7 +69,8 @@ fun <T> TransformResult<T>.getOrNull(): T? =
 /**
  * Working profile for the July 2026 Samsung/Pixel mainland observations and supplied export. Map
  * rendering/results are directly evidenced and the malformed nearby candidates support the request
- * projection. Map-click output was not characterized, so geometry writes remain disabled.
+ * projection. Map clicks use the same coordinate frame as rendered map positions, so the active
+ * profile normalizes mainland clicks back to WGS-84 before they enter domain geometry.
  */
 object GoogleAndroidCoordinateProfiles {
     /** Frozen hypothesis used only for explicit legacy repairs/classification and their journal. */
@@ -93,9 +94,9 @@ object GoogleAndroidCoordinateProfiles {
     )
 
     val OBSERVED_MAINLAND_2026_07 = GoogleAndroidCoordinateProfile(
-        id = "google-android-mainland-2026-07-maps-compose-8.3.0-places-5.2.0",
+        id = "google-android-mainland-2026-07-maps-compose-8.3.0-places-5.2.0-map-click-gcj02",
         mapRenderInput = GoogleBoundaryFrame.MAINLAND_GCJ02,
-        mapInteractionOutput = GoogleBoundaryFrame.UNVERIFIED,
+        mapInteractionOutput = GoogleBoundaryFrame.MAINLAND_GCJ02,
         placesRequestInput = GoogleBoundaryFrame.MAINLAND_GCJ02,
         placesResultOutput = GoogleBoundaryFrame.MAINLAND_GCJ02,
         // The SDK-owned blue dot bypasses Pathline's adapter and remains a device-test contract.

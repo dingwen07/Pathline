@@ -96,6 +96,9 @@
     <string name="places_title">地点</string>
     <string name="places_pending_header">待确认</string>
     <string name="places_saved_header">已保存的地点</string>
+    <string name="places_show_unconfirmed_visits">显示未确认的访问</string>
+    <string name="cd_places_options">地点选项</string>
+    <string name="places_saved_empty">暂无已保存的地点。</string>
     <string name="places_assign">指定地点</string>
     <string name="cd_place_add">添加地点</string>
     <string name="cd_place_locked">已锁定</string>
@@ -552,10 +555,10 @@
     <plurals name="api_notify_hold_text_many">
         <item quantity="other">%1$s 等 %2$d 个应用可以访问您的时间线和位置历史。</item>
     </plurals>
-    <string name="place_edit_location_write_disabled">在验证此 Google 地图运行环境于该区域的坐标输出前，暂时无法移动地点。名称、半径、锁定、笔记和标签仍可安全编辑。</string>
+    <string name="place_edit_location_conversion_failed">无法转换已保存的坐标以进行地图编辑。您仍可编辑此地点的其他信息。</string>
     <string name="action_confirm">确认</string>
     <string name="place_coordinate_review_badge">需要检查位置</string>
-    <string name="place_coordinate_review_message">此地点保存时尚未记录坐标来源。在您确认其坐标解释之前，Pathline 不会将该位置用于匹配、路线或 API 邻近查询。</string>
+    <string name="place_coordinate_review_message">此地点保存时尚未记录坐标来源。在您确认其坐标解释之前，无法移动地点中心，Pathline 也不会将该位置用于匹配、路线或 API 邻近查询。</string>
     <string name="place_coordinate_legacy_preview">此地图仅预览旧版 Google 基准位置。访问标记来自规范 GPS 历史；两者的相对位置不代表数据已修复。</string>
     <string name="place_repair_google_historical">使用旧版 Google 位置</string>
     <string name="place_repair_google_wgs84">将 Google 基准视为 WGS‑84</string>

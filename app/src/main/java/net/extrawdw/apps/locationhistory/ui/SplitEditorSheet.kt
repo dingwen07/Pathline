@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -131,6 +132,14 @@ fun SplitEditorPanel(
             )
         }
         split = split.coerceIn(1, samples.size - 1)
+        val splitSliderState = remember(samples.size) {
+            SliderState(
+                value = split.toFloat(),
+                trackRange = 1f..(samples.size - 1).toFloat(),
+            )
+        }
+        // The fine adjustment buttons and slider share the same split position.
+        splitSliderState.value = split.toFloat()
         LaunchedEffect(split) { onReclassifyType(null); onSplitIndexChange(split) }
 
         Row(
@@ -146,9 +155,8 @@ fun SplitEditorPanel(
                 )
             }
             Slider(
-                value = split.toFloat(),
+                state = splitSliderState,
                 onValueChange = { split = it.toInt().coerceIn(1, samples.size - 1) },
-                valueRange = 1f..(samples.size - 1).toFloat(),
                 modifier = Modifier.weight(1f),
             )
             IconButton(onClick = { if (split < samples.size - 1) split++ }) {

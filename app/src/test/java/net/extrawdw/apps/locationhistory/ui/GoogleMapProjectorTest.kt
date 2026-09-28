@@ -101,10 +101,37 @@ class GoogleMapProjectorTest {
     }
 
     @Test
-    fun mainlandMapClick_remainsWriteDisabledWhileOutputFrameIsUnverified() {
+    fun mainlandMapClick_normalizesToWgs84AndRendersAtTheTappedPoint() {
         val projector = projector(mainlandEverywhere)
 
-        assertNull(projector.fromMap(BEIJING_GCJ))
+        val clicked = requireNotNull(projector.fromMap(BEIJING_GCJ))
+        assertEquals(BEIJING_WGS.latitude, clicked.latitude, 1e-7)
+        assertEquals(BEIJING_WGS.longitude, clicked.longitude, 1e-7)
+
+        val rendered = requireNotNull(projector.coordinate(clicked))
+        assertEquals(BEIJING_GCJ.latitude, rendered.latitude, 1e-7)
+        assertEquals(BEIJING_GCJ.longitude, rendered.longitude, 1e-7)
+    }
+
+    @Test
+    fun mainlandPlaceCenter_canBeNormalizedAcrossRepeatedEditorOpensWithoutDrifting() {
+        val projector = projector(mainlandEverywhere)
+        var place = place(
+            latitude = BEIJING_WGS.latitude,
+            longitude = BEIJING_WGS.longitude,
+            coordinateState = PlaceCoordinateState.WGS84_CANONICAL,
+        )
+
+        repeat(5) {
+            val projected = requireNotNull(projector.placePreviewCircle(place))
+            assertTrue(projected.isCanonical)
+            // The editor uses normalization of the initial map center to enable center edits.
+            val clicked = requireNotNull(projector.fromMap(projected.circle.center))
+            place = place.copy(latitude = clicked.latitude, longitude = clicked.longitude)
+
+            assertEquals(BEIJING_WGS.latitude, place.latitude, 1e-7)
+            assertEquals(BEIJING_WGS.longitude, place.longitude, 1e-7)
+        }
     }
 
     @Test

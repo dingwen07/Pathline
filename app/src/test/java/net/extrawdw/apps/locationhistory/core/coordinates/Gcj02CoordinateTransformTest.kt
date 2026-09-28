@@ -91,6 +91,7 @@ class Gcj02CoordinateTransformTest {
         )
         val profile = adapter.profile.copy(
             mapRenderInput = GoogleBoundaryFrame.WGS84,
+            mapInteractionOutput = GoogleBoundaryFrame.UNVERIFIED,
             placesRequestInput = GoogleBoundaryFrame.UNVERIFIED,
             placesResultOutput = GoogleBoundaryFrame.MAINLAND_GCJ02,
         )
@@ -98,6 +99,10 @@ class Gcj02CoordinateTransformTest {
 
         val map = adapter.toMap(wgs, profile).success()
         assertEquals(wgs.latitude.toRawBits(), map.latitude.toRawBits())
+        assertEquals(
+            TransformResult.Failure(TransformResult.Reason.UNVERIFIED_PROFILE),
+            adapter.fromMapInteraction(map, profile),
+        )
         assertTrue(
             adapter.toPlacesRequest(wgs, profile) is TransformResult.Failure
         )
@@ -139,6 +144,22 @@ class Gcj02CoordinateTransformTest {
         assertEquals(original.longitude.toRawBits(), request.longitude.toRawBits())
         assertEquals(original.latitude.toRawBits(), normalized.latitude.toRawBits())
         assertEquals(original.longitude.toRawBits(), normalized.longitude.toRawBits())
+    }
+
+    @Test
+    fun adapter_unverifiedMapInteractionPreservesIdentityOutsideMainland() {
+        val adapter = GoogleAndroidCoordinateAdapter(
+            Gcj02CoordinateTransform(mainlandNowhere)
+        )
+        val point = GoogleMapCoordinate(1.352083, 103.819836)
+
+        val normalized = adapter.fromMapInteraction(
+            point,
+            adapter.profile.copy(mapInteractionOutput = GoogleBoundaryFrame.UNVERIFIED),
+        ).success()
+
+        assertEquals(point.latitude.toRawBits(), normalized.latitude.toRawBits())
+        assertEquals(point.longitude.toRawBits(), normalized.longitude.toRawBits())
     }
 
     private fun <T> TransformResult<T>.success(): T =
