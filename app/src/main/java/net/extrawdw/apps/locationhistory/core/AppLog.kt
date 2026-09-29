@@ -56,7 +56,7 @@ object AppLog {
     }
 
     /** Begin a fresh log file. Called at every service start so each session is its own file. */
-    fun startSession(reason: String) = synchronized(lock) {
+    fun startSession(reason: String): Unit = synchronized(lock) {
         val dir = logsDir ?: return
         current = File(dir, "session-${fileFmt.format(Date())}.log")
         prune(dir)
@@ -162,7 +162,7 @@ object AppLog {
             append(" realUid=").append(realUid)
             append(" packageUid=").append(packageUid)
             append(" definingUid=").append(definingUid)
-            append(" process=").append(processName ?: "<unknown>")
+            append(" process=").append(processName)
             append(" pssKb=").append(pss)
             append(" rssKb=").append(rss)
             description?.limitedSingleLine(MAX_EXIT_DESCRIPTION_CHARS)?.takeIf { it.isNotBlank() }

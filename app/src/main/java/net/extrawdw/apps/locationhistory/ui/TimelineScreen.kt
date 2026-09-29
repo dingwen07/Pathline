@@ -1101,7 +1101,7 @@ private fun CompactTripLine(
         )
         AssistChip(
             onClick = onConfirm,
-            label = { Text(stringResource(if (confirmed) R.string.chip_edit_mode else R.string.chip_confirm)) })
+            label = { Text(stringResource(if (confirmed) R.string.chip_change_mode else R.string.chip_confirm)) })
         if (showEdit) IconButton(onClick = onEdit) {
             Icon(
                 Icons.Filled.Edit,

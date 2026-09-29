@@ -77,7 +77,7 @@
     <string name="menu_stationary_place">静止（一个地点）</string>
     <string name="chip_unconfirmed">未确认</string>
     <string name="chip_confirm">确认</string>
-    <string name="chip_edit_mode">编辑方式</string>
+    <string name="chip_change_mode">更改方式</string>
     <!-- Annotation editor (notes / tags / read-only memories) -->
     <string name="annotations_title">备注与标签</string>
     <string name="annotations_notes_label">备注</string>

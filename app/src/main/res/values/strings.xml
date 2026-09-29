@@ -81,7 +81,7 @@
     <string name="menu_stationary_place">Stationary (a place)</string>
     <string name="chip_unconfirmed">Unconfirmed</string>
     <string name="chip_confirm">Confirm</string>
-    <string name="chip_edit_mode">Edit mode</string>
+    <string name="chip_change_mode">Change mode</string>
     <!-- Annotation editor (notes / tags / read-only memories) -->
     <string name="annotations_title">Notes &amp; tags</string>
     <string name="annotations_notes_label">Notes</string>

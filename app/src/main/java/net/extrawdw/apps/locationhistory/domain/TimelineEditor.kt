@@ -171,9 +171,8 @@ class TimelineEditor @Inject constructor(
                     ),
                     match,
                 )
-                val id = visitDao.insert(visit)
+                visitDao.insert(visit)
                 visit.placeId?.let { placeRepository.recordVisitToPlace(it) }
-                id
             }
 
             is SegmentType.Moving -> {

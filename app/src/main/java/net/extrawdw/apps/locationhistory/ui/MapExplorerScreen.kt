@@ -197,7 +197,7 @@ fun MapExplorerScreen(
                 dotSizePx = dotSizePx,
                 dotAlpha = if (drawingTrack) 1f else DOT_ALPHA_NO_TRACK,
                 screenDensity = density.density,
-                frameTick = overlayFrame.intValue,
+                frameTick = { overlayFrame.intValue },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -241,15 +241,14 @@ private fun DotCanvasOverlay(
     dotSizePx: Float,
     dotAlpha: Float,
     screenDensity: Float,
-    frameTick: Int,
+    frameTick: () -> Int,
     modifier: Modifier = Modifier,
 ) {
     if (dotIndex.isEmpty) return
     val radiusPx = (dotSizePx / 2f).coerceAtLeast(0.5f)
-    val redrawTick = frameTick
-
     Canvas(modifier) {
-        redrawTick
+        // Read the frame state during drawing so camera motion keeps invalidating the overlay.
+        frameTick()
         if (!cameraPosition.zoom.isFinite()) return@Canvas
         val widthPx = size.width
         val heightPx = size.height
