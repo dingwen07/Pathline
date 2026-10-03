@@ -13,12 +13,25 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.WideNavigationRailDefaults
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuite
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldLayout
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
@@ -46,6 +60,7 @@ import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
 import net.extrawdw.apps.locationhistory.ui.appSettingsIntent
 import net.extrawdw.apps.locationhistory.ui.rememberPathlinePermissions
+import net.extrawdw.apps.locationhistory.ui.rememberRetainedContent
 import net.extrawdw.apps.locationhistory.ui.theme.PathlineTheme
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 
@@ -121,14 +136,12 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
 
     // The Map tab forces the whole app (nav pane + map) into Dark Mode while it is active.
     PathlineTheme(darkTheme = if (destination == AppDestinations.MAP) true else isSystemInDarkTheme()) {
-        // Resolve labels here in the composable scope; the navigationSuiteItems builder below is not
-        // a @Composable context, so stringResource() can't be called inside it.
-        val destinationLabels = AppDestinations.entries.map { stringResource(it.labelRes) }
-        NavigationSuiteScaffold(
-            navigationSuiteItems = {
-                AppDestinations.entries.forEachIndexed { index, dest ->
-                    val label = destinationLabels[index]
-                    item(
+        PathlineNavigationScaffold(
+            navigationItems = { itemModifier ->
+                AppDestinations.entries.forEach { dest ->
+                    val label = stringResource(dest.labelRes)
+                    NavigationSuiteItem(
+                        modifier = itemModifier,
                         icon = { Icon(dest.icon, contentDescription = label) },
                         label = { Text(label) },
                         selected = dest == destination,
@@ -209,6 +222,52 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun PathlineNavigationScaffold(
+    navigationItems: @Composable (Modifier) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val retainedContent = rememberRetainedContent(content)
+    val navigationType = NavigationSuiteScaffoldDefaults.navigationSuiteType(currentWindowAdaptiveInfoV2())
+    if (navigationType == NavigationSuiteType.WideNavigationRailCollapsed) {
+        Surface(
+            color = NavigationSuiteScaffoldDefaults.containerColor,
+            contentColor = NavigationSuiteScaffoldDefaults.contentColor,
+        ) {
+            NavigationSuiteScaffoldLayout(
+                navigationSuiteType = navigationType,
+                navigationSuite = {
+                    NavigationSuite(
+                        navigationSuiteType = navigationType,
+                        modifier = Modifier.width(80.dp),
+                        verticalArrangement = Arrangement.Center,
+                        // Keep the native Expressive item's indicator and spacing centered in
+                        // the narrower rail instead of squeezing its internal layout.
+                        content = {
+                            navigationItems(
+                                Modifier.wrapContentWidth(unbounded = true).width(96.dp)
+                            )
+                        },
+                    )
+                },
+            ) {
+                Box(
+                    Modifier.consumeWindowInsets(
+                        WideNavigationRailDefaults.windowInsets.only(WindowInsetsSides.Start)
+                    ),
+                    propagateMinConstraints = true,
+                ) { retainedContent() }
+            }
+        }
+    } else {
+        NavigationSuiteScaffold(
+            navigationSuiteType = navigationType,
+            navigationItems = { navigationItems(Modifier) },
+            content = retainedContent,
+        )
     }
 }
 

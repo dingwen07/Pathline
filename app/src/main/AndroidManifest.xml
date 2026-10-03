@@ -183,7 +183,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:configChanges="uiMode"
+            android:configChanges="uiMode|orientation|screenSize|smallestScreenSize|screenLayout"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Pathline">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

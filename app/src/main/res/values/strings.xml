@@ -71,6 +71,7 @@
     <string name="timeline_recording_off_desc">Your timeline isn\'t being updated. Tap to turn recording on.</string>
     <string name="cd_jump_to_today">Jump to today</string>
     <string name="cd_recenter">Recenter on current location</string>
+    <string name="cd_resize_timeline">Resize timeline</string>
     <string name="cd_edit">Edit</string>
     <string name="cd_edit_trip">Edit trip</string>
     <string name="menu_split">Split</string>

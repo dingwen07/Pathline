@@ -3,10 +3,25 @@ package net.extrawdw.apps.locationhistory.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.recalculateWindowInsets
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -14,6 +29,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -22,23 +38,32 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import android.content.Context
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.Geo
@@ -52,6 +77,8 @@ data class PlaceSearchAnchor(
     val latitude: Double,
     val longitude: Double,
 )
+
+private enum class AssignPlaceInput { SEARCH, CUSTOM }
 
 /**
  * Resolve a visit's place: **search** Google Places by name, pick a nearby suggestion, pick an
@@ -75,11 +102,16 @@ fun ConfirmPlaceSheet(
     var nearby by remember(anchor) { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var nearbyRequested by remember(anchor) { mutableStateOf(false) }
     var nearbyLoading by remember(anchor) { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable(visit.id) { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var searchLoading by remember { mutableStateOf(false) }
-    var newName by remember { mutableStateOf(visit.candidateName ?: "") }
+    var searchFocused by remember { mutableStateOf(false) }
+    var activeInput by remember { mutableStateOf<AssignPlaceInput?>(null) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val customFocusRequester = remember { FocusRequester() }
+    var newName by rememberSaveable(visit.id) { mutableStateOf(visit.candidateName ?: "") }
     val scope = rememberCoroutineScope()
+    val sheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
 
     fun requestNearby() {
         if (!mapsApiKeyConfigured || nearbyRequested || nearbyLoading) return
@@ -121,11 +153,117 @@ fun ConfirmPlaceSheet(
             .map { it.first }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Base the form arrangement on window size, not animated IME height, so keyboard animation
+    // and changing focus do not move a text field into a different composition.
+    val windowSize = LocalWindowInfo.current.containerDpSize
+    val wideWindow = windowSize.width >= 600.dp
+    val horizontalInputs = wideWindow && windowSize.height < 700.dp
+    val compactVerticalInputs = !wideWindow && windowSize.height < 700.dp
+    val nearbyInList = horizontalInputs || compactVerticalInputs
+    val bottomPadding = 8.dp
+    val keepCustomBehindKeyboard = !wideWindow && searchFocused
+    // Reparenting a focus target clears native focus. Restore it only when the window changes
+    // the form arrangement, never on an IME frame or an ordinary switch between these inputs.
+    LaunchedEffect(horizontalInputs) {
+        when (activeInput) {
+            AssignPlaceInput.SEARCH -> searchFocusRequester.requestFocus()
+            AssignPlaceInput.CUSTOM -> customFocusRequester.requestFocus()
+            null -> Unit
+        }
+    }
+
+    @Composable
+    fun SearchInput(modifier: Modifier = Modifier) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = {
+                query = it
+                if (it.isBlank()) results = emptyList()
+            },
+            label = { Text(stringResource(R.string.search_places_label)) },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                IconButton(
+                    onClick = ::requestSearch,
+                    enabled = mapsApiKeyConfigured && query.isNotBlank() && !searchLoading,
+                ) {
+                    Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search))
+                }
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { requestSearch() }),
+            singleLine = true,
+            modifier = modifier
+                .fillMaxWidth()
+                .focusRequester(searchFocusRequester)
+                .onFocusChanged {
+                    searchFocused = it.isFocused
+                    if (it.isFocused) activeInput = AssignPlaceInput.SEARCH
+                    if (it.isFocused && sheetState.targetValue != SheetValue.Expanded) {
+                        scope.launch { sheetState.expand() }
+                    }
+                }
+                .padding(top = 8.dp),
+        )
+    }
+
+    @Composable
+    fun CustomInput(modifier: Modifier = Modifier) {
+        Row(
+            modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it },
+                label = { Text(stringResource(R.string.custom_place_name_label)) },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(customFocusRequester)
+                    .onFocusChanged {
+                        if (it.isFocused) activeInput = AssignPlaceInput.CUSTOM
+                        if (it.isFocused && sheetState.targetValue != SheetValue.Expanded) {
+                            scope.launch { sheetState.expand() }
+                        }
+                    },
+            )
+            Button(onClick = { onConfirm(PlaceChoice.NewNamed(newName.ifBlank { defaultPlaceName })) }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text(stringResource(R.string.action_save))
+            }
+        }
+    }
+
+    val retainedSearchInput = rememberRetainedContent { SearchInput() }
+    val retainedCustomInput = rememberRetainedContent { CustomInput() }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        modifier = Modifier.statusBarsPadding(),
+        contentWindowInsets = {
+            if (horizontalInputs) {
+                // The inputs are pinned above the list. Let the list viewport reach behind the
+                // navigation bar, while the native sheet still keeps the whole form above the IME.
+                BottomSheetDefaults.modalWindowInsets.only(WindowInsetsSides.Top)
+                    .union(WindowInsets.ime.only(WindowInsetsSides.Bottom))
+                    .union(WindowInsets.systemBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Horizontal))
+            } else if (keepCustomBehindKeyboard) {
+                WindowInsets.systemBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Vertical)
+            } else {
+                BottomSheetDefaults.modalWindowInsets
+            }
+        },
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
+                .heightIn(max = if (wideWindow) 720.dp else Dp.Infinity)
+                .padding(start = 20.dp, end = 20.dp, bottom = if (horizontalInputs) 0.dp else bottomPadding)
         ) {
             Text(
                 stringResource(R.string.assign_place_title),
@@ -133,29 +271,14 @@ fun ConfirmPlaceSheet(
                 fontWeight = FontWeight.SemiBold
             )
 
-            OutlinedTextField(
-                value = query,
-                onValueChange = {
-                    query = it
-                    if (it.isBlank()) results = emptyList()
-                },
-                label = { Text(stringResource(R.string.search_places_label)) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    IconButton(
-                        onClick = ::requestSearch,
-                        enabled = mapsApiKeyConfigured && query.isNotBlank() && !searchLoading,
-                    ) {
-                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search))
-                    }
-                },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { requestSearch() }),
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-            )
+            if (horizontalInputs) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.weight(1f)) { retainedSearchInput() }
+                    Box(Modifier.weight(1f)) { retainedCustomInput() }
+                }
+            } else {
+                retainedSearchInput()
+            }
 
             if (!mapsApiKeyConfigured) {
                 Text(
@@ -166,21 +289,40 @@ fun ConfirmPlaceSheet(
                 )
             }
 
-            NearbyPlacesButton(
-                visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
-                loading = nearbyLoading,
-                enabled = mapsApiKeyConfigured,
-                onClick = ::requestNearby,
-            )
+            if (!nearbyInList) {
+                NearbyPlacesButton(
+                    visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
+                    loading = nearbyLoading,
+                    enabled = mapsApiKeyConfigured,
+                    onClick = ::requestNearby,
+                )
+            }
 
             LazyColumn(
                 Modifier
-                    // Yield result-list space when the IME reduces the sheet's available height so
-                    // the custom-place controls below remain visible.
-                    .weight(1f, fill = false)
+                    // A phone keeps Custom at the bottom even when the search results are empty.
+                    // While Search is focused, only the list avoids the IME; Custom stays behind it.
+                    .weight(1f, fill = !wideWindow)
                     .heightIn(max = 380.dp)
+                    .then(
+                        if (keepCustomBehindKeyboard) {
+                            Modifier.fillMaxSize().recalculateWindowInsets().imePadding()
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(top = 8.dp)
             ) {
+                if (nearbyInList) {
+                    item {
+                        NearbyPlacesButton(
+                            visible = query.isBlank() && (!nearbyRequested || nearbyLoading),
+                            loading = nearbyLoading,
+                            enabled = mapsApiKeyConfigured,
+                            onClick = ::requestNearby,
+                        )
+                    }
+                }
                 if (results.isNotEmpty()) {
                     item { SectionLabel(stringResource(R.string.search_results_header)) }
                     items(results, key = { "s${it.googlePlaceId ?: it.name}" }) { c ->
@@ -227,32 +369,28 @@ fun ConfirmPlaceSheet(
                         }
                     }
                 }
+                if (horizontalInputs) {
+                    item {
+                        // This scrolls with the places, so rows can draw behind the system bar
+                        // and the final row can still be scrolled fully clear of it. IME insets
+                        // consumed by the sheet automatically reduce this spacer to zero.
+                        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                    }
+                }
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text(
-                stringResource(R.string.custom_places_header),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = newName,
-                    onValueChange = { newName = it },
-                    label = { Text(stringResource(R.string.custom_place_name_label)) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                Button(onClick = { onConfirm(PlaceChoice.NewNamed(newName.ifBlank { defaultPlaceName })) }) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Text(stringResource(R.string.action_save))
+            if (!horizontalInputs) {
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                // The input label identifies Custom in short phone windows. Keep room for both
+                // pinned inputs and the keyboard; Nearby remains in the scrolling result list.
+                if (!compactVerticalInputs) {
+                    Text(
+                        stringResource(R.string.custom_places_header),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
+                retainedCustomInput()
             }
         }
     }
@@ -271,10 +409,11 @@ fun AddGooglePlaceSheet(
     var nearby by remember(anchor) { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var nearbyRequested by remember(anchor) { mutableStateOf(false) }
     var nearbyLoading by remember(anchor) { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable(anchor) { mutableStateOf("") }
     var results by remember { mutableStateOf<List<PlaceCandidate>>(emptyList()) }
     var searchLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val sheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
 
     fun requestNearby() {
         if (!mapsApiKeyConfigured || nearbyRequested || nearbyLoading) return
@@ -300,10 +439,15 @@ fun AddGooglePlaceSheet(
 
     val context = LocalContext.current
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        modifier = Modifier.statusBarsPadding(),
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .heightIn(max = 720.dp)
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
         ) {
             Text(
@@ -333,6 +477,11 @@ fun AddGooglePlaceSheet(
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onFocusChanged {
+                        if (it.isFocused && sheetState.targetValue != SheetValue.Expanded) {
+                            scope.launch { sheetState.expand() }
+                        }
+                    }
                     .padding(top = 8.dp),
             )
 
@@ -354,6 +503,7 @@ fun AddGooglePlaceSheet(
 
             LazyColumn(
                 Modifier
+                    .weight(1f, fill = false)
                     .heightIn(max = 380.dp)
                     .padding(top = 8.dp)
             ) {

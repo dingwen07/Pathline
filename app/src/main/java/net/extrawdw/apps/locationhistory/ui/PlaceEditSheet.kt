@@ -3,6 +3,10 @@ package net.extrawdw.apps.locationhistory.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,7 +20,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderState
@@ -31,6 +34,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,22 +89,28 @@ fun PlaceEditDialog(
     onUndoRepair: suspend () -> Boolean,
     onDismiss: () -> Unit,
 ) {
-    var name by remember { mutableStateOf(place.name) }
-    var address by remember { mutableStateOf(place.address ?: "") }
+    var name by rememberSaveable(place.id) { mutableStateOf(place.name) }
+    var address by rememberSaveable(place.id) { mutableStateOf(place.address ?: "") }
     val initialProjection = remember(
         place.id,
         place.latitude,
         place.longitude,
         place.coordinateState,
     ) { projectPlace(place) }
-    var canonicalCenter by remember(place.id) {
+    var canonicalCenter by rememberSaveable(
+        place.id,
+        stateSaver = listSaver(
+            save = { listOf(it.latitude, it.longitude) },
+            restore = { Wgs84Coordinate(it[0], it[1]) },
+        ),
+    ) {
         mutableStateOf(
             initialProjection?.canonicalCenter
                 ?: Wgs84Coordinate(place.latitude, place.longitude)
         )
     }
-    var mapCenter by remember(place.id) { mutableStateOf(initialProjection?.circle?.center) }
-    var centerChanged by remember(place.id) { mutableStateOf(false) }
+    var centerChanged by rememberSaveable(place.id) { mutableStateOf(false) }
+    val mapCenter = if (centerChanged) projectCoordinate(canonicalCenter) else initialProjection?.circle?.center
     val mapInteractionEnabled = remember(
         place.coordinateState,
         initialProjection?.circle?.center,
@@ -107,7 +118,7 @@ fun PlaceEditDialog(
         place.coordinateState == PlaceCoordinateState.WGS84_CANONICAL &&
                 initialProjection?.circle?.center?.let(normalizeMapCoordinate) != null
     }
-    var radius by remember(place.id, place.radiusMeters) {
+    var radius by rememberSaveable(place.id, place.radiusMeters) {
         mutableFloatStateOf(place.radiusMeters.toFloat())
     }
     val radiusSliderState = remember(place.id) {
@@ -119,8 +130,8 @@ fun PlaceEditDialog(
     radiusSliderState.value = radius
     // A stored adaptive radius is a Double and usually cannot round-trip through Slider's Float.
     // Track an actual user gesture so opening and saving the editor is a geometry-exact no-op.
-    var radiusChanged by remember(place.id) { mutableStateOf(false) }
-    var fixed by remember { mutableStateOf(place.fixed) }
+    var radiusChanged by rememberSaveable(place.id) { mutableStateOf(false) }
+    var fixed by rememberSaveable(place.id) { mutableStateOf(place.fixed) }
     var undoAvailable by remember(place.id) { mutableStateOf(false) }
     var pendingRepair by remember(place.id) {
         mutableStateOf<PlaceCoordinateRepairDecision?>(null)
@@ -153,12 +164,48 @@ fun PlaceEditDialog(
     val cameraPositionState = rememberCameraPositionState {
         mapCenter?.let { position = CameraPosition.fromLatLngZoom(it.toLatLng(), 16f) }
     }
+    val formScrollState = rememberScrollState()
+
+    @Composable
+    fun EditorMap(edgeToEdge: Boolean) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            mapViewFactory = ::ScrollContainerMapView,
+            cameraPositionState = cameraPositionState,
+            mapColorScheme = rememberMapColorScheme(),
+            uiSettings = MapUiSettings(zoomControlsEnabled = false),
+            contentPadding = if (edgeToEdge) WindowInsets.safeDrawing.asPaddingValues() else PaddingValues(),
+            onMapClick = { clicked ->
+                if (mapInteractionEnabled && !repairInFlight) {
+                    val normalized = normalizeMapCoordinate(
+                        GoogleMapCoordinate(clicked.latitude, clicked.longitude)
+                    )
+                    val projected = normalized?.let(projectCoordinate)
+                    if (normalized != null && projected != null) {
+                        canonicalCenter = normalized
+                        centerChanged = true
+                    }
+                }
+            },
+        ) {
+            mapCenter?.let { center ->
+                Circle(
+                    center = center.toLatLng(),
+                    radius = radius.toDouble(),
+                    strokeColor = androidx.compose.ui.graphics.Color(0xFF1E88E5),
+                    strokeWidth = 4f,
+                    fillColor = androidx.compose.ui.graphics.Color(0x331E88E5),
+                )
+            }
+        }
+    }
 
     FullScreenDialog(
         onDismiss = onDismiss,
         dismissEnabled = !repairInFlight,
     ) { requestClose ->
-        Scaffold(
+        AdaptivePlaceLayout(
+            map = { edgeToEdge -> EditorMap(edgeToEdge) },
             topBar = {
                 TopAppBar(
                     title = { Text(stringResource(R.string.place_edit_title)) },
@@ -198,14 +245,13 @@ fun PlaceEditDialog(
                     },
                 )
             },
-        ) { padding ->
-            // Scrollable so the folded-in note/tags fields have room; the map sits at a fixed height.
-            // ScrollContainerMapView keeps gestures that start on the map out of this scroll state.
+        ) { padding, inlineMap ->
+            // ScrollContainerMapView keeps compact-layout map gestures out of the form's scroll.
             Column(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(formScrollState)
                     .padding(horizontal = 16.dp)
             ) {
                 OutlinedTextField(
@@ -328,41 +374,8 @@ fun PlaceEditDialog(
                         enabled = !repairInFlight,
                     )
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(280.dp)
-                ) {
-                    GoogleMap(
-                        modifier = Modifier.fillMaxSize(),
-                        mapViewFactory = ::ScrollContainerMapView,
-                        cameraPositionState = cameraPositionState,
-                        mapColorScheme = rememberMapColorScheme(),
-                        uiSettings = MapUiSettings(zoomControlsEnabled = false),
-                        onMapClick = { clicked ->
-                            if (mapInteractionEnabled && !repairInFlight) {
-                                val normalized = normalizeMapCoordinate(
-                                    GoogleMapCoordinate(clicked.latitude, clicked.longitude)
-                                )
-                                val projected = normalized?.let(projectCoordinate)
-                                if (normalized != null && projected != null) {
-                                    canonicalCenter = normalized
-                                    mapCenter = projected
-                                    centerChanged = true
-                                }
-                            }
-                        },
-                    ) {
-                        mapCenter?.let { center ->
-                            Circle(
-                                center = center.toLatLng(),
-                                radius = radius.toDouble(),
-                                strokeColor = androidx.compose.ui.graphics.Color(0xFF1E88E5),
-                                strokeWidth = 4f,
-                                fillColor = androidx.compose.ui.graphics.Color(0x331E88E5),
-                            )
-                        }
-                    }
+                inlineMap?.let { map ->
+                    Box(Modifier.fillMaxWidth().height(280.dp)) { map() }
                 }
                 if (place.coordinateState == PlaceCoordinateState.WGS84_CANONICAL &&
                     !mapInteractionEnabled

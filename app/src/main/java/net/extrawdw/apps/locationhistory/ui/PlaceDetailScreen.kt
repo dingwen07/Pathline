@@ -2,6 +2,10 @@ package net.extrawdw.apps.locationhistory.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,7 +20,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -154,6 +157,19 @@ fun PlaceDetailDialog(
         observedVisitMarkers.filter { it.visitId in activeVisitIds }
     }
 
+    PlaceDetailContent(place, projectedPlace, visits, visitMarkers, viewModel.mapProfileId, onDismiss)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun PlaceDetailContent(
+    place: PlaceEntity?,
+    projectedPlace: ProjectedPlaceCircle?,
+    visits: List<VisitEntity>,
+    visitMarkers: List<PlaceVisitMarker>,
+    mapProfileId: String,
+    onDismiss: () -> Unit,
+) {
     val listState = rememberLazyListState()
     val visibleVisitIds by remember(visits) {
         derivedStateOf {
@@ -171,7 +187,23 @@ fun PlaceDetailDialog(
     }
 
     FullScreenDialog(onDismiss = onDismiss) { requestClose ->
-        Scaffold(
+        AdaptivePlaceLayout(
+            map = { edgeToEdge ->
+                // Seed only after loading, so the map opens at the place rather than the world.
+                place?.let { p ->
+                    projectedPlace?.let { projected ->
+                        key(p.id, projected.circle.center, mapProfileId) {
+                            PlaceDetailMap(
+                                placeCircle = projected.circle,
+                                visibleMarkers = visibleMarkers,
+                                followList = hasScrolled,
+                                profileId = mapProfileId,
+                                contentPadding = if (edgeToEdge) WindowInsets.safeDrawing.asPaddingValues() else PaddingValues(),
+                            )
+                        }
+                    }
+                }
+            },
             topBar = {
                 TopAppBar(
                     title = {
@@ -189,31 +221,10 @@ fun PlaceDetailDialog(
                     },
                 )
             },
-        ) { padding ->
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(280.dp)
-                ) {
-                    // Compose the map only once the place is loaded, so its camera can be seeded
-                    // at the place in the constructor (no world-view flash, like the editor).
-                    place?.let { p ->
-                        projectedPlace?.let { projected ->
-                            key(p.id, projected.circle.center, viewModel.mapProfileId) {
-                                PlaceDetailMap(
-                                    placeCircle = projected.circle,
-                                    visibleMarkers = visibleMarkers,
-                                    followList = hasScrolled,
-                                    profileId = viewModel.mapProfileId,
-                                )
-                            }
-                        }
-                    }
+        ) { padding, inlineMap ->
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                inlineMap?.let { map ->
+                    Box(Modifier.fillMaxWidth().height(280.dp)) { map() }
                 }
                 place?.let { p ->
                     if (p.coordinateState != PlaceCoordinateState.WGS84_CANONICAL) {
@@ -315,6 +326,7 @@ private fun PlaceDetailMap(
     visibleMarkers: List<PlaceVisitMarker>,
     followList: Boolean,
     profileId: String,
+    contentPadding: PaddingValues,
 ) {
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(placeCircle.center.toLatLng(), 16f)
@@ -346,6 +358,7 @@ private fun PlaceDetailMap(
         cameraPositionState = cameraPositionState,
         mapColorScheme = rememberMapColorScheme(),
         uiSettings = MapUiSettings(zoomControlsEnabled = false),
+        contentPadding = contentPadding,
     ) {
         // The saved place's own radius, drawn as a yellow ring (matches the timeline map).
         Circle(

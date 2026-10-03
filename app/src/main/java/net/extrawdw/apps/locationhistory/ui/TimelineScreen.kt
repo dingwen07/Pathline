@@ -15,13 +15,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -49,17 +52,22 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -74,7 +82,9 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
+import androidx.window.core.layout.WindowSizeClass
 import androidx.core.content.ContextCompat
 import net.extrawdw.apps.locationhistory.R
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -107,6 +117,18 @@ import net.extrawdw.apps.locationhistory.domain.TimelineItem
 
 private val SHEET_PEEK = 340.dp
 private const val TODAY_PAGE = 100_000 // anchor; pages below are past days, none in the future
+
+@Composable
+internal fun TimelineSheetContent(content: @Composable () -> Unit) {
+    val topInset = WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding()
+    // Material measures its drag handle before this content, so maxHeight already excludes it.
+    // Limit the sheet itself; padding the scaffold would also move the edge-to-edge map down.
+    BoxWithConstraints {
+        Box(Modifier.heightIn(max = (maxHeight - topInset).coerceAtLeast(0.dp))) {
+            content()
+        }
+    }
+}
 
 /**
  * A timeline target whose notes/tags the annotation editor is currently open on, plus a timeline-style
@@ -175,6 +197,9 @@ fun TimelineScreen(
         cameraSeeded = true
     }
     val scaffoldState = rememberBottomSheetScaffoldState()
+    // Keep the user's split through compact windows and rotation, where the divider is absent.
+    var timelinePaneFraction by rememberSaveable { mutableFloatStateOf(Float.NaN) }
+    val adaptiveInfo = currentWindowAdaptiveInfoV2()
     val scope = rememberCoroutineScope()
 
     // Free the map's GPU surface when it isn't on screen and we're backgrounded (or under memory
@@ -182,14 +207,14 @@ fun TimelineScreen(
     // remount, and the map's content is declarative so it rebuilds automatically.
     val showMap = rememberMapComposed(onScreen = mapOnScreen)
 
-    var confirmVisit by remember { mutableStateOf<VisitEntity?>(null) }
+    var confirmVisit by rememberSaveable(stateSaver = VisitDialogSaver) { mutableStateOf<VisitEntity?>(null) }
     var editItem by remember { mutableStateOf<TimelineItem?>(null) }
     var editSamples by remember { mutableStateOf<List<LocationSampleEntity>>(emptyList()) }
     var splitIndex by remember { mutableStateOf<Int?>(null) }
     var reclassifyType by remember { mutableStateOf<SegmentType?>(null) }
-    var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
+    var editPlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
     var editAnnotation by remember { mutableStateOf<AnnotationRef?>(null) }
-    var detailPlaceId by remember { mutableStateOf<Long?>(null) }
+    var detailPlaceId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     val editing = editItem != null
     val editPoints = remember(editSamples, mapState.profileId) {
@@ -304,7 +329,7 @@ fun TimelineScreen(
         ) { ed ->
             if (ed != null) {
                 Box(
-                    Modifier.graphicsLayer {
+                    (if (expanded) Modifier.statusBarsPadding() else Modifier).graphicsLayer {
                         translationY = size.height * 0.33f * editBackProgress
                         alpha = 1f - 0.20f * editBackProgress
                     },
@@ -601,8 +626,25 @@ fun TimelineScreen(
         }
     }
 
+    val currentMapPanel by rememberUpdatedState<@Composable (PaddingValues, Dp) -> Unit>(
+        { padding, recenterPadding -> MapPanel(padding, recenterPadding) }
+    )
+    val retainedMapPanel = remember {
+        movableContentOf<PaddingValues, Dp> { padding, recenterPadding ->
+            currentMapPanel(padding, recenterPadding)
+        }
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val threePane = maxWidth >= 840.dp && maxWidth > maxHeight
+        // Use the app window's size class: this container has already lost the navigation rail's
+        // width. Medium windows (including unfolded phones and portrait tablets) can fit a compact
+        // timeline beside the map. Keep the sheet for short windows and tabletop posture.
+        val threePane = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(
+            WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND,
+        ) && adaptiveInfo.windowSizeClass.isHeightAtLeastBreakpoint(
+            WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND,
+        ) && !adaptiveInfo.windowPosture.isTabletop
+        val sheetPeek = SHEET_PEEK.coerceAtMost(maxHeight * 0.45f)
         // When the recording master switch is off, the timeline stops updating — surface a banner.
         if (!recordingEnabled && !editing) {
             RecordingOffBanner(
@@ -615,40 +657,21 @@ fun TimelineScreen(
             )
         }
         if (threePane) {
-            Row(Modifier.fillMaxSize()) {
-                Surface(
-                    modifier = Modifier
-                        .width(420.dp)
-                        .fillMaxHeight(),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 1.dp,
-                ) {
-                    TimelinePanel(expanded = true)
-                }
-                Surface(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight(),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                ) {}
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                ) {
-                    MapPanel(contentPadding = PaddingValues(), recenterBottomPadding = 24.dp)
-                }
-            }
+            TimelineTabletLayout(
+                timelineFraction = timelinePaneFraction,
+                onTimelineFractionChange = { timelinePaneFraction = it },
+                timeline = { TimelinePanel(expanded = true) },
+                map = { retainedMapPanel(PaddingValues(), 24.dp) },
+            )
         } else {
             BottomSheetScaffold(
                 scaffoldState = scaffoldState,
-                sheetPeekHeight = SHEET_PEEK,
-                sheetContent = { TimelinePanel(expanded = false) },
+                sheetPeekHeight = sheetPeek,
+                sheetContent = {
+                    TimelineSheetContent { TimelinePanel(expanded = false) }
+                },
             ) {
-                MapPanel(
-                    contentPadding = PaddingValues(bottom = SHEET_PEEK),
-                    recenterBottomPadding = SHEET_PEEK + 24.dp
-                )
+                retainedMapPanel(PaddingValues(bottom = sheetPeek), sheetPeek + 24.dp)
             }
         }
     }
@@ -987,9 +1010,10 @@ private fun VisitRow(
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Row(
+                FlowRow(
                     Modifier.padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (!item.confirmed) {
                         UnconfirmedChip()

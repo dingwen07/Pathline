@@ -3,13 +3,18 @@ package net.extrawdw.apps.locationhistory.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -38,10 +43,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -66,13 +73,14 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     val visiblePending = if (showUnconfirmedVisits == true) pending else emptyList()
 
     var optionsExpanded by remember { mutableStateOf(false) }
-    var editPlace by remember { mutableStateOf<PlaceEntity?>(null) }
-    var deletePlace by remember { mutableStateOf<PlaceEntity?>(null) }
-    var assignVisit by remember { mutableStateOf<VisitEntity?>(null) }
-    var detailPlaceId by remember { mutableStateOf<Long?>(null) }
-    var addPlaceAnchor by remember { mutableStateOf<PlaceSearchAnchor?>(null) }
-    var showNoLocation by remember { mutableStateOf(false) }
+    var editPlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
+    var deletePlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
+    var assignVisit by rememberSaveable(stateSaver = VisitDialogSaver) { mutableStateOf<VisitEntity?>(null) }
+    var detailPlaceId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var addPlaceAnchor by rememberSaveable(stateSaver = PlaceSearchAnchorSaver) { mutableStateOf<PlaceSearchAnchor?>(null) }
+    var showNoLocation by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val layoutDirection = LocalLayoutDirection.current
 
     Scaffold(
         topBar = {
@@ -140,15 +148,22 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(320.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = padding.calculateStartPadding(layoutDirection) + 16.dp,
+                top = padding.calculateTopPadding() + 16.dp,
+                end = padding.calculateEndPadding(layoutDirection) + 16.dp,
+                bottom = padding.calculateBottomPadding() + 16.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (visiblePending.isNotEmpty()) {
-                item { SectionHeader(stringResource(R.string.places_pending_header)) }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SectionHeader(stringResource(R.string.places_pending_header))
+                }
                 items(visiblePending, key = { "pending-${it.id}" }) { visit ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
@@ -177,7 +192,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 }
             }
 
-            item { SectionHeader(stringResource(R.string.places_saved_header)) }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                SectionHeader(stringResource(R.string.places_saved_header))
+            }
             items(places, key = { "place-${it.id}" }) { place ->
                 val count = visitCounts[place.id] ?: 0
                 Card(onClick = { detailPlaceId = place.id }, modifier = Modifier.fillMaxWidth()) {
@@ -189,7 +206,11 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 .weight(1f)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(place.name, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    place.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
                                 if (place.fixed) {
                                     Icon(
                                         Icons.Filled.Lock,
@@ -241,7 +262,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 }
             }
             if (places.isEmpty() && visiblePending.isEmpty()) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         stringResource(
                             if (showUnconfirmedVisits == false) R.string.places_saved_empty

@@ -67,6 +67,7 @@
     <string name="timeline_recording_off_desc">您的时间线不会更新。点按以开启记录。</string>
     <string name="cd_jump_to_today">跳到今天</string>
     <string name="cd_recenter">回到当前位置</string>
+    <string name="cd_resize_timeline">调整时间线宽度</string>
     <string name="cd_edit">编辑</string>
     <string name="cd_edit_trip">编辑行程</string>
     <string name="menu_split">拆分</string>
