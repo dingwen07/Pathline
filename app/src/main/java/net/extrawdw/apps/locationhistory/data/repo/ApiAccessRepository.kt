@@ -150,6 +150,11 @@ class ApiAccessRepository @Inject constructor(
      *  history, the grants are access state. Returns the number of rows removed. */
     suspend fun clearAllLogs(): Int = dao.clearAll()
 
+    fun resetSettings() {
+        cleanupPrefs.edit { clear() }
+        resetReadNotificationBackoff()
+    }
+
     /** The scheduled path: prune per the saved config, but only while auto-cleanup is enabled. */
     suspend fun runScheduledCleanup(nowMs: Long): Int {
         val config = cleanupConfig()

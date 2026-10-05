@@ -147,15 +147,15 @@ internal class FakeVisitDao : VisitDao {
         }.sortedBy { it.startMs }
 
     override suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long? =
-        visits.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        visits.filter { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
             .minOfOrNull { it.startMs }
 
     override suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long? =
-        visits.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        visits.filter { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
             .maxOfOrNull { it.endMs }
 
     override suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long) {
-        visits.removeAll { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        visits.removeAll { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
     }
 
     override suspend fun delete(id: Long) {
@@ -244,15 +244,15 @@ internal class FakeTripDao(private val visitDao: FakeVisitDao? = null) : TripDao
     }
 
     override suspend fun minUnconfirmedStartOverlapping(startMs: Long, endMs: Long): Long? =
-        trips.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        trips.filter { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
             .minOfOrNull { it.startMs }
 
     override suspend fun maxUnconfirmedEndOverlapping(startMs: Long, endMs: Long): Long? =
-        trips.filter { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        trips.filter { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
             .maxOfOrNull { it.endMs }
 
     override suspend fun deleteUnconfirmedOverlapping(startMs: Long, endMs: Long) {
-        trips.removeAll { !it.confirmed && it.startMs < endMs && it.endMs > startMs }
+        trips.removeAll { !it.confirmed && !it.stopMerge && it.startMs < endMs && it.endMs > startMs }
     }
 
     override suspend fun deleteTrip(id: Long) {
@@ -285,6 +285,18 @@ internal class FakeTripDao(private val visitDao: FakeVisitDao? = null) : TripDao
 }
 
 internal class FakeLocationSampleDao : LocationSampleDao {
+    val deletions = mutableListOf<net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity>()
+    override suspend fun storedDeletedRanges(startMs: Long, endMs: Long) =
+        deletions.filter { it.startMs < endMs && it.endMs > startMs }
+    override suspend fun hasInvalidDeletedRanges(cutoffMs: Long) =
+        deletions.any { it.endMs > cutoffMs || it.endMs <= it.startMs }
+    override suspend fun removeInvalidDeletedRanges(cutoffMs: Long) {
+        deletions.removeAll { it.startMs >= cutoffMs || it.endMs <= it.startMs }
+    }
+    override suspend fun capDeletedRanges(cutoffMs: Long) {
+        deletions.replaceAll { it.copy(endMs = minOf(it.endMs, cutoffMs)) }
+    }
+    override fun observeDeletedRanges() = flowOf(deletions.toList())
     val samples = mutableListOf<LocationSampleEntity>()
     private var nextId = 1L
 

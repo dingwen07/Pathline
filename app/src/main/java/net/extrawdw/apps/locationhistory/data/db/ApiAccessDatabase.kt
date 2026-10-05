@@ -102,6 +102,9 @@ data class ApiPlaceGrantEntity(
 @Dao
 interface ApiPlaceGrantDao {
 
+    @Query("DELETE FROM api_place_grants")
+    suspend fun clearAll()
+
     /** Create grants for newly-seen (package, place) pairs; existing pairs keep their first-seen time. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(grants: List<ApiPlaceGrantEntity>)

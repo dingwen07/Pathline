@@ -71,8 +71,8 @@ class RecordingController @Inject constructor(
     /** The pure decision core: fix/speed buffers, drift guard, cluster detector, AR timeline, the
      *  state machine itself. See [RecordingPolicy]/[RecordingHeuristics] — extracted so the rules are
      *  JVM-testable. [RecordingPolicy.state] is the single source of truth for the recorder state. */
-    private val heuristics = RecordingHeuristics()
-    private val policy = RecordingPolicy(heuristics)
+    private var heuristics = RecordingHeuristics()
+    private var policy = RecordingPolicy(heuristics)
 
     /** Latest non-stationary classification, shown as the notification movement badge while MOVING. */
     @Volatile
@@ -80,7 +80,7 @@ class RecordingController @Inject constructor(
 
     /** Latest active AR activity evidence for the per-sample classifier. Kept as the raw AR name
      *  (e.g. ON_BICYCLE) the classifier matches; the policy uses its own AR timeline. */
-    private val arEvidence = LatestArEvidence()
+    private var arEvidence = LatestArEvidence()
 
     /** Mirror of the (state, display) last pushed to the service, so we only retune on real change. */
     @Volatile
@@ -149,6 +149,23 @@ class RecordingController @Inject constructor(
     }
 
     suspend fun disableTracking(): Unit = stateMutex.withLock {
+        disableTrackingCore()
+    }
+
+    /** Drain in-flight deliveries, stop persistent requests, and forget the deleted recording state. */
+    suspend fun resetTracking(): Unit = stateMutex.withLock {
+        settingsRepository.setTrackingEnabled(false)
+        disableTrackingCore()
+        heuristics = RecordingHeuristics()
+        policy = RecordingPolicy(heuristics)
+        arEvidence = LatestArEvidence()
+        latestMovingClassification = null
+        serviceState = null
+        serviceDisplay = null
+        sigMotionFalseStreak = 0
+    }
+
+    private suspend fun disableTrackingCore() {
         AppLog.i(TAG, "disableTracking")
         recognitionManager.stop()
         geofenceManager.clearAll()

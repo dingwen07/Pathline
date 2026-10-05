@@ -101,7 +101,8 @@ class BackupProviderDiagnosticTest {
             // Reads only app settings. The database is isolated in memory and protection is NONE,
             // so neither user history nor key material is included in these test dumps.
             val engine = BackupEngine(context, db, db.backupDao(), settings, MapsApiKeyVault(context), legacy)
-            val repository = BackupRepository(context, settings, engine, store, BackupKeyVault(context), db.backupDao())
+            val repository = BackupRepository(context, settings, engine, store, BackupKeyVault(context), db.backupDao(),
+                net.extrawdw.apps.locationhistory.data.repo.DataOperationLock())
             db.backupDao().restoreSamples((0..2).map { index ->
                 json.decodeFromString(LocationSampleEntity.serializer(), """{"id":${index + 1},"timestampMs":${(20_000L + 7 * index) * 86_400_000},"dayEpoch":${20_000 + 7 * index},"latitude":1.0,"longitude":2.0,"isMock":false,"elapsedRealtimeNanos":0,"devicePhysicalState":"UNKNOWN","devicePhysicalStateConfidence":0.0}""")
             })

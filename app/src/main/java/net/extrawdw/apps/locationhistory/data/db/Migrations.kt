@@ -283,10 +283,19 @@ object AppMigrations {
         }
     }
 
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override suspend fun migrate(connection: SQLiteConnection) {
+            connection.execSQL("ALTER TABLE visits ADD COLUMN stopMerge INTEGER NOT NULL DEFAULT 0")
+            connection.execSQL("ALTER TABLE trips ADD COLUMN stopMerge INTEGER NOT NULL DEFAULT 0")
+            connection.execSQL("CREATE TABLE IF NOT EXISTS deleted_time_ranges (startMs INTEGER NOT NULL PRIMARY KEY, endMs INTEGER NOT NULL)")
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_3_4,
+        MIGRATION_4_5,
     )
 
     /**

@@ -107,6 +107,26 @@ class TimelineMergerTest {
         distanceMeters = Geo.pathLengthMeters(points), confirmed = confirmed,
     )
 
+    @Test fun deletionRangeBlocksEvenConfirmedSamePlaceMergesAcrossShortGap() {
+        visitDao.seed(visit(1, t0, t0 + hour), visit(2, t0 + hour + 10_000, t0 + 2 * hour))
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(t0 + hour, t0 + hour + 10_000)
+        merge()
+        assertEquals(2, visitDao.visits.size)
+    }
+
+    @Test fun deletionRangeBlocksSameModeTripsAcrossShortGap() {
+        tripDao.seed(trip(1, t0, t0 + hour), trip(2, t0 + hour + 10_000, t0 + 2 * hour))
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(t0 + hour, t0 + hour + 10_000)
+        merge()
+        assertEquals(2, tripDao.trips.size)
+    }
+
+    @Test fun protectedEmptyTripSurvivesCleanup() {
+        tripDao.seed(trip(1, t0, t0 + hour, points = emptyList()).copy(stopMerge = true))
+        merge()
+        assertEquals(1, tripDao.trips.size)
+    }
+
     // ---- adjacent same-place visit merges --------------------------------------------------------
 
     @Test

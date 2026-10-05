@@ -96,9 +96,7 @@ class OnboardingViewModel @Inject constructor(
         // straight into the app.
         viewModelScope.launch {
             controller.state.collect { s ->
-                if (s?.kind == ManagedKind.RESTORE && s.finished && s.success) {
-                    restoreSucceeded.value = true
-                }
+                restoreSucceeded.value = s?.kind == ManagedKind.RESTORE && s.finished && s.success
             }
         }
     }

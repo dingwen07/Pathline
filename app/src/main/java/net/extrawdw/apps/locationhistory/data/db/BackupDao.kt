@@ -74,6 +74,24 @@ interface BackupDao {
     @Query("SELECT * FROM places ORDER BY id ASC")
     suspend fun allPlaces(): List<PlaceEntity>
 
+    @Query("SELECT * FROM deleted_time_ranges ORDER BY startMs")
+    suspend fun allDeletedRanges(): List<DeletedTimeRangeEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDeletedRanges(rows: List<DeletedTimeRangeEntity>)
+
+    /** Never import an interval that could suppress recording after this restore. */
+    @Transaction
+    suspend fun restoreDeletedRanges(rows: List<DeletedTimeRangeEntity>) {
+        val now = System.currentTimeMillis()
+        val sanitized = net.extrawdw.apps.locationhistory.domain.unionTimeRanges(
+            rows.map { it.startMs to minOf(it.endMs, now) })
+        insertDeletedRanges(sanitized.map { DeletedTimeRangeEntity(it.first, it.second) })
+    }
+
+    @Query("DELETE FROM deleted_time_ranges")
+    suspend fun clearDeletedRanges()
+
     @Query("SELECT * FROM place_coordinate_repairs ORDER BY id ASC")
     suspend fun allPlaceCoordinateRepairs(): List<PlaceCoordinateRepairEntity>
 
@@ -165,6 +183,7 @@ interface BackupDao {
         clearAnnotations(); clearEntityTags(); clearTags()
         clearConceptMembers(); clearConcepts()
         clearAllDirty()
+        clearDeletedRanges()
     }
 
     @Query("DELETE FROM place_coordinate_repairs")

@@ -26,12 +26,14 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +63,8 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val sampleCount by viewModel.sampleCount.collectAsStateWithLifecycle()
+    var manageData by rememberSaveable { mutableStateOf(false) }
+    if (manageData) ManageDataDialog(onDismiss = { manageData = false })
 
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) }) { padding ->
         Column(
@@ -149,19 +153,20 @@ fun SettingsScreen(
 
             // Recorded-data status
             Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.settings_data_model_title),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        pluralStringResource(
-                            R.plurals.samples_recorded,
-                            sampleCount.toInt(),
-                            sampleCount
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.settings_data_model_title),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            pluralStringResource(R.plurals.samples_recorded, sampleCount.toInt(), sampleCount),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    TextButton(onClick = { manageData = true }) {
+                        Text(stringResource(R.string.data_manage_action))
+                    }
                 }
             }
 

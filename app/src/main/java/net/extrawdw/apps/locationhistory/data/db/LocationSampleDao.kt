@@ -15,12 +15,53 @@ interface LocationSampleDao {
     @Insert
     suspend fun insertAll(samples: List<LocationSampleEntity>): List<Long>
 
+    @Query("SELECT * FROM deleted_time_ranges WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs")
+    suspend fun storedDeletedRanges(startMs: Long, endMs: Long): List<DeletedTimeRangeEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM deleted_time_ranges WHERE endMs > :cutoffMs OR endMs <= startMs)")
+    suspend fun hasInvalidDeletedRanges(cutoffMs: Long): Boolean
+
+    @Query("DELETE FROM deleted_time_ranges WHERE startMs >= :cutoffMs OR endMs <= startMs")
+    suspend fun removeInvalidDeletedRanges(cutoffMs: Long)
+
+    @Query("UPDATE deleted_time_ranges SET endMs = :cutoffMs WHERE endMs > :cutoffMs")
+    suspend fun capDeletedRanges(cutoffMs: Long)
+
+    /** Repair a bad future bound once, durably; a moving read-time cap would swallow new recordings. */
+    @Transaction
+    suspend fun validateDeletedRanges() {
+        val now = System.currentTimeMillis()
+        if (hasInvalidDeletedRanges(now)) {
+            removeInvalidDeletedRanges(now)
+            capDeletedRanges(now)
+        }
+    }
+
+    @Transaction
+    suspend fun deletedRanges(startMs: Long, endMs: Long): List<DeletedTimeRangeEntity> {
+        validateDeletedRanges()
+        return storedDeletedRanges(startMs, endMs)
+    }
+
+    @Query("SELECT * FROM deleted_time_ranges ORDER BY startMs")
+    fun observeDeletedRanges(): Flow<List<DeletedTimeRangeEntity>>
+
+    /** Serialize the purge check and batch insert with deletion's write transaction. */
+    @Transaction
+    suspend fun insertRecorded(samples: List<LocationSampleEntity>): List<Long> {
+        if (samples.isEmpty()) return emptyList()
+        val deleted = deletedRanges(samples.minOf { it.timestampMs }, samples.maxOf { it.timestampMs } + 1)
+        return insertAll(samples.filter { sample ->
+            deleted.none { sample.timestampMs >= it.startMs && sample.timestampMs < it.endMs }
+        })
+    }
+
     /** Keep the watchdog's extra fix only if a normal delivery hasn't already filled the gap. */
     @Transaction
     suspend fun insertIfStillStale(sample: LocationSampleEntity, cutoffMs: Long): Long? {
         val latest = mostRecent()
         if (latest != null && latest.timestampMs >= cutoffMs) return null
-        return insert(sample)
+        return insertRecorded(listOf(sample)).firstOrNull()
     }
 
     @Query("SELECT * FROM location_samples WHERE dayEpoch = :dayEpoch ORDER BY timestampMs ASC")

@@ -151,6 +151,24 @@ object AppLog {
             ?: 0
     }
 
+    fun logFileCount(): Int = synchronized(lock) {
+        logsDir?.walkTopDown()?.count { it.isFile } ?: 0
+    }
+
+    /** Clear sessions and exit traces, then let later events begin a new log. */
+    fun deleteAllLogs(context: Context): Unit = synchronized(lock) {
+        logsDir?.listFiles()?.forEach { check(it.deleteRecursively()) { "Could not delete a log file" } }
+        File(context.filesDir, "logs").takeIf { it.exists() }?.let {
+            check(it.deleteRecursively()) { "Could not delete legacy logs" }
+        }
+        exitTracesDir?.mkdirs()
+        current = logsDir?.let { File(it, "session-${fileFmt.format(Date())}-reset.log") }
+        // Do not re-import OS-held process-exit records that predate the reset on the next launch.
+        context.getSharedPreferences(EXIT_INFO_PREFS, Context.MODE_PRIVATE).edit {
+            putLong(LAST_LOGGED_EXIT_TIMESTAMP, System.currentTimeMillis())
+        }
+    }
+
     private fun ApplicationExitInfo.toLogLine(traceFile: File?): String =
         buildString {
             append("process exit")

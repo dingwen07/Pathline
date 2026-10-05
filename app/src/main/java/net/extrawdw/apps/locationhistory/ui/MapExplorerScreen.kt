@@ -16,10 +16,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.DateRangePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -417,15 +419,25 @@ private fun ControlBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DateRangePickerDialog(
+internal fun DateRangePickerDialog(
     initialStart: Long?,
     initialEnd: Long?,
     onConfirm: (startDayEpoch: Long, endDayEpoch: Long) -> Unit,
     onDismiss: () -> Unit,
+    confirmLabel: String = stringResource(R.string.action_plot),
 ) {
+    val today = LocalDate.now().toEpochDay()
     val pickerState = rememberDateRangePickerState(
-        initialSelectedStartDateMillis = initialStart?.let { dayEpochToUtcMillis(it) },
-        initialSelectedEndDateMillis = initialEnd?.let { dayEpochToUtcMillis(it) },
+        initialSelectedStartDateMillis = initialStart?.let { dayEpochToUtcMillis(minOf(it, today)) },
+        initialSelectedEndDateMillis = initialEnd?.let { dayEpochToUtcMillis(minOf(it, today)) },
+        yearRange = 1900..LocalDate.now().year,
+        selectableDates = remember {
+            object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long) =
+                    utcMillisToDayEpoch(utcTimeMillis) <= LocalDate.now().toEpochDay()
+                override fun isSelectableYear(year: Int) = year <= LocalDate.now().year
+            }
+        },
     )
     // Full-screen dialog so the official Material date-range calendar has room for the weekday
     // header (S M T W T F S) and doesn't clip the Sunday column.
@@ -447,7 +459,7 @@ private fun DateRangePickerDialog(
                 val end = pickerState.selectedEndDateMillis
                 Button(
                     onClick = {
-                        if (start != null && end != null) {
+                        if (start != null && end != null && utcMillisToDayEpoch(end) <= LocalDate.now().toEpochDay()) {
                             requestClose {
                                 onConfirm(
                                     utcMillisToDayEpoch(start),
@@ -456,10 +468,17 @@ private fun DateRangePickerDialog(
                             }
                         }
                     },
-                    enabled = start != null && end != null,
-                ) { Text(stringResource(R.string.action_plot)) }
+                    enabled = start != null && end != null && start <= end &&
+                        utcMillisToDayEpoch(end) <= LocalDate.now().toEpochDay(),
+                ) { Text(confirmLabel) }
             }
             DateRangePicker(
+                title = {
+                    DateRangePickerDefaults.DateRangePickerTitle(
+                        displayMode = pickerState.displayMode,
+                        modifier = Modifier.padding(start = 64.dp, end = 12.dp, top = 16.dp),
+                    )
+                },
                 state = pickerState, modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)

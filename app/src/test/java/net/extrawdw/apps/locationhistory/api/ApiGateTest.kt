@@ -46,6 +46,7 @@ class ApiGateTest {
 
     private class FakeGrantDao : ApiPlaceGrantDao {
         val grants = mutableListOf<ApiPlaceGrantEntity>()
+        override suspend fun clearAll() { grants.clear() }
 
         override suspend fun insertIgnore(grants: List<ApiPlaceGrantEntity>) {
             for (g in grants) {

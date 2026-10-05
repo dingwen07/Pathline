@@ -8,8 +8,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import net.extrawdw.apps.locationhistory.backup.BackupEngine
 import net.extrawdw.apps.locationhistory.backup.BackupReporter
@@ -75,18 +73,10 @@ class BackupRepository @Inject constructor(
     private val safStore: SafBackupStore,
     private val keyVault: BackupKeyVault,
     private val backupDao: net.extrawdw.apps.locationhistory.data.db.BackupDao,
+    // Shared with recorded-data purges so snapshots and dirty-marker acknowledgements stay consistent.
+    private val opMutex: DataOperationLock,
 ) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
-
-    /**
-     * One backup/dump/restore at a time, process-wide, so generation publication and cleanup cannot
-     * race with another writer or a restore reading retained files. All
-     * entry points — the periodic worker, the "back up now" worker, and every controller-managed
-     * operation — funnel through this repository, so a single Mutex here covers them. The Mutex is
-     * NOT reentrant: it is taken only in [performBackup], [oneTimeDump], and [restoreFrom], none of
-     * which call each other (the public backup wrappers all bottom out in [performBackup]).
-     */
-    private val opMutex = Mutex()
 
     val config: Flow<BackupConfig> get() = settings.backupConfig
 

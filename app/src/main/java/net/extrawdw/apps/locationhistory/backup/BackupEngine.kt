@@ -420,6 +420,9 @@ class BackupEngine @Inject constructor(
         val dir = root.childDir(SNAPSHOT_DIR)
         val out = ArrayList<SnapshotEntry>()
 
+        out += snapshotLines(dir, material, SNAP_DELETED_RANGES,
+            backupDao.allDeletedRanges(), previous[SNAP_DELETED_RANGES])
+
         out += snapshotLines(
             dir,
             material,
@@ -513,6 +516,10 @@ class BackupEngine @Inject constructor(
             val b = readBlob(raw.inputStream(), cipher)
             verifyHash(entry.fileName, b, entry.sha256)           // plaintext, after decrypt
             return b
+        }
+        bytesOf(SNAP_DELETED_RANGES)?.let {
+            backupDao.restoreDeletedRanges(decodeLines(it,
+                net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity.serializer()))
         }
         bytesOf(SNAP_PLACES)?.let {
             backupDao.restorePlaces(
@@ -697,6 +704,7 @@ class BackupEngine @Inject constructor(
         const val STREAM_TRIPS = "trips"
 
         private const val SNAPSHOT_DIR = "snapshot"
+        private const val SNAP_DELETED_RANGES = "deleted_time_ranges"
         private const val SNAP_PLACES = "places"
         private const val SNAP_PLACE_COORDINATE_REPAIRS = "place_coordinate_repairs"
         private const val SNAP_GEOFENCES = "geofences"

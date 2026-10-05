@@ -76,10 +76,10 @@ class MapExplorerViewModel @Inject constructor(
     val drawTrackCustom: StateFlow<Boolean> = _drawTrackCustom.asStateFlow()
 
     val state: StateFlow<MapExplorerState> =
-        combine(_range, _customStart, _customEnd, _drawTrackCustom) { r, cs, ce, draw ->
-            QueryKey(r, cs, ce, draw)
+        combine(_range, _customStart, _customEnd, _drawTrackCustom, locationRepository.observeDeletedRanges()) { r, cs, ce, draw, deleted ->
+            QueryKey(r, cs, ce, draw) to deleted
         }
-            .flatMapLatest { key ->
+            .flatMapLatest { (key, deleted) ->
                 flow {
                     emit(
                         MapExplorerState(
@@ -103,7 +103,11 @@ class MapExplorerViewModel @Inject constructor(
                     // All point processing happens here on Dispatchers.IO — never on the UI thread.
                     val state = if (drawTrack) {
                         // Thin stationary stretches so the polyline + dots stay light.
-                        val trackPaths = projectPaths(thinTrack(samples))
+                        val keptWindows = net.extrawdw.apps.locationhistory.domain.subtractRanges(
+                            window.first, window.second, deleted.map { it.startMs to it.endMs })
+                        val trackPaths = keptWindows.flatMap { (start, end) ->
+                            projectPaths(thinTrack(samples.filter { it.timestampMs >= start && it.timestampMs < end }))
+                        }
                         MapExplorerState(
                             dotPoints = trackPaths.flatten(),
                             trackPaths = trackPaths,

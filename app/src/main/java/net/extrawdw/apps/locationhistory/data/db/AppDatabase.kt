@@ -7,6 +7,7 @@ import androidx.room3.ColumnTypeConverters
 @Database(
     entities = [
         LocationSampleEntity::class,
+        DeletedTimeRangeEntity::class,
         PlaceEntity::class,
         PlaceCoordinateRepairEntity::class,
         VisitEntity::class,
@@ -22,7 +23,7 @@ import androidx.room3.ColumnTypeConverters
         TagFtsEntity::class,
         ConceptFtsEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @ColumnTypeConverters(Converters::class)
@@ -38,12 +39,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun annotationDao(): AnnotationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun searchDao(): SearchDao
+    abstract fun dataManagementDao(): DataManagementDao
 
     companion object {
         const val NAME = "pathline.db"
 
         /** Must equal the `version` above; used by the backup engine for restore compatibility. */
-        const val SCHEMA_VERSION = 4
+        const val SCHEMA_VERSION = 5
 
         /**
          * SQL that creates the backup dirty-partition triggers. Run from a

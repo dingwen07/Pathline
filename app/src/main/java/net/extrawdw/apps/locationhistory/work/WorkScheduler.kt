@@ -10,6 +10,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import androidx.work.await
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -101,6 +102,13 @@ class WorkScheduler @Inject constructor(
 
     fun cancelRecordingWatchdog() {
         workManager.cancelUniqueWork(WORK_RECORDING_WATCHDOG)
+    }
+
+    suspend fun cancelForDataReset() {
+        workManager.cancelAllWorkByTag(TimelineMaintenanceWorker::class.java.name).await()
+        workManager.cancelUniqueWork(WORK_RECORDING_WATCHDOG).await()
+        workManager.cancelUniqueWork(WORK_BACKUP).await()
+        workManager.cancelUniqueWork(WORK_BACKUP_NOW).await()
     }
 
     /**

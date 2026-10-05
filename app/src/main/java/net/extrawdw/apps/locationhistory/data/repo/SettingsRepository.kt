@@ -140,6 +140,46 @@ class SettingsRepository @Inject constructor(
         context.dataStore.edit { it[keyOnboarded] = complete }
     }
 
+    /** Stop automatic writers before clearing history; external backup/export files stay intact. */
+    suspend fun prepareForDataReset() {
+        context.dataStore.edit {
+            it[keyTracking] = false
+            it[keyApiEnabled] = false
+            it.remove(keyBackupTree)
+            it.remove(keyBackupSubdir)
+            it.remove(keyLastBackup)
+            it.remove(keyGpxTree)
+            it.remove(keyGpxLastExport)
+        }
+    }
+
+    /** Publish the setup gate last, once the empty database is ready for a fresh start or restore. */
+    suspend fun completeDataReset(options: ResetDataOptions) {
+        context.dataStore.edit {
+            val wasOnboarded = it[keyOnboarded] ?: false
+            val mapsKeys = setOf(keyGoogleCloudProjectId, keyAutomaticNearbyDailyLimit,
+                keyIncludeMapsPlatformInBackup, keyRouteApiEnabled)
+            if (options.appSettings) {
+                val preserved = it.asMap().filterKeys { key -> key in mapsKeys }
+                it.clear()
+                preserved.forEach { (key, value) ->
+                    @Suppress("UNCHECKED_CAST")
+                    it[key as Preferences.Key<Any>] = value
+                }
+            }
+            if (options.mapsPlatformSettings) mapsKeys.forEach { key -> it.remove(key) }
+            it[keyOnboarded] = wasOnboarded && !options.onboarding
+            it.remove(keyIgnoredPlaceMergePairs)
+            it.remove(keyAutomaticNearbyFloor)
+            it.remove(keyAutomaticNearbyDay)
+            it.remove(keyAutomaticNearbyCount)
+            it.remove(keyAutostartSuppressed)
+            // A backup already running when reset started may have just published its watermark.
+            it.remove(keyLastBackup)
+            it.remove(keyGpxLastExport)
+        }
+    }
+
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
             trackingEnabled = prefs[keyTracking] ?: false,

@@ -62,7 +62,7 @@ class TimelineMerger @Inject constructor(
 
     private suspend fun removeEmptyTrips(spanStartMs: Long, spanEndMs: Long) {
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
-            if (trip.confirmed) continue
+            if (trip.confirmed || trip.stopMerge) continue
             if (trip.distanceMeters <= 0.0 || trip.encodedPolyline.isEmpty()) {
                 tripDao.deleteTrip(trip.id)
             }
@@ -89,9 +89,11 @@ class TimelineMerger @Inject constructor(
         val visits =
             visitDao.overlapping(spanStartMs, spanEndMs).sortedBy { it.startMs }.toMutableList()
         for (trip in tripDao.overlapping(spanStartMs, spanEndMs)) {
-            if (trip.confirmed) continue
+            if (trip.confirmed || trip.stopMerge) continue
             val before = visits.lastOrNull { it.startMs <= trip.startMs } ?: continue
             val after = visits.firstOrNull { it.startMs >= trip.endMs } ?: continue
+            if (before.stopMerge || after.stopMerge ||
+                sampleDao.deletedRanges(before.startMs, after.endMs).isNotEmpty()) continue
             // Only collapse a trip bounded by two visits to the SAME matched place: that place gives
             // the radius the jitter must sit inside, and the pair is what we fuse.
             val placeId = before.placeId ?: continue
@@ -161,6 +163,7 @@ class TimelineMerger @Inject constructor(
         for (i in 0 until visits.size - 1) {
             val a = visits[i]
             val b = visits[i + 1]
+            if (a.stopMerge || b.stopMerge || sampleDao.deletedRanges(a.startMs, b.endMs).isNotEmpty()) continue
             if (!samePlace(a, b)) continue
             // Two stays at the same place are one stay when they overlap/touch (a stay that crossed
             // a day boundary, or a re-detected duplicate), or when no real trip was recorded between
@@ -203,6 +206,7 @@ class TimelineMerger @Inject constructor(
         for (i in 0 until trips.size - 1) {
             val a = trips[i]
             val b = trips[i + 1]
+            if (a.stopMerge || b.stopMerge || sampleDao.deletedRanges(a.startMs, b.endMs).isNotEmpty()) continue
             // Only fuse *same-mode* adjacent trips — a mode change is a real multi-modal leg and must
             // stay its own row. Confirmed trips ARE fused here (unlike same-place visits there is no
             // ambiguity once the mode matches): a hand-split walk, or a confirmed stub sitting next to

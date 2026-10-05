@@ -98,7 +98,11 @@ internal class TimelineRebuilder(
             dayEnd + Constants.REBUILD_LOOKAHEAD_MS,
             latestUnconfirmedEnd + Constants.REBUILD_SCOPE_MARGIN_MS,
         )
-        val samples = sampleDao.range(loadStart, loadEnd)
+        val deleted = sampleDao.deletedRanges(loadStart, loadEnd).map { it.startMs to it.endMs }
+        val keptWindows = subtractRanges(loadStart, loadEnd, deleted)
+        val samples = sampleDao.range(loadStart, loadEnd).filter { sample ->
+            deleted.none { sample.timestampMs >= it.first && sample.timestampMs < it.second }
+        }
 
         if (samples.isEmpty()) {
             // No evidence in the window: still clear the day's unconfirmed rows.
@@ -109,17 +113,18 @@ internal class TimelineRebuilder(
             return 0
         }
 
-        val priorUnconfirmed = visitDao.overlapping(loadStart, loadEnd).filterNot { it.confirmed }
-        val confirmedVisits = visitDao.confirmedOverlapping(loadStart, loadEnd)
+        val priorUnconfirmed = visitDao.overlapping(loadStart, loadEnd).filterNot { it.confirmed || it.stopMerge }
+        val confirmedVisits = visitDao.overlapping(loadStart, loadEnd).filter { it.confirmed || it.stopMerge }
         // A confirmed trip hand-classifies a span as movement, so it must suppress stay re-detection
         // there like a confirmed visit does -- otherwise converting a stay to a moving segment instantly
         // re-detects it (the raw fixes still look stationary), resurrecting the visit just converted away.
-        val confirmedTrips = tripDao.confirmedOverlapping(loadStart, loadEnd)
+        val confirmedTrips = tripDao.overlapping(loadStart, loadEnd).filter { it.confirmed || it.stopMerge }
         val latest = sampleDao.mostRecent()
         // Detect stays over the full window (true extents), keep those that touch this day, and skip
         // any already covered by a confirmed (ground-truth) visit or a confirmed trip.
         val detectedStays =
-            visitDetector.detectVisits(samples).filter { it.overlaps(dayStart, dayEnd) }
+            keptWindows.flatMap { (start, end) -> visitDetector.detectVisits(samples.inRange(start, end)) }
+                .filter { it.overlaps(dayStart, dayEnd) }
         val candidates = detectedStays
             .filterNot { candidate ->
                 confirmedVisits.any { it.overlaps(candidate.startMs, candidate.endMs + 1) } ||
@@ -135,7 +140,9 @@ internal class TimelineRebuilder(
         // brief in-walk home touch too short to be a detected stay (< MIN_VISIT_DURATION) is never masked.
         val stayMasks = detectedStays.map { it.startMs to it.endMs }
 
-        ongoingStationaryCandidate(samples, dayStart, dayEnd, latest)?.let { ongoing ->
+        val currentWindow = keptWindows.lastOrNull { now() >= it.first && now() < it.second }
+        val currentSamples = currentWindow?.let { samples.inRange(it.first, it.second) }.orEmpty()
+        ongoingStationaryCandidate(currentSamples, dayStart, dayEnd, latest)?.let { ongoing ->
             val overlapsDetected =
                 candidates.any { it.overlaps(ongoing.startMs, ongoing.endMs + 1) }
             val overlapsConfirmed =
@@ -223,7 +230,8 @@ internal class TimelineRebuilder(
         )
         val isOngoing = latest != null &&
                 latest.timestampMs in candidate.startMs..candidate.endMs &&
-                latest.devicePhysicalState == DevicePhysicalState.STATIONARY
+                latest.devicePhysicalState == DevicePhysicalState.STATIONARY &&
+                sampleDao.deletedRanges(candidate.endMs, now() + 1).isEmpty()
         // An already-attributed reconstructed row is authoritative for this unconfirmed stay.
         // Local/manual confirmation still happens elsewhere; rebuilds only carry this suggestion.
         val match = if (!isOngoing && prior.hasAttribution()) null else runCatching {
@@ -353,6 +361,10 @@ internal class TimelineRebuilder(
             .forEach { visitDao.update(it.copy(isOngoing = false)) }
 
         if (latest == null) return
+        if (sampleDao.deletedRanges(current.endMs, maxOf(now, latest.timestampMs) + 1).isNotEmpty()) {
+            visitDao.update(current.copy(isOngoing = false))
+            return
+        }
         val nearby = Geo.distanceMeters(
             current.centroidLatitude, current.centroidLongitude, latest.latitude, latest.longitude,
         ) <= maxOf(current.radiusMeters, Constants.STATIONARY_RADIUS_METERS)
@@ -496,7 +508,8 @@ internal class TimelineRebuilder(
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         val origin = visits.lastOrNull { it.endMs <= latest.timestampMs } ?: return
         val confirmedTrips =
-            tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+            tripDao.overlapping(loadStart, loadEnd).filter { it.confirmed || it.stopMerge }
+                .map { it.startMs to it.endMs }
         fillMovement(
             origin.endMs,
             latest.timestampMs,
@@ -525,7 +538,8 @@ internal class TimelineRebuilder(
         val visits = visitDao.overlapping(loadStart, loadEnd).sortedBy { it.startMs }
         if (visits.size < 2) return
         val confirmedTrips =
-            tripDao.confirmedOverlapping(loadStart, loadEnd).map { it.startMs to it.endMs }
+            tripDao.overlapping(loadStart, loadEnd).filter { it.confirmed || it.stopMerge }
+                .map { it.startMs to it.endMs }
         // A gap is filled with movement only where neither a confirmed trip nor a detected stay covers
         // it — so an in-home drift span (a stay the detector saw but the rebuilder dropped for
         // overlapping a confirmed visit) splits the would-be trip instead of being paved over as a walk.
@@ -555,12 +569,17 @@ internal class TimelineRebuilder(
         toVisitId: Long?,
     ) {
         if (gapEnd <= gapStart) return
-        for ((subStart, subEnd) in subtractRanges(gapStart, gapEnd, excludedRanges)) {
+        val deleted = sampleDao.deletedRanges(gapStart, gapEnd).map { it.startMs to it.endMs }
+        for ((subStart, subEnd) in subtractRanges(gapStart, gapEnd, excludedRanges + deleted)) {
             if (subEnd <= subStart) continue
             if (subEnd <= dayStart || subStart >= dayEnd) continue // only the part touching this day
             val movingSamples = sampleDao.rangeForComputation(subStart, subEnd)
             val runs = segmentTrips(movingSamples)
-            if (runs.isNotEmpty()) recordingRepository.saveTrips(fromVisitId, toVisitId, runs)
+            if (runs.isNotEmpty()) recordingRepository.saveTrips(
+                fromVisitId.takeIf { deleted.none { range -> range.first < subStart && range.second > gapStart } },
+                toVisitId.takeIf { deleted.none { range -> range.first < gapEnd && range.second > subEnd } },
+                runs,
+            )
         }
     }
 

@@ -17,7 +17,7 @@ import net.extrawdw.apps.locationhistory.core.PlaceSource
 import net.extrawdw.apps.locationhistory.core.TransportMode
 
 /**
- * The append-only fact table: one row per location sample, never deleted. Captures every piece of
+ * The recorded fact table: one row per location sample, removed only by an explicit user purge. Captures every piece of
  * metadata the platform exposes plus enriched device-state context. Indexed by [dayEpoch] so a
  * day's worth of data is retrieved with an integer range scan even across years of history.
  *
@@ -322,6 +322,8 @@ data class VisitEntity(
     val candidateCoordinateFrame: CandidateCoordinateFrame = CandidateCoordinateFrame.UNKNOWN,
     @ColumnInfo(defaultValue = "'UNKNOWN'")
     val candidateOrigin: CandidateOrigin = CandidateOrigin.UNKNOWN,
+    /** Set only by deletion: preserve this surviving row and do not automatically merge it. */
+    @ColumnInfo(defaultValue = "0") val stopMerge: Boolean = false,
 )
 
 /**
@@ -348,6 +350,16 @@ data class TripEntity(
     val encodedPolyline: String,
     val distanceMeters: Double,
     val confirmed: Boolean,
+    /** Set only by deletion: preserve this surviving row and do not automatically merge it. */
+    @ColumnInfo(defaultValue = "0") val stopMerge: Boolean = false,
+)
+
+/** Half-open purged interval. Contains no location data; prevents delayed fixes and rebuild bridges. */
+@Serializable
+@Entity(tableName = "deleted_time_ranges")
+data class DeletedTimeRangeEntity(
+    @PrimaryKey val startMs: Long,
+    val endMs: Long,
 )
 
 /** Mirror of a registered geofence so geofences can be re-armed after a reboot. */

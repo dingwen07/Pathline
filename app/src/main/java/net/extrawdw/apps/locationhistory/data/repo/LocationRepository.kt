@@ -1,6 +1,7 @@
 package net.extrawdw.apps.locationhistory.data.repo
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import net.extrawdw.apps.locationhistory.BuildConfig
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
@@ -8,7 +9,7 @@ import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Read/write access to the append-only location-sample fact table. */
+/** Read/write access to recorded samples, respecting explicit user purges. */
 @Singleton
 class LocationRepository @Inject constructor(
     private val dao: LocationSampleDao,
@@ -17,14 +18,15 @@ class LocationRepository @Inject constructor(
     suspend fun record(sample: LocationSampleEntity): Long {
         val (included, reason) = computationEligibility(sample)
         if (!included) AppLog.i(TAG, "sample excluded from computation: $reason")
-        return dao.insert(sample.copy(includedInComputation = included, exclusionReason = reason))
+        return dao.insertRecorded(listOf(sample.copy(includedInComputation = included, exclusionReason = reason)))
+            .firstOrNull() ?: -1L
     }
 
     /** Persists one delivered batch in a single transaction (Room wraps list inserts in one),
      *  so a mid-batch process kill never leaves half a delivery and the commit cost is paid once. */
     suspend fun recordAll(samples: List<LocationSampleEntity>): List<Long> {
         if (samples.isEmpty()) return emptyList()
-        return dao.insertAll(
+        return dao.insertRecorded(
             samples.map { sample ->
                 val (included, reason) = computationEligibility(sample)
                 if (!included) AppLog.i(TAG, "sample excluded from computation: $reason")
@@ -79,6 +81,11 @@ class LocationRepository @Inject constructor(
     fun observeCount(): Flow<Long> = dao.observeCount()
 
     fun observeRecordedDays(): Flow<List<Long>> = dao.observeRecordedDays()
+
+    fun observeDeletedRanges() = dao.observeDeletedRanges().map {
+        // Also covers Explorer, whose drawing path observes ranges rather than rebuilding a day.
+        dao.deletedRanges(Long.MIN_VALUE, Long.MAX_VALUE)
+    }
 
     /**
      * All samples are saved; some are excluded from computation per the spec's rules. Mock locations

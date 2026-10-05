@@ -92,6 +92,7 @@ fun PlaceEditDialog(
     onMerge: (suspend (destinationId: Long) -> Boolean)? = null,
 ) {
     var showMergePicker by rememberSaveable(place.id) { mutableStateOf(false) }
+    var showDelete by rememberSaveable(place.id) { mutableStateOf(false) }
     var name by rememberSaveable(place.id) { mutableStateOf(place.name) }
     var address by rememberSaveable(place.id) { mutableStateOf(place.address ?: "") }
     val initialProjection = remember(
@@ -224,6 +225,9 @@ fun PlaceEditDialog(
                         }
                     },
                     actions = {
+                        TextButton(onClick = { showDelete = true }, enabled = !repairInFlight) {
+                            Text(stringResource(R.string.data_delete_action), color = MaterialTheme.colorScheme.error)
+                        }
                         if (onMerge != null) {
                             TextButton(
                                 onClick = { showMergePicker = true },
@@ -426,6 +430,7 @@ fun PlaceEditDialog(
                 onDismiss = { showMergePicker = false },
             )
         }
+        if (showDelete) DeletePlaceDialog(place, onDismiss = { showDelete = false }, onDeleted = onDismiss)
 
         pendingRepair?.let { decision ->
             val message = when (decision) {

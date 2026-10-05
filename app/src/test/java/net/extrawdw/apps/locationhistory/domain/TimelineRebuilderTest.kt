@@ -84,6 +84,50 @@ class TimelineRebuilderTest {
 
     private fun rebuild(d: Long = day) = runBlocking { rebuilder.rebuildDay(d) }
 
+    @Test fun deletedGapSplitsDetectionAndSurvivesRepeatedRebuilds() {
+        stay(600, 620, lat = 40.0)
+        stay(622, 645, lat = 40.0)
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(at(621), at(622))
+        repeat(2) {
+            rebuild()
+            assertEquals(2, visitDao.visits.size)
+            assertTrue(visitDao.visits.none { it.startMs < at(621) && it.endMs > at(622) })
+            assertTrue(tripDao.trips.none { it.startMs < at(621) && it.endMs > at(622) })
+        }
+    }
+
+    @Test fun protectedUnconfirmedCappedRowsKeepTheirExactBoundaries() {
+        stay(600, 620, lat = 40.0)
+        val capped = confirmedVisit(1, 599, 621).copy(confirmed = false, stopMerge = true)
+        visitDao.seed(capped)
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(at(621), at(640))
+        repeat(2) { rebuild(); assertEquals(listOf(capped), visitDao.visits) }
+    }
+
+    @Test fun tripFillingDoesNotCrossDeletedGapEvenWhenBothVisitsRemain() {
+        visitDao.seed(confirmedVisit(1, 590, 600), confirmedVisit(2, 650, 660, lat = 40.04))
+        walk(601, 620, 40.001)
+        walk(630, 649, 40.025)
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(at(621), at(630))
+        repeat(2) {
+            rebuild()
+            assertEquals(2, tripDao.trips.size)
+            assertTrue(tripDao.trips.none { it.startMs < at(621) && it.endMs > at(630) })
+            assertNull(tripDao.trips.minBy { it.startMs }.toVisitId)
+            assertNull(tripDao.trips.maxBy { it.startMs }.fromVisitId)
+        }
+    }
+
+    @Test fun confirmedOngoingVisitCannotExtendAcrossDeletedTail() {
+        stay(600, 620, 40.0)
+        nowMs = at(650)
+        visitDao.seed(confirmedVisit(1, 600, 620, ongoing = true))
+        sampleDao.deletions += net.extrawdw.apps.locationhistory.data.db.DeletedTimeRangeEntity(at(621), at(640))
+        rebuild()
+        assertEquals(at(620), visitDao.visits.single().endMs)
+        assertFalse(visitDao.visits.single().isOngoing)
+    }
+
     // ---- sample seeding ---------------------------------------------------------------------
 
     private fun sample(

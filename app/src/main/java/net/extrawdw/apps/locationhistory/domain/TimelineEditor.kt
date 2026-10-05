@@ -63,8 +63,8 @@ class TimelineEditor @Inject constructor(
         if (samples.size < 2) return@withLock
         val k = splitIndex.coerceIn(1, samples.size - 1)
         deleteItem(item)
-        materialize(samples.subList(0, k), leftType)
-        materialize(samples.subList(k, samples.size), rightType)
+        materialize(samples.subList(0, k), leftType, item.stopMerge)
+        materialize(samples.subList(k, samples.size), rightType, item.stopMerge)
         workScheduler.enqueueTimelineMaintenanceNow(
             TimeBuckets.dayEpoch(item.startMs),
             "edit_split"
@@ -76,7 +76,7 @@ class TimelineEditor @Inject constructor(
         val samples = samplesFor(item)
         if (samples.isEmpty()) return@withLock
         deleteItem(item)
-        materialize(samples, type)
+        materialize(samples, type, item.stopMerge)
         workScheduler.enqueueTimelineMaintenanceNow(
             TimeBuckets.dayEpoch(item.startMs),
             "edit_convert"
@@ -107,7 +107,12 @@ class TimelineEditor @Inject constructor(
     }
 
     /** Turn a span of samples into the persisted entity for [type]. */
-    private suspend fun materialize(span: List<LocationSampleEntity>, type: SegmentType) {
+    private val TimelineItem.stopMerge: Boolean get() = when (this) {
+        is TimelineItem.VisitItem -> visit.stopMerge
+        is TimelineItem.TripItem -> trip.stopMerge
+    }
+
+    private suspend fun materialize(span: List<LocationSampleEntity>, type: SegmentType, stopMerge: Boolean) {
         if (span.isEmpty()) return
         val usable = span.filter { it.includedInComputation }.ifEmpty { span }
         val startMs = span.first().timestampMs
@@ -167,7 +172,7 @@ class TimelineEditor @Inject constructor(
                         centroidLatitude = geom.latitude, centroidLongitude = geom.longitude,
                         radiusMeters = geom.radiusMeters, sampleCount = cleanUsable.size,
                         reliability = geom.reliability.toFloat(),
-                        confirmed = true, confidence = 1f, isOngoing = false,
+                        confirmed = true, confidence = 1f, isOngoing = false, stopMerge = stopMerge,
                     ),
                     match,
                 )
@@ -189,7 +194,7 @@ class TimelineEditor @Inject constructor(
                         startMs = startMs, endMs = endMs, dayEpoch = TimeBuckets.dayEpoch(startMs),
                         mode = type.mode, modeConfidence = 1f,
                         encodedPolyline = Geo.encodePolyline(points), distanceMeters = distance,
-                        confirmed = true,
+                        confirmed = true, stopMerge = stopMerge,
                     ),
                 )
             }
