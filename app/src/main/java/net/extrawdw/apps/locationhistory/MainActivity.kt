@@ -58,6 +58,8 @@ import net.extrawdw.apps.locationhistory.ui.MapMemoryPressure
 import net.extrawdw.apps.locationhistory.ui.PlacesScreen
 import net.extrawdw.apps.locationhistory.ui.SettingsScreen
 import net.extrawdw.apps.locationhistory.ui.TimelineScreen
+import net.extrawdw.apps.locationhistory.ui.VisitFocusRequest
+import net.extrawdw.apps.locationhistory.ui.VisitFocusRequestSaver
 import net.extrawdw.apps.locationhistory.ui.appSettingsIntent
 import net.extrawdw.apps.locationhistory.ui.rememberPathlinePermissions
 import net.extrawdw.apps.locationhistory.ui.rememberRetainedContent
@@ -111,6 +113,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     var destination by rememberSaveable { mutableStateOf(AppDestinations.TIMELINE) }
+    var visitFocusRequest by rememberSaveable(stateSaver = VisitFocusRequestSaver) {
+        mutableStateOf<VisitFocusRequest?>(null)
+    }
+    val openVisit: (Long, Long) -> Unit = { dayEpoch, visitId ->
+        visitFocusRequest = VisitFocusRequest(dayEpoch, visitId)
+        destination = AppDestinations.TIMELINE
+    }
     val context = LocalContext.current
     val permissions = rememberPathlinePermissions()
     val onboardingComplete by onboardingViewModel.onboardingComplete.collectAsStateWithLifecycle()
@@ -165,6 +174,11 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                         .zIndex(if (destination == AppDestinations.TIMELINE) 1f else 0f)
                 ) {
                     TimelineScreen(
+                        visitFocusRequest = visitFocusRequest,
+                        onOpenVisit = openVisit,
+                        onVisitFocusHandled = { request ->
+                            if (visitFocusRequest === request) visitFocusRequest = null
+                        },
                         onOpenSettings = { destination = AppDestinations.SETTINGS },
                         mapOnScreen = destination == AppDestinations.TIMELINE,
                     )
@@ -183,7 +197,7 @@ fun PathlineRoot(onboardingViewModel: OnboardingViewModel = androidx.hilt.lifecy
                         Modifier
                             .fillMaxSize()
                             .zIndex(2f)
-                    ) { PlacesScreen() }
+                    ) { PlacesScreen(onOpenVisit = openVisit) }
 
                     AppDestinations.SETTINGS -> Surface(
                         Modifier

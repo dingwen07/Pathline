@@ -88,7 +88,10 @@ fun PlaceEditDialog(
     onRepair: suspend (PlaceCoordinateRepairDecision) -> Boolean,
     onUndoRepair: suspend () -> Boolean,
     onDismiss: () -> Unit,
+    mergeCandidates: List<PlaceEntity> = emptyList(),
+    onMerge: (suspend (destinationId: Long) -> Boolean)? = null,
 ) {
+    var showMergePicker by rememberSaveable(place.id) { mutableStateOf(false) }
     var name by rememberSaveable(place.id) { mutableStateOf(place.name) }
     var address by rememberSaveable(place.id) { mutableStateOf(place.address ?: "") }
     val initialProjection = remember(
@@ -221,6 +224,12 @@ fun PlaceEditDialog(
                         }
                     },
                     actions = {
+                        if (onMerge != null) {
+                            TextButton(
+                                onClick = { showMergePicker = true },
+                                enabled = !repairInFlight,
+                            ) { Text(stringResource(R.string.place_merge_action)) }
+                        }
                         TextButton(
                             onClick = {
                                 requestClose {
@@ -406,6 +415,16 @@ fun PlaceEditDialog(
                     enabled = !repairInFlight,
                 )
             }
+        }
+
+        if (showMergePicker && onMerge != null) {
+            PlaceMergePickerSheet(
+                source = place,
+                places = mergeCandidates,
+                onMerge = onMerge,
+                onMerged = onDismiss,
+                onDismiss = { showMergePicker = false },
+            )
         }
 
         pendingRepair?.let { decision ->

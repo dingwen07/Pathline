@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Intent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -85,6 +86,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
@@ -154,6 +157,9 @@ private data class AnnotationRef(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineScreen(
+    visitFocusRequest: VisitFocusRequest?,
+    onOpenVisit: (dayEpoch: Long, visitId: Long) -> Unit,
+    onVisitFocusHandled: (VisitFocusRequest) -> Unit,
     onOpenSettings: () -> Unit = {},
     mapOnScreen: Boolean = true,
     viewModel: TimelineViewModel = hiltViewModel(),
@@ -210,7 +216,21 @@ fun TimelineScreen(
     // Keep the user's split through compact windows and rotation, where the divider is absent.
     var timelinePaneFraction by rememberSaveable { mutableFloatStateOf(Float.NaN) }
     val adaptiveInfo = currentWindowAdaptiveInfoV2()
+    val threePane = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(
+        WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND,
+    ) && adaptiveInfo.windowSizeClass.isHeightAtLeastBreakpoint(
+        WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND,
+    ) && !adaptiveInfo.windowPosture.isTabletop
     val scope = rememberCoroutineScope()
+    var readyVisitFocus by remember { mutableStateOf<VisitFocusRequest?>(null) }
+    LaunchedEffect(visitFocusRequest, today, threePane) {
+        readyVisitFocus = null
+        val request = visitFocusRequest ?: return@LaunchedEffect
+        pagerState.scrollToPage((TODAY_PAGE - (today - request.dayEpoch)).coerceIn(0, TODAY_PAGE.toLong()).toInt())
+        // The compact sheet's peek can hide the row even after its list has scrolled to it.
+        if (!threePane) scaffoldState.bottomSheetState.expand()
+        readyVisitFocus = request
+    }
 
     // Free the map's GPU surface when it isn't on screen and we're backgrounded (or under memory
     // pressure). cameraPositionState above survives the unmount, so the camera is restored on
@@ -395,6 +415,17 @@ fun TimelineScreen(
                         val dayTimeline by remember(day) { viewModel.timelineFor(day) }
                             .collectAsStateWithLifecycle(TimelineDay(day, emptyList()))
                         val listState = rememberLazyListState()
+                        val focusRequest = readyVisitFocus?.takeIf {
+                            it === visitFocusRequest && it.dayEpoch == day && pagerState.currentPage == page
+                        }
+                        val highlightedVisitId = rememberVisitListHighlight(
+                            listState = listState,
+                            request = focusRequest,
+                            targetIndex = dayTimeline.items.indexOfFirst {
+                                it is TimelineItem.VisitItem && it.visit.id == focusRequest?.visitId
+                            },
+                            onHandled = onVisitFocusHandled,
+                        )
                         PullToRefreshBox(
                             isRefreshing = refreshing,
                             onRefresh = { viewModel.refresh() },
@@ -420,6 +451,7 @@ fun TimelineScreen(
                                     when (item) {
                                         is TimelineItem.VisitItem -> VisitRow(
                                             item = item,
+                                            highlighted = item.visit.id == highlightedVisitId,
                                             isFirst = index == 0,
                                             isLast = index == dayTimeline.items.lastIndex,
                                             topColor = tripJoinColor(
@@ -536,14 +568,22 @@ fun TimelineScreen(
                     }
                     // Visits: translucent radius circle plus a fixed screen-size center dot.
                     mapState.visits.forEach { v ->
+                        val onVisitClick = {
+                            if (!editing && mapState.dayEpoch == selectedDay) {
+                                onOpenVisit(selectedDay, v.visitId)
+                            }
+                        }
                         Circle(
                             center = v.center.toLatLng(),
                             radius = v.radiusMeters,
                             strokeColor = Color.Transparent,
                             strokeWidth = 0f,
-                            fillColor = VISIT_BLUE.copy(alpha = if (dim) 0.10f else 0.22f)
+                            fillColor = VISIT_BLUE.copy(alpha = if (dim) 0.10f else 0.22f),
+                            clickable = !editing,
+                            onClick = { onVisitClick() },
                         )
                         MarkerComposable(
+                            v.visitId,
                             v.center.latitude,
                             v.center.longitude,
                             dim,
@@ -551,6 +591,7 @@ fun TimelineScreen(
                             anchor = Offset(0.5f, 0.5f),
                             flat = true,
                             zIndex = 10f,
+                            onClick = { onVisitClick(); true },
                         ) {
                             VisitCenterDot(VISIT_BLUE, alpha = if (dim) 0.55f else 1f)
                         }
@@ -635,11 +676,6 @@ fun TimelineScreen(
         // Use the app window's size class: this container has already lost the navigation rail's
         // width. Medium windows (including unfolded phones and portrait tablets) can fit a compact
         // timeline beside the map. Keep the sheet for short windows and tabletop posture.
-        val threePane = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(
-            WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND,
-        ) && adaptiveInfo.windowSizeClass.isHeightAtLeastBreakpoint(
-            WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND,
-        ) && !adaptiveInfo.windowPosture.isTabletop
         val sheetPeek = SHEET_PEEK.coerceAtMost(maxHeight * 0.45f)
         // When the recording master switch is off, the timeline stops updating — surface a banner.
         if (!recordingEnabled && !editing) {
@@ -720,6 +756,8 @@ fun TimelineScreen(
                 undone
             },
             onDismiss = { editPlace = null },
+            mergeCandidates = places,
+            onMerge = { destinationId -> viewModel.mergePlaces(place.id, destinationId) },
         )
     }
 
@@ -791,7 +829,9 @@ fun TimelineScreen(
     detailPlaceId?.let { id ->
         PlaceDetailDialog(
             placeId = id,
-            onDismiss = { detailPlaceId = null })
+            onDismiss = { detailPlaceId = null },
+            onOpenVisit = onOpenVisit,
+        )
     }
 }
 
@@ -957,6 +997,7 @@ private val GUTTER_WIDTH = 44.dp
 @Composable
 private fun VisitRow(
     item: TimelineItem.VisitItem,
+    highlighted: Boolean,
     isFirst: Boolean,
     isLast: Boolean,
     topColor: Color?,
@@ -967,6 +1008,10 @@ private fun VisitRow(
     onEditSamples: () -> Unit,
     onEditAnnotations: () -> Unit,
 ) {
+    val cardColor by animateColorAsState(
+        if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        label = "visitHighlight",
+    )
     val dotColor =
         if (item.confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
     val lineColor = MaterialTheme.colorScheme.outlineVariant
@@ -1011,10 +1056,11 @@ private fun VisitRow(
             }
         }
         Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = cardColor,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .weight(1f)
+                .semantics { selected = highlighted }
                 .padding(vertical = cardVerticalPadding),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = contentVerticalPadding)) {

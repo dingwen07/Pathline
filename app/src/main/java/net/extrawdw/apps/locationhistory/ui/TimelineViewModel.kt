@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
@@ -52,6 +53,7 @@ import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
+import net.extrawdw.apps.locationhistory.data.repo.PlaceMerger
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
@@ -80,6 +82,7 @@ data class MapSegment(
 
 /** A visit drawn "my-location" style: a small solid dot + a translucent accuracy circle. */
 data class MapVisitMarker(
+    val visitId: Long,
     val center: GoogleMapCoordinate,
     val boundsPoints: List<GoogleMapCoordinate>,
     val radiusMeters: Double,
@@ -114,6 +117,7 @@ class TimelineViewModel @Inject constructor(
     private val timelineRepository: TimelineRepository,
     private val locationRepository: LocationRepository,
     private val placeRepository: PlaceRepository,
+    private val placeMerger: PlaceMerger,
     private val timelineEditor: TimelineEditor,
     private val splitActivityClassifier: SplitActivityClassifier,
     private val annotationStore: AnnotationStore,
@@ -209,6 +213,9 @@ class TimelineViewModel @Inject constructor(
             workScheduler.enqueueTimelineMaintenanceNow(selectedDay.value, "timeline_visible")
         }
     }
+
+    suspend fun mergePlaces(sourceId: Long, destinationId: Long): Boolean =
+        viewModelScope.async { placeMerger.merge(sourceId, destinationId) }.await()
 
     fun updatePlace(
         place: net.extrawdw.apps.locationhistory.data.db.PlaceEntity,
@@ -464,6 +471,7 @@ class TimelineViewModel @Inject constructor(
                     )?.let { circle ->
                         visits.add(
                             MapVisitMarker(
+                                v.id,
                                 circle.center,
                                 circle.boundsPoints,
                                 v.radiusMeters,

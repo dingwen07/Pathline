@@ -391,7 +391,7 @@
     <string name="diag_worker_backup_now">备份（立即）</string>
     <string name="diag_worker_api_access">API 访问维护</string>
     <string name="diag_worker_summary">%1$s · 运行尝试 %2$d 次 · ID %3$s</string>
-    <string name="diag_session_logs">会话日志（最新在前）— 点按查看</string>
+    <string name="diag_session_logs">会话日志</string>
     <string name="diag_no_logs">暂无日志。</string>
     <string name="diag_log_empty">（空）</string>
     <plurals name="diag_log_truncated">
@@ -635,4 +635,25 @@
     <string name="backup_result_recovered">最新的备份不完整，已自动恢复较早的完整备份。</string>
     <string name="backup_location_unavailable">无法检查备份文件夹。请在文件夹可用后重试。</string>
     <string name="backup_retry_location">重试</string>
+    <string name="place_merge_action">合并地点</string>
+    <string name="place_merge_back">返回候选地点</string>
+    <string name="place_merge_duplicates">合并重复地点</string>
+    <string name="place_merge_select">选择要保留的地点</string>
+    <string name="place_merge_select_description">将 %1$s 合并到已保存的地点。按距离由近到远排列。</string>
+    <string name="place_merge_no_targets">没有匹配的已保存地点。</string>
+    <string name="place_merge_distance_unavailable">距离不可用 — 坐标需要检查</string>
+    <string name="place_merge_same_name">名称相同 · 距离在 100 米以内</string>
+    <string name="place_merge_nearby">其他名称 · 距离在 100 米以内</string>
+    <string name="place_merge_no_duplicates">没有候选地点对。</string>
+    <string name="place_merge_unresolved_hint">坐标需要检查的地点不参与距离比较。</string>
+    <string name="place_merge_compare">比较地点</string>
+    <string name="place_merge_compare_description">选择要保留的地点。其名称、地址和位置将保持不变。</string>
+    <string name="place_merge_no_address">无地址</string>
+    <string name="place_merge_keep">保留此地点</string>
+    <string name="place_merge_confirmation">将“%1$s”合并到“%2$s”？所有到访记录将归属于所选地点，标签将合并，备注和记忆将追加，另一个地点将被移除。</string>
+    <string name="place_merge_unsaved_hint">合并使用已保存的地点数据，此页面上尚未保存的修改将被舍弃。</string>
+    <string name="place_merge_failed">无法合并这些地点，数据可能已发生变化。请关闭此对话框后重试。</string>
+    <string name="place_merge_merging">正在合并…</string>
+    <string name="place_merge_ignore">忽略</string>
+    <string name="place_merge_ignore_failed">无法忽略此地点对，请重试。</string>
 </resources>

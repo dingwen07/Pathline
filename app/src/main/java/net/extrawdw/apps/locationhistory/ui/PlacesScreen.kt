@@ -60,10 +60,14 @@ import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.ui.icons.merge_type
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
+fun PlacesScreen(
+    onOpenVisit: (dayEpoch: Long, visitId: Long) -> Unit,
+    viewModel: PlacesViewModel = hiltViewModel(),
+) {
     val places by viewModel.places.collectAsStateWithLifecycle()
     val pending by viewModel.unconfirmedVisits.collectAsStateWithLifecycle()
     val visitCounts by viewModel.visitCounts.collectAsStateWithLifecycle()
@@ -72,6 +76,7 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     val visiblePending = if (showUnconfirmedVisits == true) pending else emptyList()
 
     var optionsExpanded by remember { mutableStateOf(false) }
+    var showDuplicates by rememberSaveable { mutableStateOf(false) }
     var editPlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
     var deletePlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
     var assignVisit by rememberSaveable(stateSaver = VisitDialogSaver) { mutableStateOf<VisitEntity?>(null) }
@@ -86,6 +91,9 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
             TopAppBar(
                 title = { Text(stringResource(R.string.places_title)) },
                 actions = {
+                    IconButton(onClick = { showDuplicates = true }) {
+                        Icon(merge_type, contentDescription = stringResource(R.string.place_merge_duplicates))
+                    }
                     IconButton(
                         onClick = {
                             scope.launch {
@@ -301,6 +309,20 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                 undone
             },
             onDismiss = { editPlace = null },
+            mergeCandidates = places,
+            onMerge = { destinationId -> viewModel.mergePlaces(place.id, destinationId) },
+        )
+    }
+
+    if (showDuplicates) {
+        val ignoredPairs by viewModel.ignoredPlaceMergePairs.collectAsStateWithLifecycle()
+        PlaceDuplicatesDialog(
+            places = places,
+            ignoredPairs = ignoredPairs,
+            projectPlace = viewModel::projectPlaceForMap,
+            onMerge = viewModel::mergePlaces,
+            onIgnore = viewModel::ignorePlaceMergePair,
+            onDismiss = { showDuplicates = false },
         )
     }
 
@@ -365,7 +387,11 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
     }
 
     detailPlaceId?.let { id ->
-        PlaceDetailDialog(placeId = id, onDismiss = { detailPlaceId = null })
+        PlaceDetailDialog(
+            placeId = id,
+            onDismiss = { detailPlaceId = null },
+            onOpenVisit = onOpenVisit,
+        )
     }
 }
 

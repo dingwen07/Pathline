@@ -27,6 +27,10 @@ interface VisitDao {
     @Update
     suspend fun update(visit: VisitEntity)
 
+    /** Keep visit identity, geometry, confirmation, and trip references intact during a place merge. */
+    @Query("UPDATE visits SET placeId = :toId WHERE placeId = :fromId")
+    suspend fun moveToPlace(fromId: Long, toId: Long)
+
     /** Visits that overlap [startMs, endMs) — includes stays that cross midnight into the day. */
     @Query("SELECT * FROM visits WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     fun observeOverlapping(startMs: Long, endMs: Long): Flow<List<VisitEntity>>

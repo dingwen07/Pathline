@@ -1,5 +1,8 @@
 package net.extrawdw.apps.locationhistory.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,12 +31,16 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -139,6 +146,7 @@ class PlaceDetailViewModel @Inject constructor(
 fun PlaceDetailDialog(
     placeId: Long,
     onDismiss: () -> Unit,
+    onOpenVisit: (dayEpoch: Long, visitId: Long) -> Unit,
     viewModel: PlaceDetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(placeId) { viewModel.load(placeId) }
@@ -157,7 +165,7 @@ fun PlaceDetailDialog(
         observedVisitMarkers.filter { it.visitId in activeVisitIds }
     }
 
-    PlaceDetailContent(place, projectedPlace, visits, visitMarkers, viewModel.mapProfileId, onDismiss)
+    PlaceDetailContent(place, projectedPlace, visits, visitMarkers, viewModel.mapProfileId, onDismiss, onOpenVisit)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -169,8 +177,16 @@ internal fun PlaceDetailContent(
     visitMarkers: List<PlaceVisitMarker>,
     mapProfileId: String,
     onDismiss: () -> Unit,
+    onOpenVisit: (dayEpoch: Long, visitId: Long) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    var focusRequest by remember(place?.id) { mutableStateOf<VisitFocusRequest?>(null) }
+    val highlightedVisitId = rememberVisitListHighlight(
+        listState = listState,
+        request = focusRequest,
+        targetIndex = visits.indexOfFirst { it.id == focusRequest?.visitId },
+        onHandled = { if (focusRequest === it) focusRequest = null },
+    )
     val visibleVisitIds by remember(visits) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo
@@ -198,6 +214,11 @@ internal fun PlaceDetailContent(
                                 visibleMarkers = visibleMarkers,
                                 followList = hasScrolled,
                                 profileId = mapProfileId,
+                                onVisitClick = { visitId ->
+                                    visits.firstOrNull { it.id == visitId }?.let {
+                                        focusRequest = VisitFocusRequest(it.dayEpoch, it.id)
+                                    }
+                                },
                                 contentPadding = if (edgeToEdge) WindowInsets.safeDrawing.asPaddingValues() else PaddingValues(),
                             )
                         }
@@ -272,9 +293,22 @@ internal fun PlaceDetailContent(
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     items(visits, key = { it.id }) { v ->
                         val context = LocalContext.current
+                        val highlighted = v.id == highlightedVisitId
+                        val rowColor by animateColorAsState(
+                            if (highlighted) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            label = "visitHighlight",
+                        )
                         Column(
                             Modifier
                                 .fillMaxWidth()
+                                .background(rowColor)
+                                .semantics { selected = highlighted }
+                                .clickable {
+                                    requestClose {
+                                        onDismiss()
+                                        onOpenVisit(v.dayEpoch, v.id)
+                                    }
+                                }
                                 .padding(horizontal = 16.dp, vertical = 12.dp)
                         ) {
                             Text(
@@ -326,6 +360,7 @@ private fun PlaceDetailMap(
     visibleMarkers: List<PlaceVisitMarker>,
     followList: Boolean,
     profileId: String,
+    onVisitClick: (Long) -> Unit,
     contentPadding: PaddingValues,
 ) {
     val cameraPositionState = rememberCameraPositionState {
@@ -377,6 +412,8 @@ private fun PlaceDetailMap(
                 strokeColor = Color.Transparent,
                 strokeWidth = 0f,
                 fillColor = blue.copy(alpha = 0.22f),
+                clickable = true,
+                onClick = { onVisitClick(marker.visitId) },
             )
             MarkerComposable(
                 marker.visitId,
@@ -384,6 +421,7 @@ private fun PlaceDetailMap(
                 anchor = Offset(0.5f, 0.5f),
                 flat = true,
                 zIndex = 10f,
+                onClick = { onVisitClick(marker.visitId); true },
             ) {
                 VisitCenterDot(blue)
             }

@@ -8,12 +8,14 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import net.extrawdw.apps.locationhistory.security.BackupEncryption
+import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -107,6 +109,20 @@ class SettingsRepository @Inject constructor(
     private val keyTelemetryEnabled = booleanPreferencesKey("telemetry_enabled")
     private val keyShowUnconfirmedVisitsInPlaces =
         booleanPreferencesKey("places_show_unconfirmed_visits")
+    private val keyIgnoredPlaceMergePairs = stringSetPreferencesKey("ignored_place_merge_pairs")
+
+    /** Suggestion preference only: never consulted when a user manually merges saved places. */
+    val ignoredPlaceMergePairs: Flow<Set<String>> = context.dataStore.data.map {
+        it[keyIgnoredPlaceMergePairs] ?: emptySet()
+    }
+
+    suspend fun ignorePlaceMergePair(first: PlaceEntity, second: PlaceEntity) {
+        if (first.id == second.id) return
+        context.dataStore.edit { preferences ->
+            preferences[keyIgnoredPlaceMergePairs] =
+                preferences[keyIgnoredPlaceMergePairs].orEmpty() + placeMergePairKey(first, second)
+        }
+    }
     private val keyGoogleCloudProjectId = stringPreferencesKey("google_cloud_project_id")
     private val keyAutomaticNearbyDailyLimit = intPreferencesKey("automatic_nearby_daily_limit")
     private val keyIncludeMapsPlatformInBackup =

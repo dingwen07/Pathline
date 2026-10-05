@@ -27,6 +27,9 @@ internal fun likeMatches(pattern: String, value: String?): Boolean {
 }
 
 internal class FakeVisitDao : VisitDao {
+    override suspend fun moveToPlace(fromId: Long, toId: Long) {
+        listForPlace(fromId).forEach { update(it.copy(placeId = toId)) }
+    }
     val visits = mutableListOf<VisitEntity>()
     private var nextId = 1L
 

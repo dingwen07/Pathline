@@ -149,6 +149,11 @@ internal fun foldText(a: String?, b: String?): String? {
     }
 }
 
+/** Place merges preserve outer whitespace and append even equal text, destination first. */
+internal fun appendPlaceText(destination: String?, source: String?): String? =
+    if (source.isNullOrEmpty()) destination
+    else "${destination.orEmpty().trimEnd()}\n${source.trimStart()}"
+
 /**
  * Combine two memory-entry **sources** when a merge folds rows together: nulls/blanks contribute
  * nothing, equal sources collapse to one, differing sources join oldest-first with "; " — the
@@ -362,6 +367,45 @@ class AnnotationStore @Inject constructor(
         }
 
     // --- Merge fold & cascade delete -----------------------------------------------------------
+
+    /** Must precede acquiring a database writer transaction, to avoid API memory-write deadlocks. */
+    internal suspend fun <T> withMemoryWriteLock(block: suspend () -> T): T =
+        memoryWriteMutex.withLock { block() }
+
+    /** Caller holds [withMemoryWriteLock] and a database transaction for the complete place merge. */
+    internal suspend fun foldPlaceOnMerge(survivorId: Long, dyingId: Long) {
+        val target = AnnotationTarget.PLACE
+        tagDao.rekeyLinks(target, dyingId, survivorId)
+        tagDao.unlinkAll(target, dyingId)
+        conceptDao.rekeyMembers(target, dyingId, survivorId)
+        conceptDao.removeMembersForTarget(target, dyingId)
+
+        val sourceNote = getNote(target, dyingId)
+        if (!sourceNote.isNullOrEmpty()) {
+            put(target, survivorId, AnnotationKind.NOTE,
+                appendPlaceText(getNote(target, survivorId), sourceNote), writer = null)
+        }
+        val sourceMemories = getMemories(target, dyingId)
+        if (sourceMemories.isNotEmpty()) {
+            val merged = getMemories(target, survivorId).toMutableMap()
+            for ((key, source) in sourceMemories) {
+                val destination = merged[key]
+                merged[key] = when {
+                    destination == null -> source
+                    source.value.isEmpty() -> destination
+                    else -> MemoryEntry(
+                        value = appendPlaceText(destination.value, source.value)!!,
+                        confidence = minOf(destination.confidence, source.confidence),
+                        source = foldSources(destination.source, source.source),
+                        updatedAtMs = listOfNotNull(destination.updatedAtMs, source.updatedAtMs).maxOrNull(),
+                        updatedBy = null,
+                    )
+                }
+            }
+            setMemories(target, survivorId, merged)
+        }
+        annotationDao.deleteForTarget(target, dyingId)
+    }
 
     /**
      * Fold the annotations of the dying row [dyingId] onto the surviving row [survivorId] (same

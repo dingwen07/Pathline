@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.tasks.await
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.core.PlaceSource
@@ -31,6 +32,7 @@ import net.extrawdw.apps.locationhistory.data.repo.LocationRepository
 import net.extrawdw.apps.locationhistory.data.repo.LegacyPlaceCoordinateManager
 import net.extrawdw.apps.locationhistory.data.repo.PlaceChoice
 import net.extrawdw.apps.locationhistory.data.repo.PlaceRepository
+import net.extrawdw.apps.locationhistory.data.repo.PlaceMerger
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.data.repo.TimelineRepository
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
@@ -42,6 +44,7 @@ import javax.inject.Inject
 class PlacesViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val placeRepository: PlaceRepository,
+    private val placeMerger: PlaceMerger,
     private val timelineRepository: TimelineRepository,
     private val locationRepository: LocationRepository,
     private val annotationStore: AnnotationStore,
@@ -60,6 +63,13 @@ class PlacesViewModel @Inject constructor(
     ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val mapsApiKeyConfigured: StateFlow<Boolean> = mapsApiKeyVault.configured
+
+    val ignoredPlaceMergePairs: StateFlow<Set<String>?> = settingsRepository.ignoredPlaceMergePairs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    suspend fun ignorePlaceMergePair(first: PlaceEntity, second: PlaceEntity) {
+        viewModelScope.async { settingsRepository.ignorePlaceMergePair(first, second) }.await()
+    }
 
     // Wait for the persisted value before showing pending visits, avoiding a flash when hidden.
     val showUnconfirmedVisits: StateFlow<Boolean?> = settingsRepository.settings
@@ -155,6 +165,10 @@ class PlacesViewModel @Inject constructor(
     fun deleteIfUnvisited(placeId: Long) = viewModelScope.launch {
         placeRepository.deleteIfUnvisited(placeId)
     }
+
+    /** Complete an atomic merge even if the initiating dialog leaves composition. */
+    suspend fun mergePlaces(sourceId: Long, destinationId: Long): Boolean =
+        viewModelScope.async { placeMerger.merge(sourceId, destinationId) }.await()
 
     // --- annotations (notes / tags / view-only memories) ---------------------------------------
 
