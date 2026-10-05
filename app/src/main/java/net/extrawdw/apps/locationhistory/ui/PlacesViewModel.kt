@@ -58,8 +58,8 @@ class PlacesViewModel @Inject constructor(
 
     val places: StateFlow<List<PlaceEntity>> = combine(
         placeRepository.observeAll(),
-        timelineRepository.observeMostRecentVisit(),
-        ::sortSavedPlacesByLatestVisit,
+        locationRepository.observeMostRecent(),
+        ::sortSavedPlacesByLatestSample,
     ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val mapsApiKeyConfigured: StateFlow<Boolean> = mapsApiKeyVault.configured

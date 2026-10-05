@@ -331,6 +331,9 @@ internal class FakeLocationSampleDao : LocationSampleDao {
     override suspend fun mostRecent(): LocationSampleEntity? =
         samples.maxByOrNull { it.timestampMs }
 
+    override fun observeMostRecent(): Flow<LocationSampleEntity?> =
+        flowOf(samples.maxWithOrNull(compareBy<LocationSampleEntity> { it.timestampMs }.thenBy { it.id }))
+
     override suspend fun markExcluded(id: Long, reason: String) {
         samples.replaceAll {
             if (it.id == id) it.copy(includedInComputation = false, exclusionReason = reason) else it

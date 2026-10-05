@@ -3,16 +3,16 @@ package net.extrawdw.apps.locationhistory.ui
 import net.extrawdw.apps.locationhistory.core.Geo
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
-import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 
-/** Nearest first to the latest recorded visit, including ongoing and unconfirmed visits. */
-internal fun sortSavedPlacesByLatestVisit(
+/** Nearest first to the latest recorded location sample. */
+internal fun sortSavedPlacesByLatestSample(
     places: List<PlaceEntity>,
-    latestVisit: VisitEntity?,
+    latestSample: LocationSampleEntity?,
 ): List<PlaceEntity> {
-    if (latestVisit == null || !validCoordinate(
-            latestVisit.centroidLatitude,
-            latestVisit.centroidLongitude,
+    if (latestSample == null || !validCoordinate(
+            latestSample.latitude,
+            latestSample.longitude,
         )
     ) return places
 
@@ -23,8 +23,8 @@ internal fun sortSavedPlacesByLatestVisit(
             validCoordinate(place.latitude, place.longitude)
         ) {
             Geo.distanceMeters(
-                latestVisit.centroidLatitude,
-                latestVisit.centroidLongitude,
+                latestSample.latitude,
+                latestSample.longitude,
                 place.latitude,
                 place.longitude,
             ).takeIf { it.isFinite() } ?: Double.POSITIVE_INFINITY

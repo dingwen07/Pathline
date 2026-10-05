@@ -37,6 +37,8 @@ class LocationRepository @Inject constructor(
 
     suspend fun mostRecent(): LocationSampleEntity? = dao.mostRecent()
 
+    fun observeMostRecent(): Flow<LocationSampleEntity?> = dao.observeMostRecent()
+
     /** Independent watchdog append with the same eligibility rules as normal recording. */
     suspend fun recordIfStillStale(sample: LocationSampleEntity, cutoffMs: Long): Long? {
         val (included, reason) = computationEligibility(sample)

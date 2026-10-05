@@ -65,6 +65,16 @@ class SafDir internal constructor(private val session: SafSession, internal val 
     suspend fun childDirOrNull(name: String): SafDir? = resolveDirectory(name, false)
     suspend fun childDir(name: String): SafDir = requireNotNull(resolveDirectory(name, true))
 
+    /** Only the four managed data folders use prefix matching; destination/subfolder names stay exact. */
+    internal suspend fun backupDirOrNull(name: String): SafDir? {
+        require(name in BACKUP_DIRECTORIES)
+        return resolveDirectory(name, false, matchPrefix = true)
+    }
+    internal suspend fun backupDir(name: String): SafDir {
+        require(name in BACKUP_DIRECTORIES)
+        return requireNotNull(resolveDirectory(name, true, matchPrefix = true))
+    }
+
     internal fun physicalDirectories(): List<SafDir> = folders.map { SafDir(session, listOf(it)) }
 
     /** Always create a new physical directory, including when archiving duplicate SAF folders. */
@@ -90,7 +100,12 @@ class SafDir internal constructor(private val session: SafSession, internal val 
         require(folders.size == 1 && target.folders.size == 1)
         // Forget the active ID before moving it: Drive can keep the same ID inside the archive.
         // Looking that ID up later must never reconnect a new backup to the archived folder.
-        if (document.directory) session.identities.remove(canonical.id, document.name)
+        if (document.directory) {
+            session.identities.remove(canonical.id, document.name)
+            BACKUP_DIRECTORIES.firstOrNull { document.name.startsWith(it) }?.let {
+                session.identities.remove(canonical.id, it)
+            }
+        }
         return try {
             provider.move(document, canonical, target.canonical)
         } finally {
@@ -98,32 +113,37 @@ class SafDir internal constructor(private val session: SafSession, internal val 
         }
     }
 
-    private suspend fun resolveDirectory(name: String, create: Boolean): SafDir? {
+    private suspend fun resolveDirectory(name: String, create: Boolean, matchPrefix: Boolean = false): SafDir? {
         requireSafeName(name)
+        fun matchesName(actual: String) = actual == name || matchPrefix && actual.startsWith(name)
         val entries = documents()
         val hint = session.identities.get(canonical.id, name)
-        val matches = entries.filter { it.name == name || it.id == hint }.toMutableList()
+        val matches = entries.filter { it.name == name || it.id == hint ||
+            matchPrefix && it.directory && matchesName(it.name) }.toMutableList()
         if (matches.any { !it.directory }) throw BackupStorageException("A file conflicts with a backup folder")
         if (create && hint != null && matches.none { it.id == hint }) {
             try {
                 val known = provider.metadata(hint)
-                if (!known.directory || known.name != name) throw BackupStorageException("The established backup folder changed")
+                if (!known.directory || !matchesName(known.name)) throw BackupStorageException("The established backup folder changed")
                 matches += known
             } catch (_: FileNotFoundException) {
                 // Both a complete parent listing and a direct ID query confirm removal. Recreate
                 // without deleting anything; a provider error/loading result never reaches here.
             }
         }
-        val ordered = matches.sortedWith(compareBy<BackupDocument> { it.id != hint }.thenBy { it.id })
+        val ordered = matches.sortedWith(compareBy<BackupDocument> { it.id != hint }
+            .thenBy { it.name != name }.thenBy { it.id })
         val dirs = if (ordered.isNotEmpty()) ordered else {
             if (!create) return null
             val made = provider.create(canonical, name, DIRECTORY_MIME)
             session.identities.put(canonical.id, name, made.id)
             session.children(canonical).add(made)
             val verified = provider.metadata(made.id)
-            if (!verified.directory || verified.name != name) {
+            if (!verified.directory || !matchesName(verified.name)) {
                 throw BackupStorageException("The provider changed a backup folder name; choose another destination")
             }
+            session.children(canonical).removeAll { it.id == made.id }
+            session.children(canonical).add(verified)
             listOf(verified)
         }
         if (create) session.identities.put(canonical.id, name, dirs.first().id)
@@ -235,7 +255,11 @@ class SafDir internal constructor(private val session: SafSession, internal val 
 
     internal suspend fun delete(document: BackupDocument, path: String = document.name, log: (String) -> Unit = {},
         operation: String = "Cleanup") {
-        deleteDocument(document, path, log, operation)
+        val parent = if ('/' in path) folders.firstOrNull { folder ->
+            session.children(folder).any { it.id == document.id }
+        } else null
+        val actualPath = parent?.let { "${it.name}/${path.substringAfter('/')}" } ?: path
+        deleteDocument(document, actualPath, log, operation)
         session.verifiedHashes.remove(document.id)
         folders.forEach { session.children(it).removeAll { child -> child.id == document.id } }
     }
@@ -295,5 +319,8 @@ class SafDir internal constructor(private val session: SafSession, internal val 
     private fun requireSafeName(name: String) {
         require(name.isNotBlank() && name != "." && name != ".." && '/' !in name && '\\' !in name) { "Invalid backup document name" }
     }
-    internal companion object { const val DIRECTORY_MIME = "vnd.android.document/directory" }
+    internal companion object {
+        const val DIRECTORY_MIME = "vnd.android.document/directory"
+        val BACKUP_DIRECTORIES = setOf("samples", "visits", "trips", "snapshot")
+    }
 }

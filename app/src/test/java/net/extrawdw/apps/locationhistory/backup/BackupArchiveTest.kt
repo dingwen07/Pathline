@@ -357,6 +357,111 @@ class BackupArchiveTest {
         assertFalse(provider.nodes.containsKey(oldBlob.id))
     }
 
+    @Test fun cleanupIncludesAllManagedFolderPrefixesAndManifestCopies() = runBlocking {
+        val provider = MemoryDocuments()
+        val plain = "current".toByteArray()
+        val disk = BackupArchive.encodeBlob(plain, plainCipher)
+        val name = "2026-W40.${backupHashHex(disk)}.jsonl.gz"
+        val retained = mutableListOf<BackupDocument>()
+        val obsolete = mutableListOf<BackupDocument>()
+        val unrelated = mutableListOf<BackupDocument>()
+        for (stream in SafDir.BACKUP_DIRECTORIES) {
+            provider.add(provider.root, stream, true)
+            val numbered = provider.add(provider.root, "$stream (1)", true)
+            val copied = provider.add(provider.root, "$stream-copy", true)
+            retained += provider.add(copied, name, bytes = disk)
+            obsolete += provider.add(numbered, "old.${"a".repeat(64)}.jsonl.gz (2).enc")
+            unrelated += provider.add(numbered, "notes.txt")
+        }
+        val inventory = BackupInventory(
+            partitions = listOf("samples", "visits", "trips").map {
+                PartitionEntry(it, 1L, "2026-W40", name, 1, backupHash(plain), backupHash(disk))
+            },
+            snapshots = listOf(SnapshotEntry("settings", name, 1, backupHash(plain), backupHash(disk))),
+        )
+        val root = provider.dir()
+        val manifest = BackupArchive.publish(root, plainHeader, plainCipher, inventory, 1, provider.clock, null)
+        val oldMetadata = listOf(
+            provider.add(provider.root, "manifest (1).json"),
+            provider.add(provider.root, "manifest-old.json"),
+            provider.add(provider.root, "inventory.${"b".repeat(64)}.json (1).gz.enc"),
+        )
+        provider.readErrors += oldMetadata.map { it.id }
+        unrelated += provider.add(provider.root, "visits-notes.txt")
+        val other = provider.add(provider.root, "other", true)
+        unrelated += provider.add(other, name, bytes = disk)
+        val logs = mutableListOf<String>()
+
+        assertTrue(BackupArchive.cleanup(root, BackupArchive.Opened(manifest, inventory), logs::add).complete)
+
+        (obsolete + oldMetadata + retained).forEach { assertFalse(provider.nodes.containsKey(it.id)) }
+        unrelated.forEach { assertTrue(provider.nodes.containsKey(it.id)) }
+        for (stream in SafDir.BACKUP_DIRECTORIES) {
+            assertTrue(provider.named("$stream-copy").isEmpty())
+            assertEquals(1, provider.named("$stream (1)").size)
+            val canonical = provider.named(stream).single().doc
+            assertTrue(provider.nodes.values.any { it.parent == canonical.id && it.doc.name == name })
+            assertTrue(logs.any { it.startsWith("Cleanup: deleted $stream (1)/old.") })
+        }
+        assertEquals(manifest, BackupArchive.recover(provider.dir(), null, null, 1).opened.manifest)
+    }
+
+    @Test fun cleanupKeepsReferencedNumberedFilesAndDeletesOnlyUnreferencedCopies() = runBlocking {
+        val provider = MemoryDocuments()
+        val root = provider.dir()
+        val folder = provider.add(provider.root, "snapshot-copy", true)
+        val disk = BackupArchive.encodeBlob("settings".toByteArray(), plainCipher)
+        val name = "settings.${backupHashHex(disk)} (1).gz"
+        val kept = provider.add(folder, name, bytes = disk)
+        val inventory = BackupInventory(snapshots = listOf(
+            SnapshotEntry("settings", name, 1, backupHash("settings".toByteArray()), backupHash(disk))))
+        val manifest = BackupArchive.publish(root, plainHeader, plainCipher, inventory, 1, provider.clock, null)
+        val copies = listOf(
+            provider.add(folder, "settings.${backupHashHex(disk)}.gz (2)"),
+            provider.add(folder, "settings.${backupHashHex(disk)}.gz (3).enc"),
+            provider.add(folder, "settings.${backupHashHex(disk)}.gz.enc (4)"),
+        )
+        // The actual inventory filename is kept even when the provider returned a numbered name.
+        val oldInventory = provider.named(manifest.inventory.fileName).single()
+        val numberedInventory = provider.add(provider.root,
+            oldInventory.doc.name.replace(".gz", " (1).gz"), bytes = oldInventory.bytes)
+        val unsigned = manifest.copy(inventory = InventoryRef(numberedInventory.name, backupHash(oldInventory.bytes)), checksum = "")
+        val numberedManifest = unsigned.copy(checksum = BackupArchive.checksum(unsigned))
+        provider.named("manifest.1.json").single().bytes = json.encodeToString(BackupManifest.serializer(), numberedManifest).toByteArray()
+
+        assertTrue(BackupArchive.cleanup(provider.dir(), BackupArchive.Opened(numberedManifest, inventory)).complete)
+        assertTrue(provider.nodes.containsKey(kept.id))
+        assertTrue(provider.nodes.containsKey(numberedInventory.id))
+        assertFalse(provider.nodes.containsKey(oldInventory.doc.id))
+        copies.forEach { assertFalse(provider.nodes.containsKey(it.id)) }
+        assertEquals(numberedManifest, BackupArchive.recover(provider.dir(), null, null, 1).opened.manifest)
+    }
+
+    @Test fun numberedManifestRemainsReadableAndItsSequenceIsNotReused() = runBlocking {
+        val provider = MemoryDocuments()
+        val old = snapshot(provider, "settings")
+        val doc = provider.named("manifest.1.json").single()
+        provider.nodes.remove(doc.doc.id)
+        provider.add(provider.root, "manifest.1 (1).json", bytes = doc.bytes)
+        assertEquals(old.manifest, BackupArchive.recover(provider.dir(), null, null, 1).opened.manifest)
+        val current = snapshot(provider, "new", old)
+        assertEquals(2L, current.manifest.generation!!.sequence)
+        assertTrue(BackupArchive.cleanup(provider.dir(), current).complete)
+        assertTrue(provider.named("manifest.1 (1).json").isEmpty())
+    }
+
+    @Test fun backupFolderPrefixMatchingDoesNotChangeDestinationFolderResolution() = runBlocking {
+        val provider = MemoryDocuments()
+        val copy = provider.add(provider.root, "visits-copy", true)
+        val root = provider.dir()
+        assertNull(root.childDirOrNull("visits"))
+        assertEquals(copy.id, root.backupDirOrNull("visits")!!.canonical.id)
+        val exact = root.childDir("visits")
+        assertNotEquals(copy.id, exact.canonical.id)
+        assertEquals(exact.canonical.id, provider.dir().backupDir("visits").canonical.id)
+        assertEquals(2, provider.dir().backupDir("visits").folders.size)
+    }
+
     @Test fun onlyMissingOrCorruptPartitionsNeedRepairAndProviderErrorsStillAbort() = runBlocking {
         val provider = MemoryDocuments()
         val folder = provider.add(provider.root, "samples", true)
@@ -389,19 +494,23 @@ class BackupArchiveTest {
         val files = mutableListOf(
             provider.add(provider.root, "manifest.json", bytes = "broken v1".toByteArray()),
             provider.add(provider.root, "manifest.99.json", bytes = "broken v2".toByteArray()),
+            provider.add(provider.root, "manifest (1).json"),
+            provider.add(provider.root, "manifest-copy.json"),
             provider.add(provider.root, "inventory.${"a".repeat(64)}.json.gz"),
             provider.add(provider.root, "inventory.${"b".repeat(64)}.json.gz.enc"),
+            provider.add(provider.root, "inventory.${"b".repeat(64)}.json.gz (1).enc"),
         )
-        for (stream in listOf("samples", "visits", "trips", "snapshot", "trips")) {
+        for (stream in listOf("samples", "visits", "trips", "snapshot", "trips", "visits (1)", "snapshot-copy")) {
             val dir = provider.add(provider.root, stream, true)
             files += provider.add(dir, "2026-W40.${"c".repeat(64)}.jsonl.gz")
             repeat(2) { files += provider.add(dir, "2026-W41.${"d".repeat(64)}.jsonl.gz.enc") }
+            files += provider.add(dir, "2026-W41.${"d".repeat(64)}.jsonl.gz.enc (2)")
             provider.add(dir, "notes.txt")
         }
         val archive = provider.add(provider.root, "archive-20261005T000000Z", true)
         val archived = provider.add(archive, "manifest.1.json")
         val unrelated = listOf(provider.add(provider.root, "notes.txt"),
-            provider.add(provider.root, "manifest.notes.json"), provider.add(provider.root, "2026-W40.gpx"), archived)
+            provider.add(provider.root, "notes-manifest.json"), provider.add(provider.root, "2026-W40.gpx"), archived)
         provider.readErrors += provider.nodes.keys
         val logs = mutableListOf<String>()
         val root = provider.dir()
@@ -414,7 +523,7 @@ class BackupArchiveTest {
         assertTrue(provider.moved.isEmpty())
         assertEquals(1, provider.nodes.values.count { it.doc.name.startsWith("archive-") })
         unrelated.forEach { assertTrue(provider.nodes.containsKey(it.id)) }
-        assertEquals(6, provider.named("notes.txt").size)
+        assertEquals(8, provider.named("notes.txt").size)
         assertEquals(files.size, logs.count { it.startsWith("Encryption change: deleted ") })
         assertTrue(logs.any { it.contains("deleted trips/2026-W40.") })
         // Old inventories may be broken or encrypted with unavailable credentials. New publication
@@ -474,7 +583,7 @@ class BackupArchiveTest {
         val snapshots = provider.add(provider.root, "snapshot", true)
         val blob = provider.add(snapshots, "settings.${"b".repeat(16)}.gz.enc", bytes = "broken encrypted snapshot".toByteArray())
         val unrelated = listOf(provider.add(provider.root, "notes.txt"),
-            provider.add(provider.root, "manifest.notes.json"), provider.add(snapshots, "notes.txt"))
+            provider.add(provider.root, "notes-manifest.json"), provider.add(snapshots, "notes.txt"))
         unrelated.forEach { provider.readErrors += it.id }
         val root = provider.dir()
         assertTrue(BackupArchive.hasBackupFiles(root))
@@ -518,6 +627,35 @@ class BackupArchiveTest {
         assertTrue(runCatching { BackupArchive.archiveBeforeFull(provider.dir(), provider.clock) }.isFailure)
         assertTrue(provider.deleted.isEmpty())
         assertEquals(old.manifest, BackupArchive.recover(provider.dir(), null, null, 1).opened.manifest)
+    }
+
+    @Test fun archiveCopiesPrefixedFoldersUnderTheirActualNames() = runBlocking {
+        val provider = MemoryDocuments()
+        val originals = listOf("visits", "visits (1)", "visits-copy").mapIndexed { index, name ->
+            val folder = provider.add(provider.root, name, true)
+            folder to provider.add(folder, "2026-W40.${"a".repeat(16)}.jsonl.gz (${index + 1}).enc",
+                bytes = "opaque backup $index".toByteArray())
+        }
+        // Like local SAF, this provider creates a numbered name if a directory already exists.
+        val uniqueNames = object : BackupDocuments by provider {
+            override suspend fun create(parent: BackupDocument, name: String, mime: String): BackupDocument {
+                val used = provider.list(parent).map { it.name }.toSet()
+                var actual = name
+                var suffix = 1
+                while (actual in used) actual = "$name (${suffix++})"
+                return provider.create(parent, actual, mime)
+            }
+        }
+        val root = SafDir(uniqueNames, provider.root)
+        val archive = root.childDirOrNull(requireNotNull(BackupArchive.archiveBeforeFull(root, provider.clock)))!!
+
+        for ((index, original) in originals.withIndex()) {
+            val (folder, blob) = original
+            assertFalse(provider.nodes.containsKey(blob.id))
+            val copied = archive.childDirOrNull(folder.name)!!.documents().single()
+            assertEquals(blob.name, copied.name)
+            assertArrayEquals("opaque backup $index".toByteArray(), archive.read(copied))
+        }
     }
 
     @Test fun archiveRejectsDamagedCopyBeforeDeletingAnything() = runBlocking {
@@ -582,7 +720,8 @@ class BackupArchiveTest {
 
     @Test fun nativeArchiveClearsPinnedIdsBeforeCreatingNewBackupFolders() = runBlocking {
         val provider = MemoryDocuments().apply { supportsMoves = true }
-        snapshot(provider, "settings")
+        val folder = provider.add(provider.root, "snapshot-copy", true)
+        provider.add(folder, "settings.${"a".repeat(16)}.gz.enc", bytes = "opaque backup".toByteArray())
         val pins = mutableMapOf<Pair<String, String>, String>()
         val identities = object : DirectoryIdentities {
             override fun get(parent: String, name: String) = pins[parent to name]
@@ -590,12 +729,12 @@ class BackupArchiveTest {
             override fun remove(parent: String, name: String) { pins.remove(parent to name) }
         }
         val root = SafDir(provider, provider.root, identities)
-        val oldId = root.childDir("snapshot").canonical.id
+        val oldId = root.backupDir("snapshot").canonical.id
         val archiveName = requireNotNull(BackupArchive.archiveBeforeFull(root, provider.clock))
-        val newFolder = root.childDir("snapshot")
+        val newFolder = root.backupDir("snapshot")
         assertNotEquals(oldId, newFolder.canonical.id)
         assertTrue(newFolder.documents().isEmpty())
-        assertEquals(oldId, root.childDirOrNull(archiveName)!!.childDirOrNull("snapshot")!!.canonical.id)
+        assertEquals(oldId, root.childDirOrNull(archiveName)!!.backupDirOrNull("snapshot")!!.canonical.id)
     }
 
     @Test fun failedNativeMoveRollsBackEarlierMovesIncludingChangedDocumentIds() = runBlocking {

@@ -28,7 +28,7 @@ class DataManagementViewModel @Inject constructor(
     private val resetter: dagger.Lazy<RecordedDataResetter>,
 ) : ViewModel() {
     internal val places = combine(db.placeDao().observeAll(),
-        db.dataManagementDao().observeLatestSample(), db.visitDao().observeMostRecent()) { places, sample, visit ->
+        db.locationSampleDao().observeMostRecent(), db.visitDao().observeMostRecent()) { places, sample, visit ->
         rankDeletionPlaces(places, sample, visit)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

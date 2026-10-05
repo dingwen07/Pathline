@@ -2,8 +2,9 @@ package net.extrawdw.apps.locationhistory.ui
 
 import net.extrawdw.apps.locationhistory.core.PlaceCoordinateState
 import net.extrawdw.apps.locationhistory.core.PlaceSource
+import net.extrawdw.apps.locationhistory.core.DevicePhysicalState
+import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
-import net.extrawdw.apps.locationhistory.data.db.VisitEntity
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -16,47 +17,44 @@ class SavedPlaceOrderingTest {
 
         assertEquals(
             listOf(near, middle, far),
-            sortSavedPlacesByLatestVisit(listOf(far, near, middle), visit(116.40)),
+            sortSavedPlacesByLatestSample(listOf(far, near, middle), sample(116.40)),
         )
     }
 
     @Test
-    fun unconfirmedOngoingVisitUsesRecordedCentroidRatherThanItsPlacesCandidate() {
-        val nearCentroid = place(1, 116.40)
-        val nearCandidate = place(2, 116.50)
-        val latest = visit(116.40).copy(
-            placeId = null,
-            confirmed = false,
-            isOngoing = true,
-            candidateLatitude = 39.90,
-            candidateLongitude = 116.50,
+    fun latestRecordedSampleIsUsedEvenWhenExcludedFromTimelineComputation() {
+        val near = place(1, 116.40)
+        val far = place(2, 116.50)
+        val latest = sample(116.40).copy(
+            includedInComputation = false,
+            exclusionReason = "low_accuracy",
         )
 
         assertEquals(
-            listOf(nearCentroid, nearCandidate),
-            sortSavedPlacesByLatestVisit(listOf(nearCandidate, nearCentroid), latest),
+            listOf(near, far),
+            sortSavedPlacesByLatestSample(listOf(far, near), latest),
         )
     }
 
     @Test
-    fun updatedLatestVisitChangesTheOrder() {
+    fun updatedLatestSampleChangesTheOrder() {
         val west = place(1, 116.40)
         val east = place(2, 116.50)
         val places = listOf(west, east)
 
-        assertEquals(listOf(west, east), sortSavedPlacesByLatestVisit(places, visit(116.40)))
-        assertEquals(listOf(east, west), sortSavedPlacesByLatestVisit(places, visit(116.50)))
+        assertEquals(listOf(west, east), sortSavedPlacesByLatestSample(places, sample(116.40)))
+        assertEquals(listOf(east, west), sortSavedPlacesByLatestSample(places, sample(116.50)))
     }
 
     @Test
-    fun noVisitOrInvalidCentroidPreservesTheExistingOrder() {
+    fun noSampleOrInvalidCoordinatePreservesTheExistingOrder() {
         val places = listOf(place(2, 116.50), place(1, 116.40))
 
-        assertEquals(places, sortSavedPlacesByLatestVisit(places, null))
-        assertEquals(places, sortSavedPlacesByLatestVisit(places, visit(Double.NaN)))
+        assertEquals(places, sortSavedPlacesByLatestSample(places, null))
+        assertEquals(places, sortSavedPlacesByLatestSample(places, sample(Double.NaN)))
         assertEquals(
             places,
-            sortSavedPlacesByLatestVisit(places, visit(116.40).copy(centroidLatitude = 91.0)),
+            sortSavedPlacesByLatestSample(places, sample(116.40).copy(latitude = 91.0)),
         )
     }
 
@@ -72,7 +70,7 @@ class SavedPlaceOrderingTest {
 
         assertEquals(
             listOf(near, far, legacy, unknown, invalid),
-            sortSavedPlacesByLatestVisit(listOf(legacy, far, unknown, invalid, near), visit(116.40)),
+            sortSavedPlacesByLatestSample(listOf(legacy, far, unknown, invalid, near), sample(116.40)),
         )
     }
 
@@ -83,7 +81,7 @@ class SavedPlaceOrderingTest {
 
         assertEquals(
             listOf(first, second),
-            sortSavedPlacesByLatestVisit(listOf(first, second), visit(116.40)),
+            sortSavedPlacesByLatestSample(listOf(first, second), sample(116.40)),
         )
     }
 
@@ -102,21 +100,34 @@ class SavedPlaceOrderingTest {
         coordinateState = PlaceCoordinateState.WGS84_CANONICAL,
     )
 
-    private fun visit(longitude: Double) = VisitEntity(
-        id = 1L,
-        placeId = null,
-        candidateName = null,
-        candidateGooglePlaceId = null,
-        candidateLatitude = null,
-        candidateLongitude = null,
-        startMs = 100L,
-        endMs = 200L,
+    private fun sample(longitude: Double) = LocationSampleEntity(
+        timestampMs = 200L,
         dayEpoch = 0L,
-        centroidLatitude = 39.90,
-        centroidLongitude = longitude,
-        radiusMeters = 30.0,
-        confirmed = true,
-        confidence = 1f,
-        isOngoing = false,
+        latitude = 39.90,
+        longitude = longitude,
+        altitude = null,
+        accuracy = null,
+        verticalAccuracyMeters = null,
+        bearing = null,
+        bearingAccuracyDegrees = null,
+        speed = null,
+        speedAccuracyMetersPerSecond = null,
+        provider = null,
+        isMock = false,
+        elapsedRealtimeNanos = 0L,
+        satelliteCount = null,
+        batteryPct = null,
+        isCharging = null,
+        networkTransport = null,
+        networkTypeName = null,
+        cellSignalDbm = null,
+        hasCellService = null,
+        wifiSsid = null,
+        wifiBssid = null,
+        screenOn = null,
+        arActivity = null,
+        arConfidence = null,
+        devicePhysicalState = DevicePhysicalState.UNKNOWN,
+        devicePhysicalStateConfidence = 0f,
     )
 }

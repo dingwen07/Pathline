@@ -91,6 +91,9 @@ interface LocationSampleDao {
     @Query("SELECT * FROM location_samples ORDER BY timestampMs DESC LIMIT 1")
     suspend fun mostRecent(): LocationSampleEntity?
 
+    @Query("SELECT * FROM location_samples ORDER BY timestampMs DESC, id DESC LIMIT 1")
+    fun observeMostRecent(): Flow<LocationSampleEntity?>
+
     /** Flag a single sample as excluded from computation (e.g. GPS drift outside a place). */
     @Query("UPDATE location_samples SET includedInComputation = 0, exclusionReason = :reason WHERE id = :id")
     suspend fun markExcluded(id: Long, reason: String)

@@ -25,6 +25,7 @@ internal object BackupArchive {
     private val generationName = Regex("manifest\\.([1-9]\\d*)\\.json")
     private const val MANIFEST_NAME = "manifest.json"
     private val blobName = Regex(".+\\.[a-f0-9]{16,64}\\.(?:jsonl\\.gz|json\\.gz|gz)(?:\\.enc)?")
+    private val providerCopySuffix = Regex(" \\([1-9]\\d*\\)")
     private val streams = setOf("samples", "trips", "visits")
 
     data class Record(val document: BackupDocument, val manifest: BackupManifest)
@@ -34,13 +35,14 @@ internal object BackupArchive {
     data class Blob(val fileName: String, val plainHash: String, val diskHash: String)
     data class Cleanup(val complete: Boolean, val detail: String? = null, val error: Exception? = null)
 
-    private fun isManifest(name: String) = name == MANIFEST_NAME || generationName.matches(name)
-    private fun isInventory(name: String) = name.startsWith("inventory.") && blobName.matches(name)
+    private fun isManifest(name: String) = name.startsWith("manifest") && name.endsWith(".json")
+    private fun isBlob(name: String) = blobName.matches(name.replace(providerCopySuffix, ""))
+    private fun isInventory(name: String) = name.startsWith("inventory.") && isBlob(name)
 
     suspend fun hasBackupFiles(root: SafDir): Boolean {
         if (root.documents().any { !it.directory && (isManifest(it.name) || isInventory(it.name)) }) return true
         for (name in streams + "snapshot") {
-            if (root.childDirOrNull(name)?.documents()?.any { !it.directory && blobName.matches(it.name) } == true) return true
+            if (root.backupDirOrNull(name)?.documents()?.any { !it.directory && isBlob(it.name) } == true) return true
         }
         return false
     }
@@ -53,9 +55,9 @@ internal object BackupArchive {
         }.sortedBy { !isManifest(it.name) })
         // Finish listing before deleting anything, so a failed listing cannot clear half the backup.
         for (name in streams + "snapshot") {
-            val dir = root.childDirOrNull(name) ?: continue
+            val dir = root.backupDirOrNull(name) ?: continue
             dir.refresh()
-            groups += dir to dir.documents().filter { !it.directory && blobName.matches(it.name) }
+            groups += dir to dir.documents().filter { !it.directory && isBlob(it.name) }
         }
         log("Encryption change: deleting ${groups.sumOf { it.second.size }} existing backup file(s) before writing the replacement")
         for ((dir, files) in groups) {
@@ -76,10 +78,10 @@ internal object BackupArchive {
         val rootFiles = root.documents().filter { !it.directory && (isManifest(it.name) || isInventory(it.name)) }
         if (rootFiles.isNotEmpty()) groups += Group(root, null, rootFiles)
         for (name in streams + "snapshot") {
-            for (dir in root.childDirOrNull(name)?.physicalDirectories().orEmpty()) {
+            for (dir in root.backupDirOrNull(name)?.physicalDirectories().orEmpty()) {
                 dir.refresh()
-                val files = dir.documents().filter { !it.directory && blobName.matches(it.name) }
-                if (files.isNotEmpty()) groups += Group(dir, name, files)
+                val files = dir.documents().filter { !it.directory && isBlob(it.name) }
+                if (files.isNotEmpty()) groups += Group(dir, dir.canonical.name, files)
             }
         }
         if (groups.isEmpty()) return null
@@ -198,8 +200,9 @@ internal object BackupArchive {
         val invalid = mutableListOf<BackupDocument>()
         var sequence = 0L
         for (doc in root.documents().filter { !it.directory }) {
-            val named = generationName.matchEntire(doc.name)
-            if (doc.name != MANIFEST_NAME && named == null) continue
+            val originalName = doc.name.replace(providerCopySuffix, "")
+            val named = generationName.matchEntire(originalName)
+            if (originalName != MANIFEST_NAME && named == null) continue
             named?.groupValues?.get(1)?.toLongOrNull()?.let { sequence = maxOf(sequence, it) }
             // Unavailable reads are errors. Only bytes actually read and found incomplete are skipped.
             val bytes = root.read(doc)
@@ -214,7 +217,7 @@ internal object BackupArchive {
                     invalid += doc; continue
                 }
                 sequence = maxOf(sequence, gen.sequence)
-            } else if (manifest.formatVersion != 1 || gen != null || doc.name != MANIFEST_NAME) {
+            } else if (manifest.formatVersion != 1 || gen != null || originalName != MANIFEST_NAME) {
                 invalid += doc; continue
             }
             records += Record(doc, manifest)
@@ -272,9 +275,9 @@ internal object BackupArchive {
 
     suspend fun validate(root: SafDir, inventory: BackupInventory, cipher: BackupCrypto.PartitionCipher) {
         for (entry in inventory.partitions) {
-            validateBlob(root.childDirOrNull(entry.stream), entry.fileName, entry.encSha256, entry.sha256, cipher)
+            validateBlob(root.backupDirOrNull(entry.stream), entry.fileName, entry.encSha256, entry.sha256, cipher)
         }
-        val snapshots = if (inventory.snapshots.isEmpty()) null else root.childDirOrNull("snapshot")
+        val snapshots = if (inventory.snapshots.isEmpty()) null else root.backupDirOrNull("snapshot")
         for (entry in inventory.snapshots) validateBlob(snapshots, entry.fileName, entry.encSha256, entry.sha256, cipher)
     }
 
@@ -282,18 +285,18 @@ internal object BackupArchive {
     suspend fun partitionsToRepair(root: SafDir, entries: List<PartitionEntry>): List<PartitionEntry> =
         entries.filter { entry ->
             try {
-                root.childDirOrNull(entry.stream)?.verifyFile(entry.fileName, entry.encSha256) != true
+                root.backupDirOrNull(entry.stream)?.verifyFile(entry.fileName, entry.encSha256) != true
             } catch (_: BackupContentException) { true }
         }
 
     /** Publication reuses file checks from this operation; restore separately verifies plaintext. */
     private suspend fun verifyFiles(root: SafDir, inventory: BackupInventory) {
         for (entry in inventory.partitions) {
-            if (root.childDirOrNull(entry.stream)?.verifyFile(entry.fileName, entry.encSha256) != true) {
+            if (root.backupDirOrNull(entry.stream)?.verifyFile(entry.fileName, entry.encSha256) != true) {
                 throw BackupContentException("A referenced backup partition is unavailable")
             }
         }
-        val snapshots = if (inventory.snapshots.isEmpty()) null else root.childDirOrNull("snapshot")
+        val snapshots = if (inventory.snapshots.isEmpty()) null else root.backupDirOrNull("snapshot")
         for (entry in inventory.snapshots) {
             if (snapshots?.verifyFile(entry.fileName, entry.encSha256) != true) {
                 throw BackupContentException("A referenced backup snapshot is unavailable")
@@ -358,7 +361,7 @@ internal object BackupArchive {
             }
             cleanFiles(root, listOf(manifest.inventory.fileName to manifest.inventory.sha256), "", inventoriesOnly = true, log = log)
             for (stream in streams + "snapshot") {
-                val dir = root.childDirOrNull(stream) ?: continue
+                val dir = root.backupDirOrNull(stream) ?: continue
                 dir.refresh()
                 val refs = if (stream == "snapshot") inventory.snapshots.map { it.fileName to it.encSha256 }
                     else inventory.partitions.filter { it.stream == stream }.map { it.fileName to it.encSha256 }
@@ -378,7 +381,7 @@ internal object BackupArchive {
         val keep = refs.groupBy({ it.first }, { it.second })
         for ((name, hashes) in keep) if (hashes.distinct().size == 1) dir.consolidate(name, hashes.first(), prefix + name, log)
         for (doc in dir.documents()) {
-            if (!doc.directory && doc.name !in keep && blobName.matches(doc.name) &&
+            if (!doc.directory && doc.name !in keep && isBlob(doc.name) &&
                 (!inventoriesOnly || doc.name.startsWith("inventory."))) dir.delete(doc, prefix + doc.name, log)
         }
     }

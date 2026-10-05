@@ -224,16 +224,17 @@ class BackupEngine @Inject constructor(
         }
         reporter.log("Writing snapshots…")
         val snapshots = writeSnapshots(root, material, emptyMap())
-        writeManifest(root, material, entries, snapshots, nowMs, null, BackupInventory())
+        val committed = writeManifest(root, material, entries, snapshots, nowMs, null, BackupInventory())
         // The manifest commit succeeded: retire only markers present at run start whose week was
         // emitted; a failed week keeps its marker so the next incremental retries it.
         if (clearDirtyAfter) {
             backupDao.clearDirtySet(dirtyAtStart.filterNot { it.stream + "/" + it.weekStart in failedKeys })
         }
-        // Archiving or encryption-change deletion emptied the active backup before writing.
+        val cleanupPending = cleanup(root, committed, reporter)
+        if (cleanupPending) reporter.log("Backup saved; cleanup is pending and will retry")
         reporter.progress(1f)
         AppLog.i(TAG, "full backup: wrote=${entries.size} failed=$failed")
-        BackupReport(entries.size, failed, entries.size).also {
+        BackupReport(entries.size, failed, entries.size, cleanupPending).also {
             span.metric("partitions_written", it.partitionsWritten.toLong())
             span.metric("partitions_failed", it.partitionsFailed.toLong())
         }
@@ -365,7 +366,7 @@ class BackupEngine @Inject constructor(
         }
         if (rowCount == 0) return null // now-empty week: drop from inventory; prune deletes the old file
         val weekKey = TimeBuckets.weekKey(weekStart)
-        val blob = BackupArchive.storeBlob(root.childDir(stream), weekKey, "jsonl.gz", bytes, material.cipher,
+        val blob = BackupArchive.storeBlob(root.backupDir(stream), weekKey, "jsonl.gz", bytes, material.cipher,
             previous?.let { BackupArchive.Blob(it.fileName, it.sha256, it.encSha256) })
         return PartitionEntry(stream, weekStart, weekKey, blob.fileName, rowCount, blob.plainHash, blob.diskHash)
     }
@@ -373,7 +374,7 @@ class BackupEngine @Inject constructor(
     private suspend fun restorePartition(
         root: SafDir, entry: PartitionEntry, cipher: BackupCrypto.PartitionCipher,
     ): Int {
-        val dir = root.childDirOrNull(entry.stream) ?: error("missing backup stream")
+        val dir = root.backupDirOrNull(entry.stream) ?: error("missing backup stream")
         val raw = dir.readVerified(entry.fileName, entry.encSha256)
             ?: error("missing partition file ${entry.fileName}")
         verifyHash(entry.fileName, raw, entry.encSha256)          // on-disk bytes, before decrypt
@@ -417,7 +418,7 @@ class BackupEngine @Inject constructor(
     private suspend fun writeSnapshots(
         root: SafDir, material: Material, previous: Map<String, SnapshotEntry>,
     ): List<SnapshotEntry> {
-        val dir = root.childDir(SNAPSHOT_DIR)
+        val dir = root.backupDir(SNAPSHOT_DIR)
         val out = ArrayList<SnapshotEntry>()
 
         out += snapshotLines(dir, material, SNAP_DELETED_RANGES,
@@ -508,7 +509,7 @@ class BackupEngine @Inject constructor(
         root: SafDir, snapshots: List<SnapshotEntry>, cipher: BackupCrypto.PartitionCipher,
     ) {
         if (snapshots.isEmpty()) return
-        val dir = root.childDirOrNull(SNAPSHOT_DIR) ?: error("missing backup snapshots")
+        val dir = root.backupDirOrNull(SNAPSHOT_DIR) ?: error("missing backup snapshots")
         suspend fun bytesOf(name: String): ByteArray? {
             val entry = snapshots.firstOrNull { it.name == name } ?: return null
             val raw = dir.readVerified(entry.fileName, entry.encSha256) ?: error("missing backup snapshot")
@@ -594,7 +595,7 @@ class BackupEngine @Inject constructor(
         root: SafDir, snapshots: List<SnapshotEntry>, cipher: BackupCrypto.PartitionCipher,
     ) {
         if (snapshots.isEmpty()) return
-        val dir = root.childDirOrNull(SNAPSHOT_DIR) ?: error("missing backup snapshots")
+        val dir = root.backupDirOrNull(SNAPSHOT_DIR) ?: error("missing backup snapshots")
         suspend fun bytesOf(name: String): ByteArray? {
             val entry = snapshots.firstOrNull { it.name == name } ?: return null
             val raw = dir.readVerified(entry.fileName, entry.encSha256) ?: error("missing backup snapshot")
