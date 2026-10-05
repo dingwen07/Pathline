@@ -15,11 +15,13 @@ import net.extrawdw.apps.locationhistory.data.db.AppDatabase
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleDao
 import net.extrawdw.apps.locationhistory.data.db.PlaceDao
 import net.extrawdw.apps.locationhistory.data.db.TripDao
+import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitDao
 import net.extrawdw.apps.locationhistory.data.places.PlaceCandidate
 import net.extrawdw.apps.locationhistory.data.places.PlacesPort
 import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
+import net.extrawdw.apps.locationhistory.domain.ActivityNeighbors
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
 import net.extrawdw.apps.locationhistory.domain.TimelineWriteLock
 import javax.inject.Inject
@@ -83,6 +85,21 @@ class TimelineRepository @Inject constructor(
     }
 
     fun observeRecordedDays(): Flow<List<Long>> = sampleDao.observeRecordedDays()
+
+    /** Query only the closest candidate of each kind; do not load history or stop at midnight. */
+    fun observeActivityNeighbors(startMs: Long): Flow<ActivityNeighbors> = combine(
+        visitDao.observeBefore(startMs), tripDao.observeBefore(startMs),
+        visitDao.observeAfter(startMs), tripDao.observeAfter(startMs),
+    ) { beforeVisit, beforeTrip, afterVisit, afterTrip ->
+        suspend fun visitItem(visit: net.extrawdw.apps.locationhistory.data.db.VisitEntity?) =
+            visit?.let { TimelineItem.VisitItem(it, it.placeId?.let { id -> placeDao.byId(id) }) }
+        ActivityNeighbors(
+            before = listOfNotNull(visitItem(beforeVisit), beforeTrip?.let { TimelineItem.TripItem(it) })
+                .maxByOrNull { it.startMs },
+            after = listOfNotNull(visitItem(afterVisit), afterTrip?.let { TimelineItem.TripItem(it) })
+                .minByOrNull { it.startMs },
+        )
+    }
 
     fun observeUnconfirmedVisits() = visitDao.observeUnconfirmed()
 
@@ -200,9 +217,9 @@ class TimelineRepository @Inject constructor(
      * transaction, so a row deleted by a concurrent rebuild makes this a clean no-op instead of a
      * zero-row `@Update` that silently drops the user's confirmation.
      */
-    suspend fun confirmTripMode(tripId: Long, mode: TransportMode): Unit = writeLock.withLock {
+    suspend fun confirmTripMode(tripId: Long, mode: TransportMode): TripEntity? = writeLock.withLock {
         db.withWriteTransaction {
-            val trip = tripDao.byId(tripId) ?: return@withWriteTransaction
+            val trip = tripDao.byId(tripId) ?: return@withWriteTransaction null
             val samples = sampleDao.rangeForComputation(trip.startMs, trip.endMs + 1)
 
             // Rebuild geometry from the fixes in recorded order, like convertItemType does -- otherwise
@@ -210,16 +227,16 @@ class TimelineRepository @Inject constructor(
             // overlapping merge kept its straight spike. Too few fixes to draw a line: just relabel.
             val points = samples.map { it.latitude to it.longitude }
             val relabeled = trip.copy(mode = mode, modeConfidence = 1f, confirmed = true)
-            tripDao.update(
-                if (points.size >= 2) {
-                    relabeled.copy(
-                        encodedPolyline = Geo.encodePolyline(points),
-                        distanceMeters = Geo.pathLengthMeters(points),
-                    )
-                } else {
-                    relabeled
-                },
-            )
+            val confirmed = if (points.size >= 2) {
+                relabeled.copy(
+                    encodedPolyline = Geo.encodePolyline(points),
+                    distanceMeters = Geo.pathLengthMeters(points),
+                )
+            } else {
+                relabeled
+            }
+            tripDao.update(confirmed)
+            confirmed
         }
     }
 }

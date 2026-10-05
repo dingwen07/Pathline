@@ -5,11 +5,13 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.db.TripEntity
 
 // These are small, single-row snapshots. Preserve the editor's original geometry rather than
 // reloading a potentially updated place as the baseline of an in-progress edit.
 internal val PlaceDialogSaver = nullableRowSaver(PlaceEntity.serializer())
 internal val VisitDialogSaver = nullableRowSaver(VisitEntity.serializer())
+internal val TripDialogSaver = nullableRowSaver(TripEntity.serializer())
 internal val PlaceSearchAnchorSaver = Saver<PlaceSearchAnchor?, List<Double>>(
     save = { it?.let { anchor -> listOf(anchor.latitude, anchor.longitude) } ?: emptyList() },
     restore = { it.takeIf { it.size == 2 }?.let { values -> PlaceSearchAnchor(values[0], values[1]) } },

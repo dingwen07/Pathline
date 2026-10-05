@@ -32,6 +32,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -42,7 +44,9 @@ import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AnnotationTarget
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
 import net.extrawdw.apps.locationhistory.domain.MemoryEntry
+import net.extrawdw.apps.locationhistory.domain.MemoryMap
 import net.extrawdw.apps.locationhistory.domain.NameCanonicalizer
+import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
 
 /**
@@ -88,10 +92,21 @@ fun rememberAnnotationEditState(
     id: Long,
     load: suspend (AnnotationTarget, Long) -> AnnotationData,
 ): AnnotationEditState {
-    val state = remember(target, id) { AnnotationEditState() }
-    LaunchedEffect(target, id) { state.apply(load(target, id)) }
+    val state = rememberSaveable(target, id, saver = AnnotationEditStateSaver) { AnnotationEditState() }
+    LaunchedEffect(target, id) { if (!state.loaded) state.apply(load(target, id)) }
     return state
 }
+
+private val AnnotationEditStateSaver = listSaver<AnnotationEditState, String>(
+    save = { listOf(it.loaded.toString(), it.note, Json.encodeToString(it.tags.toList()), MemoryMap.encode(it.memories)) },
+    restore = { values ->
+        AnnotationEditState().apply {
+            if (values[0].toBoolean()) {
+                apply(AnnotationData(values[1], Json.decodeFromString<List<String>>(values[2]), MemoryMap.decode(values[3])))
+            }
+        }
+    },
+)
 
 /**
  * The editable annotation surface: a free-text **note**, a **tags** chip row with an add field, and a
@@ -105,7 +120,7 @@ fun AnnotationEditorBody(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    var tagInput by remember { mutableStateOf("") }
+    var tagInput by rememberSaveable { mutableStateOf("") }
     fun commitTag() {
         state.addTag(tagInput)
         tagInput = ""

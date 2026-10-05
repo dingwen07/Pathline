@@ -281,7 +281,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Shares diagnostic log files from filesDir/logs via a content URI. -->
+        <!-- Shares diagnostic logs and temporary activity GPX files via content URIs. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

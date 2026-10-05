@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Looper
+import android.net.Uri
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -39,6 +41,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import net.extrawdw.apps.locationhistory.core.Geo
+import net.extrawdw.apps.locationhistory.R
+import net.extrawdw.apps.locationhistory.backup.ActivityGpxShare
 import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
 import net.extrawdw.apps.locationhistory.core.coordinates.Wgs84Coordinate
 import net.extrawdw.apps.locationhistory.core.TimeBuckets
@@ -55,6 +59,9 @@ import net.extrawdw.apps.locationhistory.core.PlaceCoordinateRepairDecision
 import net.extrawdw.apps.locationhistory.domain.AnnotationData
 import net.extrawdw.apps.locationhistory.domain.AnnotationStore
 import net.extrawdw.apps.locationhistory.domain.SegmentType
+import net.extrawdw.apps.locationhistory.domain.SplitActivityClassifier
+import net.extrawdw.apps.locationhistory.domain.TripPlayback
+import net.extrawdw.apps.locationhistory.domain.TimedRoutePoint
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
 import net.extrawdw.apps.locationhistory.domain.TimelineEditor
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
@@ -108,6 +115,7 @@ class TimelineViewModel @Inject constructor(
     private val locationRepository: LocationRepository,
     private val placeRepository: PlaceRepository,
     private val timelineEditor: TimelineEditor,
+    private val splitActivityClassifier: SplitActivityClassifier,
     private val annotationStore: AnnotationStore,
     private val workScheduler: WorkScheduler,
     private val workManager: WorkManager,
@@ -250,6 +258,47 @@ class TimelineViewModel @Inject constructor(
         timelineRepository.confirmTripMode(tripId, mode)
     }
 
+    suspend fun confirmActivity(tripId: Long, mode: TransportMode) =
+        timelineRepository.confirmTripMode(tripId, mode)
+
+    fun projectTrip(trip: net.extrawdw.apps.locationhistory.data.db.TripEntity) =
+        mapProjector.paths(Geo.decodePolyline(trip.encodedPolyline))
+
+    fun projectPlaybackPath(points: List<Wgs84Coordinate>) =
+        mapProjector.paths(points.map { it.latitude to it.longitude })
+
+    fun activityNeighborsFor(startMs: Long) = timelineRepository.observeActivityNeighbors(startMs)
+
+    suspend fun tripPlayback(trip: net.extrawdw.apps.locationhistory.data.db.TripEntity): TripPlayback {
+        val samples = timelineEditor.samplesFor(TimelineItem.TripItem(trip))
+        return withContext(Dispatchers.Default) {
+            TripPlayback(samples.filter { it.includedInComputation }.map {
+                TimedRoutePoint(it.timestampMs, Wgs84Coordinate(it.latitude, it.longitude), it.altitude)
+            })
+        }
+    }
+
+    private val _exportingActivity = MutableStateFlow(false)
+    val exportingActivity: StateFlow<Boolean> = _exportingActivity
+
+    suspend fun prepareActivityGpx(trip: net.extrawdw.apps.locationhistory.data.db.TripEntity): Uri? {
+        if (_exportingActivity.value) return null
+        _exportingActivity.value = true
+        return try {
+            val samples = timelineEditor.samplesFor(TimelineItem.TripItem(trip))
+            val uri = withContext(Dispatchers.IO) { ActivityGpxShare.prepare(context, trip, samples) }
+            if (uri == null) Toast.makeText(context, R.string.activity_export_empty, Toast.LENGTH_LONG).show()
+            uri
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Toast.makeText(context, R.string.activity_export_failed, Toast.LENGTH_LONG).show()
+            null
+        } finally {
+            _exportingActivity.value = false
+        }
+    }
+
     suspend fun nearbySuggestions(lat: Double, lon: Double): List<PlaceCandidate> =
         timelineRepository.nearbyPlaceSuggestions(lat, lon)
 
@@ -260,6 +309,13 @@ class TimelineViewModel @Inject constructor(
 
     suspend fun samplesFor(item: TimelineItem): List<LocationSampleEntity> =
         timelineEditor.samplesFor(item)
+
+    suspend fun classifySplit(samples: List<LocationSampleEntity>, fallback: SegmentType): Pair<SegmentType, SegmentType> =
+        withContext(Dispatchers.Default) {
+            val middle = samples.size / 2
+            splitActivityClassifier.classify(samples.take(middle), fallback) to
+                splitActivityClassifier.classify(samples.drop(middle), fallback)
+        }
 
     /** One-to-one projection for the split editor; fail the whole preview rather than shift indices. */
     fun projectEditSamples(samples: List<LocationSampleEntity>): List<GoogleMapCoordinate> {

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -30,6 +31,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import android.content.Context
 import androidx.compose.ui.Alignment
@@ -52,11 +55,13 @@ private fun SegmentType.label(context: Context): String = when (this) {
     is SegmentType.Moving -> context.getString(mode.labelRes)
 }
 
+data class SplitPreview(val index: Int, val before: SegmentType, val after: SegmentType)
+
 /**
  * Sample-level drift-correction editor, rendered **inside the bottom sheet** (not a modal) so the
  * map behind stays fully interactive (pan/zoom) while editing. A slider (+/- fine buttons) picks the
  * split sample; each side shows its editable type, sample count, time and duration. "Reclassify all"
- * assigns one type to the whole item. [onSplitIndexChange]/[onReclassifyType] drive the map preview.
+ * assigns one type to the whole item. [onSplitPreview]/[onReclassifyType] drive the map preview.
  */
 @Composable
 fun SplitEditorPanel(
@@ -65,7 +70,8 @@ fun SplitEditorPanel(
     onSplit: (index: Int, left: SegmentType, right: SegmentType) -> Unit,
     onConvert: (type: SegmentType) -> Unit,
     onCancel: () -> Unit,
-    onSplitIndexChange: (Int?) -> Unit = {},
+    classifySplit: suspend (List<LocationSampleEntity>, SegmentType) -> Pair<SegmentType, SegmentType>,
+    onSplitPreview: (SplitPreview?) -> Unit = {},
     onReclassifyType: (SegmentType?) -> Unit = {},
 ) {
     Column(
@@ -87,7 +93,7 @@ fun SplitEditorPanel(
         val typeLabel = stringResource(R.string.field_type)
         if (samples.size < 2) {
             var whole by remember { mutableStateOf(initialType) }
-            LaunchedEffect(whole) { onSplitIndexChange(null); onReclassifyType(whole) }
+            LaunchedEffect(whole) { onSplitPreview(null); onReclassifyType(whole) }
             Text(
                 stringResource(R.string.split_not_enough),
                 style = MaterialTheme.typography.bodyMedium
@@ -115,7 +121,7 @@ fun SplitEditorPanel(
 
         if (!splitMode) {
             var whole by remember { mutableStateOf(initialType) }
-            LaunchedEffect(whole) { onSplitIndexChange(null); onReclassifyType(whole) }
+            LaunchedEffect(whole) { onSplitPreview(null); onReclassifyType(whole) }
             TypePicker(typeLabel, whole, Modifier.padding(top = 16.dp)) { whole = it }
             Button(onClick = { onConvert(whole) }, modifier = Modifier.padding(top = 16.dp)) {
                 Text(
@@ -125,15 +131,20 @@ fun SplitEditorPanel(
             return@Column
         }
 
-        var split by remember { mutableIntStateOf(samples.size / 2) }
-        var leftType by remember { mutableStateOf(initialType) }
-        var rightType by remember {
-            mutableStateOf(
-                if (initialType == SegmentType.Stationary) SegmentType.Moving(
-                    TransportMode.WALKING
-                ) else SegmentType.Stationary
-            )
+        val classify by rememberUpdatedState(classifySplit)
+        val suggestions by produceState<Pair<SegmentType, SegmentType>?>(null, samples, initialType) {
+            onSplitPreview(null)
+            onReclassifyType(null)
+            value = classify(samples, initialType)
         }
+        val initial = suggestions
+        if (initial == null) {
+            CircularProgressIndicator(Modifier.padding(16.dp))
+            return@Column
+        }
+        var split by remember(samples) { mutableIntStateOf(samples.size / 2) }
+        var leftType by remember(samples, initial) { mutableStateOf(initial.first) }
+        var rightType by remember(samples, initial) { mutableStateOf(initial.second) }
         split = split.coerceIn(1, samples.size - 1)
         val splitSliderState = remember(samples.size) {
             SliderState(
@@ -143,7 +154,10 @@ fun SplitEditorPanel(
         }
         // The fine adjustment buttons and slider share the same split position.
         splitSliderState.value = split.toFloat()
-        LaunchedEffect(split) { onReclassifyType(null); onSplitIndexChange(split) }
+        LaunchedEffect(split, leftType, rightType) {
+            onReclassifyType(null)
+            onSplitPreview(SplitPreview(split, leftType, rightType))
+        }
 
         Row(
             Modifier

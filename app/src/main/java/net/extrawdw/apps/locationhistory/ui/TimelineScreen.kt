@@ -2,6 +2,7 @@ package net.extrawdw.apps.locationhistory.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -38,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AssistChip
@@ -63,11 +65,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -77,6 +81,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -87,6 +92,7 @@ import androidx.compose.ui.zIndex
 import androidx.window.core.layout.WindowSizeClass
 import androidx.core.content.ContextCompat
 import net.extrawdw.apps.locationhistory.R
+import net.extrawdw.apps.locationhistory.backup.ActivityGpxShare
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -111,9 +117,13 @@ import net.extrawdw.apps.locationhistory.core.coordinates.GoogleMapCoordinate
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
 import net.extrawdw.apps.locationhistory.data.db.PlaceEntity
 import net.extrawdw.apps.locationhistory.data.db.VisitEntity
+import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import net.extrawdw.apps.locationhistory.domain.SegmentType
 import net.extrawdw.apps.locationhistory.domain.TimelineDay
+import net.extrawdw.apps.locationhistory.domain.ActivityNeighbors
+import net.extrawdw.apps.locationhistory.domain.TripPlayback
 import net.extrawdw.apps.locationhistory.domain.TimelineItem
+import net.extrawdw.apps.locationhistory.ui.icons.arrow_split
 
 private val SHEET_PEEK = 340.dp
 private const val TODAY_PAGE = 100_000 // anchor; pages below are past days, none in the future
@@ -210,11 +220,25 @@ fun TimelineScreen(
     var confirmVisit by rememberSaveable(stateSaver = VisitDialogSaver) { mutableStateOf<VisitEntity?>(null) }
     var editItem by remember { mutableStateOf<TimelineItem?>(null) }
     var editSamples by remember { mutableStateOf<List<LocationSampleEntity>>(emptyList()) }
-    var splitIndex by remember { mutableStateOf<Int?>(null) }
+    var splitPreview by remember { mutableStateOf<SplitPreview?>(null) }
+    val splitIndex = splitPreview?.index
     var reclassifyType by remember { mutableStateOf<SegmentType?>(null) }
     var editPlace by rememberSaveable(stateSaver = PlaceDialogSaver) { mutableStateOf<PlaceEntity?>(null) }
     var editAnnotation by remember { mutableStateOf<AnnotationRef?>(null) }
+    var detailTrip by rememberSaveable(stateSaver = TripDialogSaver) { mutableStateOf<TripEntity?>(null) }
+    val exportingActivity by viewModel.exportingActivity.collectAsStateWithLifecycle()
+    var showCalendar by rememberSaveable { mutableStateOf(false) }
     var detailPlaceId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    fun openSplitEditor(item: TimelineItem) {
+        scope.launch {
+            val samples = viewModel.samplesFor(item)
+            editSamples = samples
+            splitPreview = null
+            reclassifyType = null
+            editItem = item
+        }
+    }
 
     val editing = editItem != null
     val editPoints = remember(editSamples, mapState.profileId) {
@@ -256,7 +280,7 @@ fun TimelineScreen(
 
     val editBackProgress by rememberPredictiveBackProgress(enabled = editItem != null) {
         editItem = null
-        splitIndex = null
+        splitPreview = null
         reclassifyType = null
     }
 
@@ -338,15 +362,16 @@ fun TimelineScreen(
                         samples = editSamples,
                         initialType = ed.currentType(),
                         onSplit = { i, l, r ->
-                            viewModel.splitItem(ed, i, l, r); editItem = null; splitIndex =
+                            viewModel.splitItem(ed, i, l, r); editItem = null; splitPreview =
                             null; reclassifyType = null
                         },
                         onConvert = { t ->
-                            viewModel.convertItem(ed, t); editItem = null; splitIndex =
+                            viewModel.convertItem(ed, t); editItem = null; splitPreview =
                             null; reclassifyType = null
                         },
-                        onCancel = { editItem = null; splitIndex = null; reclassifyType = null },
-                        onSplitIndexChange = { splitIndex = it },
+                        onCancel = { editItem = null; splitPreview = null; reclassifyType = null },
+                        classifySplit = viewModel::classifySplit,
+                        onSplitPreview = { splitPreview = it },
                         onReclassifyType = { reclassifyType = it },
                     )
                 }
@@ -355,6 +380,7 @@ fun TimelineScreen(
                     DayHeader(
                         dayEpoch = selectedDay,
                         isToday = selectedDay >= today,
+                        onCalendar = { showCalendar = true },
                         onToday = { scope.launch { pagerState.animateScrollToPage(TODAY_PAGE) } },
                         modifier = if (expanded) Modifier.statusBarsPadding() else Modifier,
                         compact = expanded,
@@ -413,11 +439,7 @@ fun TimelineScreen(
                                                 }
                                             },
                                             onEditPlace = { item.place?.let { editPlace = it } },
-                                            onEditSamples = {
-                                                editItem = item; scope.launch {
-                                                editSamples = viewModel.samplesFor(item)
-                                            }
-                                            },
+                                            onEditSamples = { openSplitEditor(item) },
                                             onEditAnnotations = {
                                                 editAnnotation = AnnotationRef(
                                                     AnnotationTarget.VISIT,
@@ -451,34 +473,8 @@ fun TimelineScreen(
                                                     SegmentType.Stationary
                                                 )
                                             },
-                                            onEdit = {
-                                                editItem = item; scope.launch {
-                                                editSamples = viewModel.samplesFor(item)
-                                            }
-                                            },
-                                            // Annotations attach to confirmed rows only; unconfirmed
-                                            // trips get re-id'd by maintenance, so no tap-to-edit yet.
-                                            onEditAnnotations = if (item.trip.confirmed) {
-                                                {
-                                                    editAnnotation = AnnotationRef(
-                                                        AnnotationTarget.TRIP,
-                                                        item.trip.id,
-                                                        title = resources.getString(item.trip.mode.labelRes),
-                                                        subtitle = resources.getString(
-                                                            R.string.trip_brief,
-                                                            Format.distance(
-                                                                context,
-                                                                item.trip.distanceMeters,
-                                                            ),
-                                                            Format.duration(
-                                                                context,
-                                                                item.trip.startMs,
-                                                                item.trip.endMs,
-                                                            ),
-                                                        ),
-                                                    )
-                                                }
-                                            } else null,
+                                            onEdit = { openSplitEditor(item) },
+                                            onOpenActivity = { detailTrip = item.trip },
                                         )
                                     }
                                 }
@@ -578,12 +574,12 @@ fun TimelineScreen(
                         if (idx != null && idx in 1 until editPoints.size) {
                             Polyline(
                                 points = editPoints.subList(0, idx + 1),
-                                color = Color(0xFF2E7D32),
+                                color = typeColor(splitPreview?.before),
                                 width = 18f
                             )
                             Polyline(
                                 points = editPoints.subList(idx, editPoints.size),
-                                color = Color(0xFF1565C0),
+                                color = typeColor(splitPreview?.after),
                                 width = 18f
                             )
                         } else {
@@ -727,6 +723,55 @@ fun TimelineScreen(
         )
     }
 
+    if (showCalendar) {
+        TimelineDatePicker(
+            selectedDay = selectedDay,
+            firstDay = today - TODAY_PAGE,
+            today = today,
+            onSelect = { day ->
+                showCalendar = false
+                scope.launch { pagerState.scrollToPage((TODAY_PAGE - (today - day)).toInt()) }
+            },
+            onDismiss = { showCalendar = false },
+        )
+    }
+
+    detailTrip?.let { trip ->
+        val playback by produceState<TripPlayback?>(null, trip.id, trip.startMs, trip.endMs) {
+            value = viewModel.tripPlayback(trip)
+        }
+        val neighbors by remember(trip.id, trip.startMs) { viewModel.activityNeighborsFor(trip.startMs) }
+            .collectAsStateWithLifecycle(ActivityNeighbors())
+        ActivityDetailDialog(
+            trip = trip,
+            paths = remember(trip, mapState.profileId) { viewModel.projectTrip(trip) },
+            neighbors = neighbors,
+            playback = playback,
+            projectPath = viewModel::projectPlaybackPath,
+            loadAnnotations = viewModel::loadAnnotations,
+            exporting = exportingActivity,
+            onExport = {
+                scope.launch {
+                    viewModel.prepareActivityGpx(trip)?.let { uri ->
+                        context.startActivity(Intent.createChooser(ActivityGpxShare.intent(uri), null))
+                    }
+                }
+            },
+            onConfirm = { mode ->
+                viewModel.confirmActivity(trip.id, mode)?.also { detailTrip = it } != null
+            },
+            onSave = { note, tags ->
+                viewModel.saveAnnotations(AnnotationTarget.TRIP, trip.id, note, tags)
+                detailTrip = null
+            },
+            onSplit = {
+                detailTrip = null
+                openSplitEditor(TimelineItem.TripItem(trip))
+            },
+            onDismiss = { detailTrip = null },
+        )
+    }
+
     editAnnotation?.let { ref ->
         AnnotationEditDialog(
             target = ref.target,
@@ -802,6 +847,7 @@ private fun RecordingOffBanner(onClick: () -> Unit, modifier: Modifier = Modifie
 private fun DayHeader(
     dayEpoch: Long,
     isToday: Boolean,
+    onCalendar: () -> Unit,
     onToday: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
@@ -818,6 +864,9 @@ private fun DayHeader(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
         )
+        IconButton(onClick = onCalendar) {
+            Icon(Icons.Filled.DateRange, contentDescription = stringResource(R.string.cd_choose_day))
+        }
         IconButton(
             onClick = onToday,
             enabled = !isToday,
@@ -904,7 +953,6 @@ private fun EmptyDay(modifier: Modifier = Modifier) {
 // --- rail rows --------------------------------------------------------------------------------
 
 private val GUTTER_WIDTH = 44.dp
-private val NODE_DOT_Y = 30.dp
 
 @Composable
 private fun VisitRow(
@@ -923,6 +971,9 @@ private fun VisitRow(
         if (item.confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val surfaceColor = MaterialTheme.colorScheme.surface
+    val cardVerticalPadding = 4.dp
+    val contentVerticalPadding = 10.dp
+    var titleRowHeightPx by remember { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier
@@ -937,7 +988,8 @@ private fun VisitRow(
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2
-                val dotY = NODE_DOT_Y.toPx().coerceAtMost(size.height - 4.dp.toPx())
+                // Follow the title row's center, including its edit button and wrapped text.
+                val dotY = (cardVerticalPadding + contentVerticalPadding).toPx() + titleRowHeightPx / 2f
                 val topY = if (isFirst) dotY else 0f
                 val bottomY = if (isLast) dotY else size.height
                 if (dotY > topY) drawLine(
@@ -963,10 +1015,13 @@ private fun VisitRow(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = 4.dp),
+                .padding(vertical = cardVerticalPadding),
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = contentVerticalPadding)) {
+                Row(
+                    modifier = Modifier.onSizeChanged { titleRowHeightPx = it.height },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         item.displayName,
                         style = MaterialTheme.typography.titleMedium,
@@ -985,6 +1040,7 @@ private fun VisitRow(
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_split)) },
+                                leadingIcon = { Icon(arrow_split, null) },
                                 onClick = { menuOpen = false; onEditSamples() })
                             // Annotations attach to confirmed visits only (unconfirmed rows are
                             // re-id'd by maintenance), so "Edit visit" appears once confirmed.
@@ -1037,7 +1093,7 @@ private fun TripRow(
     onConfirmTripMode: (Long, TransportMode) -> Unit,
     onMarkStationary: () -> Unit,
     onEdit: () -> Unit,
-    onEditAnnotations: (() -> Unit)?,
+    onOpenActivity: () -> Unit,
 ) {
     val trip = item.trip
     val context = LocalContext.current
@@ -1078,7 +1134,7 @@ private fun TripRow(
                     onConfirm = { menuOpen = true },
                     showEdit = true,
                     onEdit = onEdit,
-                    onTextClick = onEditAnnotations,
+                    onTextClick = onOpenActivity,
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
@@ -1128,8 +1184,8 @@ private fun CompactTripLine(
             label = { Text(stringResource(if (confirmed) R.string.chip_change_mode else R.string.chip_confirm)) })
         if (showEdit) IconButton(onClick = onEdit) {
             Icon(
-                Icons.Filled.Edit,
-                contentDescription = stringResource(R.string.cd_edit_trip)
+                arrow_split,
+                contentDescription = stringResource(R.string.menu_split)
             )
         }
     }

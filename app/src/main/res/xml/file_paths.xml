@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <cache-path name="activity-gpx" path="activity-gpx/" />
     <files-path name="logs" path="logs/" />
     <!-- AppLog session files live in noBackupFilesDir (kept out of cloud auto-backup). There is no
          dedicated FileProvider tag for it, so reach it relative to filesDir; FileProvider

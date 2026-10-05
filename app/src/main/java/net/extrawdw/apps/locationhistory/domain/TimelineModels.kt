@@ -10,6 +10,9 @@ data class TimelineDay(
     val items: List<TimelineItem>,
 )
 
+/** Chronological neighbors across both visits and trips, including across day boundaries. */
+data class ActivityNeighbors(val before: TimelineItem? = null, val after: TimelineItem? = null)
+
 /** One entry on the timeline — either a stay at a place or movement between places. */
 sealed interface TimelineItem {
     val startMs: Long

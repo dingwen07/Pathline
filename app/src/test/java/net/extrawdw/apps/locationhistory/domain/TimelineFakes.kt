@@ -30,6 +30,12 @@ internal class FakeVisitDao : VisitDao {
     val visits = mutableListOf<VisitEntity>()
     private var nextId = 1L
 
+    override fun observeBefore(startMs: Long): Flow<VisitEntity?> =
+        flowOf(visits.filter { it.startMs < startMs }.maxByOrNull { it.startMs })
+
+    override fun observeAfter(startMs: Long): Flow<VisitEntity?> =
+        flowOf(visits.filter { it.startMs > startMs }.minByOrNull { it.startMs })
+
     fun seed(vararg rows: VisitEntity) {
         rows.forEach { visits.add(if (it.id == 0L) it.copy(id = nextId++) else it.also { r -> nextId = maxOf(nextId, r.id + 1) }) }
     }
@@ -157,6 +163,11 @@ internal class FakeVisitDao : VisitDao {
 }
 
 internal class FakeTripDao(private val visitDao: FakeVisitDao? = null) : TripDao {
+    override fun observeBefore(startMs: Long): Flow<TripEntity?> =
+        flowOf(trips.filter { it.startMs < startMs }.maxByOrNull { it.startMs })
+
+    override fun observeAfter(startMs: Long): Flow<TripEntity?> =
+        flowOf(trips.filter { it.startMs > startMs }.minByOrNull { it.startMs })
     val trips = mutableListOf<TripEntity>()
     private var nextId = 1L
 

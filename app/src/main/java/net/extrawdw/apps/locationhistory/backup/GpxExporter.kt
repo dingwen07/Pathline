@@ -1,6 +1,7 @@
 package net.extrawdw.apps.locationhistory.backup
 
 import net.extrawdw.apps.locationhistory.data.db.LocationSampleEntity
+import net.extrawdw.apps.locationhistory.data.db.TripEntity
 import java.io.OutputStream
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -12,6 +13,14 @@ import java.time.format.DateTimeFormatter
  * deliberately not part of the restore path. It is always written unencrypted in an open format.
  */
 object GpxExporter {
+
+    /** Export the same usable, canonical WGS84 fixes that make up this activity's recorded route. */
+    fun tripSamples(trip: TripEntity, samples: List<LocationSampleEntity>): List<LocationSampleEntity> =
+        samples.filter {
+            it.timestampMs in trip.startMs..trip.endMs && it.includedInComputation &&
+                it.latitude.isFinite() && it.latitude in -90.0..90.0 &&
+                it.longitude.isFinite() && it.longitude in -180.0..180.0
+        }.sortedBy { it.timestampMs }
 
     /** Write the given samples (already ordered by time) as a single GPX track segment. */
     fun write(samples: List<LocationSampleEntity>, out: OutputStream) {

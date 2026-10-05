@@ -31,6 +31,12 @@ interface VisitDao {
     @Query("SELECT * FROM visits WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     fun observeOverlapping(startMs: Long, endMs: Long): Flow<List<VisitEntity>>
 
+    @Query("SELECT * FROM visits WHERE startMs < :startMs ORDER BY startMs DESC, id DESC LIMIT 1")
+    fun observeBefore(startMs: Long): Flow<VisitEntity?>
+
+    @Query("SELECT * FROM visits WHERE startMs > :startMs ORDER BY startMs ASC, id ASC LIMIT 1")
+    fun observeAfter(startMs: Long): Flow<VisitEntity?>
+
     @Query("SELECT * FROM visits WHERE id = :id")
     suspend fun byId(id: Long): VisitEntity?
 
@@ -152,6 +158,12 @@ interface TripDao {
     /** Trips that overlap [startMs, endMs) — includes trips that cross midnight into the day. */
     @Query("SELECT * FROM trips WHERE startMs < :endMs AND endMs > :startMs ORDER BY startMs ASC")
     fun observeOverlapping(startMs: Long, endMs: Long): Flow<List<TripEntity>>
+
+    @Query("SELECT * FROM trips WHERE startMs < :startMs ORDER BY startMs DESC, id DESC LIMIT 1")
+    fun observeBefore(startMs: Long): Flow<TripEntity?>
+
+    @Query("SELECT * FROM trips WHERE startMs > :startMs ORDER BY startMs ASC, id ASC LIMIT 1")
+    fun observeAfter(startMs: Long): Flow<TripEntity?>
 
     @Query("SELECT * FROM trips WHERE id = :id")
     suspend fun byId(id: Long): TripEntity?
