@@ -25,8 +25,10 @@ enum class PowerProfile { BATTERY_SAVER, BALANCED, HIGH_ACCURACY }
 data class AppSettings(
     val trackingEnabled: Boolean,
     val powerProfile: PowerProfile,
-    /** When true, removing the app from Recents stops recording and turns tracking off. */
-    val stopOnTaskRemoved: Boolean = true,
+    /** When true, removing the app from Recents pauses recording until the user resumes it. */
+    val stopOnTaskRemoved: Boolean = false,
+    /** Allow deep Doze to lower the moving cadence unless AR reports an active moving activity. */
+    val saveBatteryWhileIdle: Boolean = true,
     /**
      * The single on/off switch for the third-party data API. When false the
      * [net.extrawdw.apps.locationhistory.api.PathlineProvider] denies every data read regardless of
@@ -97,6 +99,7 @@ class SettingsRepository @Inject constructor(
     private val keyProfile = stringPreferencesKey("power_profile")
     private val keyOnboarded = booleanPreferencesKey("onboarding_complete")
     private val keyStopOnTaskRemoved = booleanPreferencesKey("stop_on_task_removed")
+    private val keySaveBatteryWhileIdle = booleanPreferencesKey("save_battery_while_idle")
     private val keyAutostartSuppressed = booleanPreferencesKey("autostart_suppressed")
     private val keyApiEnabled = booleanPreferencesKey("api_access_enabled")
     private val keyApiNeverAsk = booleanPreferencesKey("api_access_consent_never_ask")
@@ -127,7 +130,8 @@ class SettingsRepository @Inject constructor(
             powerProfile = prefs[keyProfile]?.let {
                 runCatching { PowerProfile.valueOf(it) }.getOrNull()
             } ?: PowerProfile.BALANCED,
-            stopOnTaskRemoved = prefs[keyStopOnTaskRemoved] ?: true,
+            stopOnTaskRemoved = prefs[keyStopOnTaskRemoved] ?: false,
+            saveBatteryWhileIdle = prefs[keySaveBatteryWhileIdle] ?: true,
             apiAccessEnabled = prefs[keyApiEnabled] ?: false,
             apiAccessConsentNeverAsk = prefs[keyApiNeverAsk] ?: false,
             routeApiEnabled = prefs[keyRouteApiEnabled] ?: true,
@@ -242,6 +246,10 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setStopOnTaskRemoved(enabled: Boolean) {
         context.dataStore.edit { it[keyStopOnTaskRemoved] = enabled }
+    }
+
+    suspend fun setSaveBatteryWhileIdle(enabled: Boolean) {
+        context.dataStore.edit { it[keySaveBatteryWhileIdle] = enabled }
     }
 
     /**

@@ -4,11 +4,14 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -145,7 +148,7 @@ class TimelineActivityUiTest {
         compose.onNodeWithText(elapsed).performScrollTo().assertIsDisplayed()
     }
 
-    @Test fun altitudeTouchAndSwipeMoveMapPointWithoutChangingTripProgress() {
+    @Test fun graphInspectionIsIndependentAndSliderResumesGraphFollowing() {
         val mapPoint = AtomicReference<Wgs84Coordinate?>()
         val routeProjections = AtomicInteger()
         compose.setContent {
@@ -165,8 +168,7 @@ class TimelineActivityUiTest {
             .performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(300f) }
         compose.waitUntil { routeProjections.get() > 0 }
         val projectionsBeforeInspection = routeProjections.get()
-        val chart = compose.onNodeWithContentDescription(context.getString(R.string.activity_altitude_range,
-            Format.altitude(context, 10.0), Format.altitude(context, 130.0)))
+        val chart = compose.onNodeWithContentDescription(context.getString(R.string.activity_graph))
         chart.performScrollTo().performTouchInput { click(center) }
         compose.waitUntil { mapPoint.get() != null }
         val centerPoint = mapPoint.get()!!
@@ -177,6 +179,45 @@ class TimelineActivityUiTest {
         compose.onNodeWithText(context.getString(R.string.activity_elapsed, "5:00", "20:00"))
             .performScrollTo().assertIsDisplayed()
         assertEquals(projectionsBeforeInspection, routeProjections.get())
+
+        // Seeking on the main slider takes over graph selection again after independent inspection.
+        compose.onNodeWithContentDescription(context.getString(R.string.activity_progress))
+            .performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(600f) }
+        compose.onNodeWithText(context.getString(R.string.activity_elapsed, "10:00", "20:00")).assertIsDisplayed()
+        compose.onNodeWithText(Format.altitude(context, 80.0)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(Format.speed(context, 7.0 / 3.0)).assertIsDisplayed()
+    }
+
+    @Test fun graphSeriesDefaultOnToggleIndependentlyAndSurviveRestoration() {
+        val restoration = StateRestorationTester(compose)
+        val trip = fixtureTrip(false)
+        restoration.setContent {
+            PathlineTheme {
+                ActivityMetricsChart(fixturePlayback(), trip.startMs, trip.endMs,
+                    progressTime = { trip.startMs + 600_000 }, onProgressTimeChange = {})
+            }
+        }
+        val altitude = compose.onNode(hasText(context.getString(R.string.activity_altitude)) and isToggleable())
+        val speed = compose.onNode(hasText(context.getString(R.string.activity_speed)) and isToggleable())
+        val graph = compose.onNodeWithContentDescription(context.getString(R.string.activity_graph))
+        val altitudeReading = compose.onNodeWithText(Format.altitude(context, 80.0))
+        val speedReading = compose.onNodeWithText(Format.speed(context, 7.0 / 3.0))
+        altitude.assertIsOn()
+        speed.assertIsOn()
+        altitudeReading.assertIsDisplayed()
+        speedReading.assertIsDisplayed()
+        speed.performClick().assertIsOff()
+        speedReading.assertDoesNotExist()
+        altitudeReading.assertIsDisplayed()
+        restoration.emulateSavedInstanceStateRestore()
+        speed.assertIsOff()
+        altitude.assertIsOn()
+        altitude.performClick().assertIsOff()
+        graph.assertDoesNotExist()
+        speed.performClick().assertIsOn()
+        graph.assertIsDisplayed()
+        speedReading.assertIsDisplayed()
+        altitudeReading.assertDoesNotExist()
     }
 
     private fun fixtureTrip(confirmed: Boolean) = TripEntity(
@@ -197,9 +238,16 @@ class TimelineActivityUiTest {
     private fun fixturePlayback(): TripPlayback {
         val start = fixtureTrip(true).startMs
         val points = fixturePaths().single()
-        return TripPlayback(listOf(0L, 120_000L, 1_200_000L).mapIndexed { index, elapsed ->
+        val route = TripPlayback(listOf(0L, 120_000L, 1_200_000L).mapIndexed { index, elapsed ->
             TimedRoutePoint(start + elapsed, Wgs84Coordinate(points[index].latitude, points[index].longitude),
-                listOf(10.0, 40.0, 130.0)[index])
+                speedMetersPerSecond = null)
+        })
+        return TripPlayback((0L..1_200_000L step 60_000L).map { elapsed ->
+            val fraction = if (elapsed <= 120_000) elapsed / 120_000.0 else (elapsed - 120_000) / 1_080_000.0
+            val altitude = if (elapsed <= 120_000) 10 + 30 * fraction else 40 + 90 * fraction
+            val speed = if (elapsed <= 120_000) fraction else 1 + 3 * fraction
+            TimedRoutePoint(start + elapsed, route.positionAt(start + elapsed)!!,
+                altitude, speed)
         })
     }
 

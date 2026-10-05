@@ -17,6 +17,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -108,7 +109,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Power profile
+            // Recording behavior
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
@@ -129,12 +130,14 @@ fun SettingsScreen(
                             ) { Text(stringResource(profile.labelRes())) }
                         }
                     }
-                }
-            }
-
-            // Stop recording when removed from Recents
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
+                    HorizontalDivider(Modifier.padding(vertical = 16.dp))
+                    SettingSwitchRow(
+                        title = stringResource(R.string.settings_save_battery_while_idle_title),
+                        description = stringResource(R.string.settings_save_battery_while_idle_desc),
+                        checked = settings.saveBatteryWhileIdle,
+                        onCheckedChange = viewModel::setSaveBatteryWhileIdle,
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 16.dp))
                     SettingSwitchRow(
                         title = stringResource(R.string.settings_stop_on_close_title),
                         description = stringResource(R.string.settings_stop_on_close_desc),
@@ -164,8 +167,6 @@ fun SettingsScreen(
 
             // Backup
             BackupCard()
-
-            MapsPlatformSettingsCard(settings, viewModel)
 
             // GPX export (open format, independent of backup)
             GpxCard()
@@ -212,6 +213,8 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            MapsPlatformSettingsCard(settings, viewModel)
 
             // Share crash & performance reports (Firebase telemetry; user opt-out)
             Card(Modifier.fillMaxWidth()) {

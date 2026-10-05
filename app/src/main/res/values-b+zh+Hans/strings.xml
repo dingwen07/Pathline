@@ -78,9 +78,12 @@
     <string name="activity_progress">活动进度</string>
     <string name="activity_elapsed">%1$s / %2$s</string>
     <string name="activity_altitude">海拔</string>
-    <string name="activity_altitude_source">GPS 记录的海拔</string>
     <string name="activity_altitude_unavailable">此活动没有海拔记录</string>
-    <string name="activity_altitude_range">海拔范围：%1$s 至 %2$s</string>
+    <string name="activity_speed">速度</string>
+    <string name="activity_speed_unavailable">此活动没有速度记录</string>
+    <string name="activity_graph">活动图表</string>
+    <string name="activity_graph_source">定位记录</string>
+    <string name="activity_graph_position">所选位置</string>
     <string name="activity_confirmed">已确认</string>
     <string name="activity_confirm_notes">确认此活动后即可添加备注和标签。</string>
     <string name="activity_confirm_failed">无法确认此活动。请从时间线重新打开后再试。</string>
@@ -185,6 +188,8 @@
     <string name="power_saver">省电</string>
     <string name="power_balanced">均衡</string>
     <string name="power_accurate">精确</string>
+    <string name="settings_save_battery_while_idle_title">在设备处于空闲状态时省电</string>
+    <string name="settings_save_battery_while_idle_desc">在 Doze 模式下降低记录频率以节省电量。</string>
     <string name="settings_stop_on_close_title">关闭应用时暂停</string>
     <string name="settings_stop_on_close_desc">关闭此项可在退出应用（比如从最近任务划走）后继续记录。</string>
     <string name="settings_data_model_title">已记录的数据</string>

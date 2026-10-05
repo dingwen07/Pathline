@@ -78,7 +78,7 @@ internal class RecordingHeuristics {
     }
 
     /** (lat, lon) of the most recent buffered fix, or null when the buffer is empty — used to anchor
-     *  the drift guard when a stationary entry has no cluster centroid (Doze / idle-timeout paths). */
+     *  the drift guard when a stationary entry has no cluster centroid (AR / idle-timeout paths). */
     fun lastFixLatLon(): Pair<Double, Double>? = synchronized(fixLock) {
         recentFixes.lastOrNull()?.let { it.lat to it.lon }
     }

@@ -273,7 +273,12 @@ class TimelineViewModel @Inject constructor(
         val samples = timelineEditor.samplesFor(TimelineItem.TripItem(trip))
         return withContext(Dispatchers.Default) {
             TripPlayback(samples.filter { it.includedInComputation }.map {
-                TimedRoutePoint(it.timestampMs, Wgs84Coordinate(it.latitude, it.longitude), it.altitude)
+                TimedRoutePoint(
+                    timestampMs = it.timestampMs,
+                    coordinate = Wgs84Coordinate(it.latitude, it.longitude),
+                    altitudeMeters = it.altitude,
+                    speedMetersPerSecond = it.speed?.toDouble(),
+                )
             })
         }
     }

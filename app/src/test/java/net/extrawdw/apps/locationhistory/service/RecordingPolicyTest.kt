@@ -138,13 +138,11 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun dozeIdleEntersStationary() {
-        feed(0, fix = fix(0)) // buffer one fix to anchor the stay
+    fun dozeIdleDoesNotProveStationarityFromOneFix() {
+        feed(0, fix = fix(0))
         val actions = policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = t0 + 1_000)
-        assertTrue(actions.any {
-            it is RecordingAction.EnterStationary && it.reason == "doze_idle" && !it.armSigMotion
-        })
-        assertEquals(RecorderState.STATIONARY, policy.state)
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.UNKNOWN, policy.state)
     }
 
     @Test
@@ -173,26 +171,118 @@ class RecordingPolicyTest {
     }
 
     @Test
-    fun dozeEntryDuringMovingDemotesToStationary() {
-        // Doze ENTER is the platform confirming durable stationarity -> it must demote MOVING
-        // immediately, independent of the keep-alive (a hard backstop against any pinned high cadence).
-        feed(0, fix = fix(0)) // buffer a fix so a stay can be anchored
+    fun dozeEntryDuringMovingPreservesTripCadence() {
+        // 2026-10-05 16:23: a Doze broadcast demoted an active trip. Quick Doze can
+        // skip motion sensing, so an idle event must not override travel evidence.
+        feed(0, fix = fix(0))
         policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0 + 1_000) // -> MOVING
         assertEquals(RecorderState.MOVING, policy.state)
         val actions = policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = t0 + 2_000)
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun enabledIdleSavingCanDemoteMovementWithoutAr() {
+        feed(0, fix = fix(0, speed = 3f, state = DevicePhysicalState.WALKING))
+        assertEquals(RecorderState.MOVING, policy.state)
+
+        val actions = policy.onDozeIdle(true, 0f, t0 + 1_000, saveBatteryWhileIdle = true)
+
         assertTrue(actions.any { it is RecordingAction.EnterStationary && it.reason == "doze_idle" })
+        assertEquals(RecorderState.STATIONARY, policy.state)
+        // Saving power must retain the independent departure path even before Doze exits.
+        policy.onSignificantMotion(t0 + 2_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+    }
+
+    @Test
+    fun enabledIdleSavingCannotOverrideAnyActiveArMovementOnLongTrips() {
+        for (activity in ArActivity.MOVING) {
+            val tripPolicy = RecordingPolicy(RecordingHeuristics())
+            tripPolicy.onFixes(listOf(fix(0)), motionVariance = 0f, nowMs = t0)
+            tripPolicy.onArTransitions(listOf(activity to true), t0 + 1_000)
+
+            // The transition API need not repeat ENTER while the same trip continues.
+            val actions = tripPolicy.onDozeIdle(
+                true, 0f, t0 + 3_600_000, saveBatteryWhileIdle = true,
+            )
+
+            assertTrue("Doze must not override $activity", actions.isEmpty())
+            assertEquals(RecorderState.MOVING, tripPolicy.state)
+        }
+    }
+
+    @Test
+    fun enabledIdleSavingCanDemoteAfterMatchingArExit() {
+        feed(0, fix = fix(0))
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0 + 1_000)
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to false), t0 + 2_000)
+
+        policy.onDozeIdle(true, 0f, t0 + 3_000, saveBatteryWhileIdle = true)
+
         assertEquals(RecorderState.STATIONARY, policy.state)
     }
 
     @Test
-    fun dozeEntryDuringVerifyCancelsAndDemotes() {
-        // Doze ENTER while verifying cancels the in-flight look and drops to the stay.
+    fun unrelatedArExitDoesNotAllowDozeToSuppressMovement() {
+        feed(0, fix = fix(0))
+        policy.onArTransitions(listOf(ArActivity.WALKING to true), t0 + 1_000)
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to false), t0 + 2_000)
+
+        val actions = policy.onDozeIdle(true, 0f, t0 + 3_000, saveBatteryWhileIdle = true)
+
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.MOVING, policy.state)
+    }
+
+    @Test
+    fun enabledIdleSavingUsesLatestStillRatherThanEarlierMovingEnter() {
+        policy.onArTransitions(listOf(ArActivity.IN_VEHICLE to true), t0)
+        feed(1, fix = fix(1, speed = 3f, state = DevicePhysicalState.IN_VEHICLE))
+        feed(30, fix = fix(30, lat = 40.01, speed = 3f, state = DevicePhysicalState.IN_VEHICLE))
+        // Recent translation prevents AR STILL alone from demoting, but the user has opted
+        // into letting Doze settle the recorder when current AR no longer reports movement.
+        policy.onArTransitions(listOf(ArActivity.STILL to true), t0 + 31_000)
+        assertEquals(RecorderState.MOVING, policy.state)
+
+        policy.onDozeIdle(true, 0f, t0 + 32_000, saveBatteryWhileIdle = true)
+
+        assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun dozeEntryDuringSensingPreservesVerificationAndTimeout() {
         enterStationary()
         policy.onSignificantMotion(t0 + 250_000) // -> SENSING
         assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
         val actions = policy.onDozeIdle(idle = true, motionVariance = 0f, nowMs = t0 + 251_000)
-        assertTrue(actions.any { it is RecordingAction.EnterStationary })
+        assertTrue(actions.isEmpty())
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        val timeout = policy.onVerifyDeadline(t0 + 250_000 + Constants.SENSING_VERIFY_WINDOW_MS)
+        assertTrue(timeout.any { it is RecordingAction.RevertToStationary })
         assertEquals(RecorderState.STATIONARY, policy.state)
+    }
+
+    @Test
+    fun departureCanBeConfirmedWhileDeviceRemainsInDoze() {
+        // Xiaomi 20:04: stationary + Doze must still accept a significant-motion hint,
+        // then confirm genuine travel without requiring a platform idle-exit broadcast.
+        enterStationary()
+        assertTrue(policy.onDozeIdle(true, 0f, t0 + 245_000, saveBatteryWhileIdle = true).isEmpty())
+        policy.onSignificantMotion(t0 + 250_000)
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        assertTrue(policy.onDozeIdle(true, 0f, t0 + 255_000, saveBatteryWhileIdle = true).isEmpty())
+        assertEquals(RecorderState.SENSING_DEPARTURE, policy.state)
+        feed(260, fix = fix(260, lat = 40.002, speed = 2f))
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+
+        assertTrue(policy.onDozeIdle(true, 0f, t0 + 261_000, saveBatteryWhileIdle = true).isEmpty())
+        assertEquals(RecorderState.CONFIRMING_DEPARTURE, policy.state)
+        feed(270, fix = fix(270, lat = 40.0022, speed = 2f))
+        val actions = feed(280, fix = fix(280, lat = 40.0024, speed = 2f))
+        assertTrue(actions.any { it is RecordingAction.EnterMoving && it.reason == "verify_confirmed" })
+        assertEquals(RecorderState.MOVING, policy.state)
     }
 
     // ---- AR transitions -------------------------------------------------------------------------

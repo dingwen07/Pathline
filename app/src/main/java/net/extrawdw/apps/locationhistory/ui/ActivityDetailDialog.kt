@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
@@ -118,10 +119,10 @@ internal fun ActivityDetailDialog(
         { trip.startMs + elapsedMillis(elapsedSeconds.floatValue, durationMs) }
     }
     val inspectedTime = rememberSaveable(trip.id) { mutableStateOf<Long?>(null) }
-    val altitudeTime = remember(inspectedTime, progressTime) {
+    val inspectionTime = remember(inspectedTime, progressTime) {
         { inspectedTime.value ?: progressTime() }
     }
-    val onAltitudeTimeChange = remember(inspectedTime) {
+    val onInspectionTimeChange = remember(inspectedTime) {
         { time: Long -> inspectedTime.value = time }
     }
     val inspectedPosition by remember(playback, projectPath, inspectedTime) {
@@ -219,7 +220,10 @@ internal fun ActivityDetailDialog(
                     Box(Modifier.fillMaxWidth().height(280.dp)) { map() }
                 }
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ActivityProgressControl(trip.startMs, durationMs, elapsedSeconds, playback?.hasPositions == true)
+                    ActivityProgressControl(
+                        trip.startMs, durationMs, elapsedSeconds, playback?.hasPositions == true,
+                        onSeek = { inspectedTime.value = null },
+                    )
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Icon(Format.transportIcon(trip.mode), null, tint = modeColor(trip.mode))
                         Text(stringResource(trip.mode.labelRes), Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
@@ -248,7 +252,7 @@ internal fun ActivityDetailDialog(
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     playback?.let {
-                        ActivityAltitudeChart(it, trip.startMs, trip.endMs, altitudeTime, onAltitudeTimeChange, modeColor(trip.mode))
+                        ActivityMetricsChart(it, trip.startMs, trip.endMs, inspectionTime, onInspectionTimeChange)
                     }
                     if (confirmationFailed) {
                         Text(stringResource(R.string.activity_confirm_failed), color = MaterialTheme.colorScheme.error)
@@ -278,7 +282,13 @@ private fun elapsedMillis(seconds: Float, durationMs: Long): Long =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ActivityProgressControl(startMs: Long, durationMs: Long, elapsedSeconds: MutableFloatState, hasPositions: Boolean) {
+private fun ActivityProgressControl(
+    startMs: Long,
+    durationMs: Long,
+    elapsedSeconds: MutableFloatState,
+    hasPositions: Boolean,
+    onSeek: () -> Unit,
+) {
     val elapsedMs = elapsedMillis(elapsedSeconds.floatValue, durationMs)
     val durationSeconds = durationMs / 1000f
     val progressLabel = stringResource(R.string.activity_progress)
@@ -294,7 +304,10 @@ private fun ActivityProgressControl(startMs: Long, durationMs: Long, elapsedSeco
         slider.value = elapsedSeconds.floatValue.coerceIn(0f, durationSeconds)
         Slider(
             state = slider,
-            onValueChange = { elapsedSeconds.floatValue = it },
+            onValueChange = {
+                elapsedSeconds.floatValue = it
+                onSeek()
+            },
             enabled = durationMs > 0 && hasPositions,
             modifier = Modifier.fillMaxWidth().semantics {
                 contentDescription = progressLabel
@@ -384,17 +397,23 @@ private fun ActivityRouteMap(
             drawnPaths.filter { it.size >= 2 }.forEach { path ->
                 Polyline(points = path.map { it.toLatLng() }, color = modeColor(mode), width = 16f)
             }
-            Marker(state = rememberUpdatedMarkerState(points.first()), title = stringResource(R.string.activity_start))
-            Marker(state = rememberUpdatedMarkerState(points.last()), title = stringResource(R.string.activity_end))
+            Marker(
+                state = rememberUpdatedMarkerState(points.first()), title = stringResource(R.string.activity_start),
+                icon = remember { BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN) },
+            )
+            Marker(
+                state = rememberUpdatedMarkerState(points.last()), title = stringResource(R.string.activity_end),
+                icon = remember { BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED) },
+            )
             inspectedPosition?.let { position ->
                 val color = MaterialTheme.colorScheme.primary
                 MarkerComposable(
-                    "altitude-position", color,
+                    "activity-inspection-position", color,
                     state = rememberUpdatedMarkerState(position.toLatLng()),
                     anchor = Offset(0.5f, 0.5f),
                     flat = true,
                     zIndex = 20f,
-                    title = stringResource(R.string.activity_altitude),
+                    title = stringResource(R.string.activity_graph_position),
                 ) { VisitCenterDot(color) }
             }
         }

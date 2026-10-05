@@ -83,7 +83,8 @@ class WorkScheduler @Inject constructor(
     /**
      * Periodic liveness watchdog for the recorder. Runs at the WorkManager minimum interval and, when
      * tracking is on but the foreground service isn't running, restarts it (or alerts the user if a
-     * background start is refused). Deliberately *unconstrained* — battery-low and idle are exactly
+     * background start is refused). Also tries an independent single fix when samples are stale.
+     * Deliberately *unconstrained* — battery-low and idle are exactly
      * when an aggressive system kills the recorder, so the check must still run. It self-gates on the
      * tracking preference, so a stray tick after the user turns recording off is a cheap no-op.
      */

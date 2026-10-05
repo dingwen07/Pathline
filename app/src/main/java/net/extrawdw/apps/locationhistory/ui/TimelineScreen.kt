@@ -1040,7 +1040,6 @@ private fun VisitRow(
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_split)) },
-                                leadingIcon = { Icon(arrow_split, null) },
                                 onClick = { menuOpen = false; onEditSamples() })
                             // Annotations attach to confirmed visits only (unconfirmed rows are
                             // re-id'd by maintenance), so "Edit visit" appears once confirmed.

@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.service.RecordingController
 
@@ -14,6 +15,7 @@ import net.extrawdw.apps.locationhistory.service.RecordingController
  * user has tracking on but the foreground recorder isn't running — a low-memory process kill that
  * `START_STICKY` didn't recover, a silent service death — it restarts the recorder, and when a
  * background start is refused it posts the "recording stopped" alert so the user can resume.
+ * It also attempts one independent fresh fix if the stored samples are over 15 minutes old.
  *
  * It cannot recover a true force-stop / OEM "force kill": a stopped app's workers (and every other
  * scheduled entry point) never run until the user launches the app again, so there's no code path
@@ -24,12 +26,26 @@ class RecordingWatchdogWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val recordingController: RecordingController,
+    private val locationSampler: WatchdogLocationSampler,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         AppLog.i(TAG, "watchdog tick")
-        runCatching { recordingController.ensureRecorderRunning("watchdog") }
-            .onFailure { AppLog.e(TAG, "watchdog failed", it) }
+        try {
+            recordingController.ensureRecorderRunning("watchdog")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.e(TAG, "watchdog liveness check failed", e)
+        }
+        // Outside the controller's mutex: waiting for a fix must not block normal recording.
+        try {
+            locationSampler.captureIfStale()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.e(TAG, "watchdog sample failed", e)
+        }
         // Always success: a transient failure is retried on the next periodic tick, not via backoff.
         return Result.success()
     }

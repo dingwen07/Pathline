@@ -59,24 +59,27 @@ object Format {
     }
 
     /** System regional units remain independent of the app's selected display language. */
-    fun speed(context: Context, metersPerSecond: Double): String {
+    fun speed(context: Context, metersPerSecond: Double): String = speedFormatter(context)(metersPerSecond)
+
+    internal fun speedFormatter(context: Context): (Double) -> String {
         val systemLocale = context.getSystemService(LocaleManager::class.java)?.systemLocales?.get(0)
             ?: Resources.getSystem().configuration.locales[0]
-        return speed(metersPerSecond, systemLocale, context.resources.configuration.locales[0])
+        return speedFormatter(systemLocale, context.resources.configuration.locales[0])
     }
 
-    internal fun speed(metersPerSecond: Double, systemLocale: Locale, displayLocale: Locale): String {
-        val converted = NumberFormatter.withLocale(ULocale.forLocale(systemLocale))
+    internal fun speed(metersPerSecond: Double, systemLocale: Locale, displayLocale: Locale): String =
+        speedFormatter(systemLocale, displayLocale)(metersPerSecond)
+
+    private fun speedFormatter(systemLocale: Locale, displayLocale: Locale): (Double) -> String {
+        val converter = NumberFormatter.withLocale(ULocale.forLocale(systemLocale))
             .unit(MeasureUnit.METER_PER_SECOND)
             .usage("default")
             .precision(Precision.maxFraction(1))
-            .format(metersPerSecond)
-        return NumberFormatter.withLocale(ULocale.forLocale(displayLocale))
-            .unit(converted.outputUnit)
+        val formatter = NumberFormatter.withLocale(ULocale.forLocale(displayLocale))
+            .unit(converter.format(0).outputUnit)
             .unitWidth(NumberFormatter.UnitWidth.SHORT)
             .precision(Precision.maxFraction(1))
-            .format(converted.toBigDecimal())
-            .toString()
+        return { metersPerSecond -> formatter.format(converter.format(metersPerSecond).toBigDecimal()).toString() }
     }
 
     fun altitude(context: Context, meters: Double): String {

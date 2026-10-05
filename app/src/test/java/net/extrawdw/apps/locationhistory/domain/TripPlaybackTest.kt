@@ -34,23 +34,67 @@ class TripPlaybackTest {
         assertEquals(-180.0, playback.pathUntil(5_000).last().longitude, 1e-9)
     }
 
-    @Test fun altitudeUsesElapsedTimeAndPreservesMissingReadingsAsGaps() {
+    @Test fun altitudeInterpolatesMissingReadingsByElapsedTime() {
         val playback = TripPlayback(listOf(
             point(0, 0.0).copy(altitudeMeters = -10.0),
             point(10_000, 1.0).copy(altitudeMeters = 10.0),
-            point(100_000, 2.0).copy(altitudeMeters = 100.0),
-            point(110_000, 3.0),
-            point(120_000, 4.0).copy(altitudeMeters = 120.0),
-            point(130_000, 5.0).copy(altitudeMeters = Double.NaN),
+            point(40_000, 2.0).copy(altitudeMeters = 100.0),
+            point(50_000, 3.0),
+            point(60_000, 4.0).copy(altitudeMeters = 120.0),
+            point(70_000, 5.0).copy(altitudeMeters = Double.NaN),
         ))
-        assertEquals(50.0, playback.altitudeAt(50_000)!!, 1e-9)
+        assertEquals(70.0, playback.altitudeAt(30_000)!!, 1e-9)
         assertEquals(-10.0, playback.altitudeAt(0)!!, 1e-9)
-        assertEquals(listOf(listOf(0L, 10_000L, 100_000L), listOf(120_000L)),
+        assertEquals(110.0, playback.altitudeAt(50_000)!!, 1e-9)
+        assertEquals(listOf(listOf(0L, 10_000L, 40_000L, 60_000L)),
             playback.altitudeSegments.map { segment -> segment.map { it.timestampMs } })
-        for (time in listOf(-1L, 105_000L, 110_000L, 115_000L, 125_000L, 130_000L, 140_000L)) {
+        for (time in listOf(-1L, 65_000L, 70_000L, 80_000L)) {
             assertNull(playback.altitudeAt(time))
         }
         assertTrue(TripPlayback(listOf(point(0, 0.0))).altitudeSegments.isEmpty())
+    }
+
+    @Test fun recordedSpeedInterpolatesMissingReadingsAndPreservesStops() {
+        // Deliberately identical coordinates: use the recorded speed, not displacement.
+        val playback = TripPlayback(listOf(
+            point(0, 0.0).copy(speedMetersPerSecond = 0.0),
+            point(10_000, 0.0).copy(speedMetersPerSecond = 2.0),
+            point(40_000, 0.0).copy(speedMetersPerSecond = 11.0),
+            point(45_000, 0.0),
+            point(50_000, 0.0).copy(speedMetersPerSecond = -1.0),
+            point(55_000, 0.0).copy(speedMetersPerSecond = Double.POSITIVE_INFINITY),
+            point(60_000, 0.0).copy(speedMetersPerSecond = 0.0),
+        ))
+        assertEquals(8.0, playback.speedAt(30_000)!!, 1e-9)
+        assertEquals(0.0, playback.speedAt(0)!!, 1e-9)
+        assertEquals(8.25, playback.speedAt(45_000)!!, 1e-9)
+        assertEquals(5.5, playback.speedAt(50_000)!!, 1e-9)
+        assertEquals(2.75, playback.speedAt(55_000)!!, 1e-9)
+        assertEquals(0.0, playback.speedAt(60_000)!!, 1e-9)
+        assertEquals(listOf(listOf(0L, 10_000L, 40_000L, 60_000L)),
+            playback.speedSegments.map { segment -> segment.map { it.timestampMs } })
+        for (time in listOf(-1L, 90_000L)) {
+            assertNull(playback.speedAt(time))
+        }
+    }
+
+    @Test fun interpolationLeavesLongOutagesOpenForEachMeasurement() {
+        val playback = TripPlayback(listOf(
+            point(0, 0.0).copy(altitudeMeters = 10.0, speedMetersPerSecond = 0.0),
+            point(30_000, 1.0).copy(altitudeMeters = 20.0),
+            point(60_000, 2.0).copy(altitudeMeters = 30.0, speedMetersPerSecond = 10.0),
+            point(152_388, 3.0).copy(altitudeMeters = 40.0, speedMetersPerSecond = 5.0),
+        ))
+        // A speed outage stays open while altitude readings at most 30s apart join.
+        assertNull(playback.speedAt(45_000))
+        assertEquals(25.0, playback.altitudeAt(45_000)!!, 1e-9)
+        assertEquals(listOf(listOf(0L), listOf(60_000L), listOf(152_388L)),
+            playback.speedSegments.map { segment -> segment.map { it.timestampMs } })
+        // A 92-second period without any location samples also breaks both profiles.
+        assertNull(playback.speedAt(100_000))
+        assertNull(playback.altitudeAt(100_000))
+        assertEquals(listOf(listOf(0L, 30_000L, 60_000L), listOf(152_388L)),
+            playback.altitudeSegments.map { segment -> segment.map { it.timestampMs } })
     }
 
     @Test fun closedLoopHasAnAverageSpeedDespiteZeroDisplacement() {
@@ -61,5 +105,6 @@ class TripPlaybackTest {
         assertNull(trip.copy(endMs = 0).averageSpeedMetersPerSecond())
     }
 
-    private fun point(time: Long, longitude: Double) = TimedRoutePoint(time, Wgs84Coordinate(0.0, longitude))
+    private fun point(time: Long, longitude: Double) =
+        TimedRoutePoint(time, Wgs84Coordinate(0.0, longitude), speedMetersPerSecond = null)
 }

@@ -35,6 +35,15 @@ class LocationRepository @Inject constructor(
 
     suspend fun mostRecent(): LocationSampleEntity? = dao.mostRecent()
 
+    /** Independent watchdog append with the same eligibility rules as normal recording. */
+    suspend fun recordIfStillStale(sample: LocationSampleEntity, cutoffMs: Long): Long? {
+        val (included, reason) = computationEligibility(sample)
+        if (!included) AppLog.i(TAG, "sample excluded from computation: $reason")
+        return dao.insertIfStillStale(
+            sample.copy(includedInComputation = included, exclusionReason = reason), cutoffMs,
+        )
+    }
+
     /**
      * Mark samples within [startMs, endMs] that fall **outside** the stay circle as GPS drift
      * (excluded from computation). Used when the user marks a stay stationary — fixes outside the

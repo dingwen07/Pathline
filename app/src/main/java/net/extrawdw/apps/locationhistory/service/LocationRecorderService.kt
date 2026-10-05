@@ -58,9 +58,8 @@ class LocationRecorderService : LifecycleService() {
         ) = onNetworkChanged("capabilities")
     }
 
-    // Doze idle-mode transitions feed the controller's Doze-aware departure logic. The deep-Doze
-    // verdict is motion-gated by the platform, so it complements our (verified) significant-motion
-    // sensor: enter -> durably stationary (disarm), exit -> likely real motion (verify + wake).
+    // Doze exit can supply a departure hint. Entry follows the optional idle-saving policy,
+    // which honors active AR movement and keeps departure triggers available.
     private var idleReceiverRegistered = false
     private val idleReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {

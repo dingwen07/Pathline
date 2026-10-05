@@ -24,9 +24,9 @@ enum class ArActivity {
  *
  * The Transition API is **edge-triggered** — it only fires on a *change* and is silent when a
  * session starts already in a state (an already-still cold start delivers no `ENTER STILL`). A single
- * sticky "last activity" therefore goes stale and can never be trusted to expire. Keeping the
- * per-activity transition times instead lets the policy reason about *recency* — "AR said STILL 30s
- * ago and nothing since" vs "AR has been silent since launch" — and ignore votes that have aged out.
+ * sticky "last activity" therefore must be cleared on a matching EXIT. Per-activity timestamps
+ * separately support recency checks, while [currentActivity] preserves active movement throughout a
+ * long trip so optional Doze suppression cannot override it just because ENTER has aged.
  *
  * Pure: the caller passes the clock in. Not thread-safe; owned by [RecordingPolicy], which is only
  * touched under the controller's mutex.
@@ -35,12 +35,19 @@ internal class ArActivityTimeline {
     private val enterMs = HashMap<ArActivity, Long>()
     private val exitMs = HashMap<ArActivity, Long>()
 
+    /** Latest active transition, retained until a matching EXIT or a replacement ENTER.
+     * Unlike recency windows, this protects long trips from optional Doze suppression. */
+    var currentActivity: ArActivity? = null
+        private set
+
     fun recordEnter(activity: ArActivity, atMs: Long) {
         enterMs[activity] = atMs
+        currentActivity = activity
     }
 
     fun recordExit(activity: ArActivity, atMs: Long) {
         exitMs[activity] = atMs
+        if (currentActivity == activity) currentActivity = null
     }
 
     fun lastEnter(activity: ArActivity): Long? = enterMs[activity]
@@ -63,5 +70,6 @@ internal class ArActivityTimeline {
     fun clear() {
         enterMs.clear()
         exitMs.clear()
+        currentActivity = null
     }
 }

@@ -21,13 +21,12 @@ data class ClassifiedFix(
 sealed interface RecordingAction {
     /**
      * Drop to the low-power stationary cadence: anchor the stay at [candidate] (or the latest stored
-     * fix when null), arm the dwell geofence, and — unless [armSigMotion] is false (in deep Doze the
-     * platform owns departure detection) — arm the significant-motion sensor fresh.
+     * fix when null), arm the dwell geofence, and arm the significant-motion sensor fresh.
+     * Departure triggers remain necessary in Doze: quick Doze can ignore physical motion.
      */
     data class EnterStationary(
         val candidate: VisitCandidate?,
         val reason: String,
-        val armSigMotion: Boolean = true,
     ) : RecordingAction
 
     /** Leave to the high-accuracy moving cadence: clear the geofence and disarm significant motion. */
@@ -55,12 +54,12 @@ sealed interface RecordingAction {
  *
  *  - **State is decoupled from AR.** The four AR moving activities collapse to one [RecorderState.MOVING];
  *    transport mode stays in per-sample evidence for the timeline layer.
- *  - **Stationary entry is authoritative and quality-ordered.** Doze-idle (platform-confirmed) and the
- *    fix-cluster detector enter STATIONARY directly; when neither fires, the recorder self-demotes from
+ *  - **Stationary entry uses activity and location evidence.** Settled AR STILL and the fix-cluster
+ *    detector enter STATIONARY directly; when neither fires, the recorder self-demotes from
  *    UNKNOWN/MOVING once it has gone quiet (no net displacement and no steps) for the state's idle
  *    budget — keyed on real translation, NOT on raw IMU energy or stale, lossy AR-moving edges (review
  *    findings #1/#2). No departure hint can hold the costly high cadence indefinitely; only continuous
- *    movement does.
+ *    movement does. Optional idle saving also permits Doze to demote MOVING when AR is not moving.
  *  - **Ambiguous departures verify before committing.** Weak hints (significant-motion, geofence exit,
  *    Wi-Fi disconnect, Doze-exit motion) enter [RecorderState.SENSING_DEPARTURE] (a sparse-cadence look)
  *    and escalate to [RecorderState.CONFIRMING_DEPARTURE] only on real displacement/Doppler, deciding
@@ -253,22 +252,23 @@ internal class RecordingPolicy(
         if (state != RecorderState.STATIONARY) emptyList() else toSensing("significant_motion", nowMs)
 
     /**
-     * Doze idle-mode changed. Entering deep idle is the platform confirming durable stationarity
-     * (motion-gated) — a stronger signal than our sensor — so drop to STATIONARY directly (and the
-     * controller disarms the now-redundant sensor). Exiting with real motion is a departure; exiting
-     * without is a maintenance-window/screen-on wake (the controller just restores the sensor).
+     * Doze describes power restrictions, not physical stationarity. Only the optional idle-saving
+     * setting lets it demote MOVING, and an active moving AR classification always vetoes that
+     * demotion. Departure verification and triggers remain available while idle. Exiting with
+     * motion remains a useful departure hint.
      */
-    fun onDozeIdle(idle: Boolean, motionVariance: Float, nowMs: Long): List<RecordingAction> {
+    fun onDozeIdle(
+        idle: Boolean,
+        motionVariance: Float,
+        nowMs: Long,
+        saveBatteryWhileIdle: Boolean = false,
+    ): List<RecordingAction> {
         if (idle) {
-            // Nothing buffered yet to anchor a stay (e.g. Doze right after a cold start) -> leave it
-            // to the next fix; entering stationary with no anchor would also force a GPS bootstrap
-            // during deep idle, which we must not do.
-            if (state == RecorderState.STATIONARY || heuristics.lastFixLatLon() == null) return emptyList()
-            return toStationary(
-                heuristics.stationaryClusterCandidate(),
-                "doze_idle",
-                armSigMotion = false
-            )
+            if (!saveBatteryWhileIdle || state != RecorderState.MOVING ||
+                arTimeline.currentActivity in ArActivity.MOVING ||
+                heuristics.lastFixLatLon() == null
+            ) return emptyList()
+            return toStationary(heuristics.stationaryClusterCandidate(), "doze_idle")
         }
         if (state != RecorderState.STATIONARY) return emptyList()
         // Doze exit with motion is a hint, not a confirmation (a maintenance-window / screen-on wake can
@@ -303,18 +303,17 @@ internal class RecordingPolicy(
     private fun toStationary(
         candidate: VisitCandidate?,
         reason: String,
-        armSigMotion: Boolean = true,
     ): List<RecordingAction> {
         if (state == RecorderState.STATIONARY) return emptyList()
         state = RecorderState.STATIONARY
         quietSinceMs = null
         verifyEntryMs = null
         // Anchor the drift guard. Prefer the cluster centroid; otherwise the latest buffered fix
-        // (Doze/idle-timeout paths); null leaves drift undecidable, which never *suppresses* a departure.
+        // (AR/idle-timeout paths); null leaves drift undecidable, which never *suppresses* a departure.
         heuristics.stationaryAnchor =
             candidate?.let { it.centroidLatitude to it.centroidLongitude }
                 ?: heuristics.lastFixLatLon()
-        return listOf(RecordingAction.EnterStationary(candidate, reason, armSigMotion))
+        return listOf(RecordingAction.EnterStationary(candidate, reason))
     }
 
     private fun toMoving(reason: String): List<RecordingAction> {

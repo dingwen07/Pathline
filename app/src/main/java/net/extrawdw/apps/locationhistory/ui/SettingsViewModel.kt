@@ -93,6 +93,10 @@ class SettingsViewModel @Inject constructor(
         settingsRepository.setPowerProfile(profile)
     }
 
+    fun setSaveBatteryWhileIdle(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setSaveBatteryWhileIdle(enabled)
+    }
+
     /** Toggle whether removing the app from Recents stops recording. */
     fun setStopOnTaskRemoved(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.setStopOnTaskRemoved(enabled)

@@ -3,6 +3,7 @@ package net.extrawdw.apps.locationhistory.data.db
 import androidx.room3.Dao
 import androidx.room3.Insert
 import androidx.room3.Query
+import androidx.room3.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -13,6 +14,14 @@ interface LocationSampleDao {
 
     @Insert
     suspend fun insertAll(samples: List<LocationSampleEntity>): List<Long>
+
+    /** Keep the watchdog's extra fix only if a normal delivery hasn't already filled the gap. */
+    @Transaction
+    suspend fun insertIfStillStale(sample: LocationSampleEntity, cutoffMs: Long): Long? {
+        val latest = mostRecent()
+        if (latest != null && latest.timestampMs >= cutoffMs) return null
+        return insert(sample)
+    }
 
     @Query("SELECT * FROM location_samples WHERE dayEpoch = :dayEpoch ORDER BY timestampMs ASC")
     fun observeByDay(dayEpoch: Long): Flow<List<LocationSampleEntity>>

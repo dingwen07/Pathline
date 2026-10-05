@@ -459,27 +459,27 @@ class RecordingController @Inject constructor(
 
     /**
      * Doze idle-mode changed (`PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED`, delivered by the FGS).
-     * Deep Doze is motion-gated by the platform's own significant-motion logic, so its verdict is a
-     * higher-quality signal than our raw sensor:
-     * - **Entering** idle = the system confirms durable stationarity, so the policy drops to the
-     *   stationary cadence (if it wasn't already) and we disarm the now-redundant sensor.
-     * - **Exiting** idle is *usually* real motion, but maintenance windows and screen-on also exit, so
-     *   confirm with a cheap accelerometer burst (no GPS): travel shakes the phone -> wake; otherwise
-     *   just re-arm the sensor fresh so the next genuine move is caught immediately.
+     * Quick Doze can persist during travel. The optional idle-saving setting allows demotion only
+     * when AR is not reporting movement; departure verification and sensors remain available.
+     * On exit, use a cheap accelerometer burst as a departure hint.
      */
     suspend fun handleDeviceIdleModeChanged(idle: Boolean): Unit = stateMutex.withLock {
         if (isAutostartSuppressed()) return@withLock
         if (idle) {
-            AppLog.i(TAG, "device idle (Doze) — durably stationary; disarming significant motion")
+            val saveBatteryWhileIdle = settingsRepository.settings.first().saveBatteryWhileIdle
+            AppLog.i(
+                TAG,
+                "device idle (Doze): state=${policy.state} " +
+                        "saveBatteryWhileIdle=$saveBatteryWhileIdle ar=${arEvidence.current().activity}"
+            )
             executeActions(
                 policy.onDozeIdle(
                     idle = true,
                     motionVariance = 0f,
-                    nowMs = System.currentTimeMillis()
+                    nowMs = System.currentTimeMillis(),
+                    saveBatteryWhileIdle = saveBatteryWhileIdle,
                 )
             )
-            cancelSigMotionRearm()
-            significantMotionManager.disarm()
             return@withLock
         }
         AppLog.i(TAG, "device exited Doze idle")
@@ -699,15 +699,13 @@ class RecordingController @Inject constructor(
         if (locationRepository.mostRecent() == null) {
             getCurrentLocation()?.let { handleLocationsCore(listOf(it)) }
         }
-        if (action.armSigMotion) {
-            // Fast, Doze-surviving departure trigger alongside the (laggy) geofence. Armed BEFORE the
-            // anchor bail-out below — significant motion needs no position, so a cold-start STILL with
-            // no fix yet still gets departure wakeups (the geofence does need an anchor). One-shot; a
-            // genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
-            cancelSigMotionRearm()
-            resetSigMotionBackoff()
-            significantMotionManager.arm { handleSignificantMotion() }
-        }
+        // Fast, Doze-surviving departure trigger alongside the (laggy) geofence. Armed BEFORE the
+        // anchor bail-out below — significant motion needs no position, so a cold-start STILL with
+        // no fix yet still gets departure wakeups (the geofence does need an anchor). One-shot; a
+        // genuine new stay starts the backoff fresh (streak 0) so the sensor is fully responsive.
+        cancelSigMotionRearm()
+        resetSigMotionBackoff()
+        significantMotionManager.arm { handleSignificantMotion() }
         // Wi-Fi loss is a near-free departure hint (carried out of range / off a hotspot). Armed while
         // parked, eagerly registering the callback so a cold STATIONARY start catches the first drop.
         deviceStateCollector.armWifiLossDetection { controllerScope.launch { handleWifiDisconnected() } }
@@ -722,7 +720,7 @@ class RecordingController @Inject constructor(
         } ?: return
         armDwellGeofenceAdaptive(anchor.centroidLatitude, anchor.centroidLongitude)
         // The policy anchors the drift guard from the cluster centroid; when it had no centroid
-        // (Doze / idle-timeout) seed it from the resolved anchor here.
+        // (AR / idle-timeout) seed it from the resolved anchor here.
         if (action.candidate == null) {
             heuristics.stationaryAnchor = anchor.centroidLatitude to anchor.centroidLongitude
         }
@@ -844,7 +842,7 @@ class RecordingController @Inject constructor(
      * on a vibrating surface keeps tripping the sensor; without this it would flap us out of the
      * low-power cadence every ~40s all night. The streak resets on a confirmed departure, a new
      * stationary anchor, or a Doze-exit verdict. The delay coroutine is naturally deferred by Doze
-     * (CPU suspended) — fine, since deep Doze hands departure detection to the idle-exit path anyway.
+     * (CPU suspended); keep it pending across idle entry because motion need not cause a Doze exit.
      */
     private fun rearmSignificantMotionWithBackoff() {
         val streak = sigMotionFalseStreak
@@ -901,39 +899,13 @@ class RecordingController @Inject constructor(
         stepDelta: Int?,
     ): LocationSampleEntity {
         val ar = arEvidence.current()
-        return LocationSampleEntity(
-            timestampMs = location.time,
-            dayEpoch = TimeBuckets.dayEpoch(location.time),
-            latitude = location.latitude,
-            longitude = location.longitude,
-            altitude = if (location.hasAltitude()) location.altitude else null,
-            accuracy = if (location.hasAccuracy()) location.accuracy else null,
-            verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
-            bearing = if (location.hasBearing()) location.bearing else null,
-            bearingAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees else null,
-            speed = if (location.hasSpeed()) location.speed else null,
-            speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond else null,
-            provider = location.provider,
-            isMock = location.isMock,
-            elapsedRealtimeNanos = location.elapsedRealtimeNanos,
-            satelliteCount = location.extras?.getInt("satellites")?.takeIf { it > 0 },
-            batteryPct = context.batteryPct,
-            isCharging = context.isCharging,
-            networkTransport = context.networkTransport,
-            networkTypeName = context.networkTypeName,
-            cellSignalDbm = context.cellSignalDbm,
-            hasCellService = context.hasCellService,
-            wifiSsid = context.wifiSsid,
-            wifiBssid = context.wifiBssid,
-            screenOn = context.screenOn,
+        return location.toLocationSample(
+            context = context,
+            state = state,
+            confidence = confidence,
             arActivity = ar.activity,
             arConfidence = ar.confidence,
-            devicePhysicalState = state,
-            devicePhysicalStateConfidence = confidence,
-            motionVariance = burst.accelVariance,
-            stepCadenceHz = burst.stepCadenceHz,
-            gravityAngleDeltaDeg = burst.gravityAngleDeltaDeg,
-            pressureHpa = burst.pressureHpa,
+            burst = burst,
             stepDelta = stepDelta,
         )
     }

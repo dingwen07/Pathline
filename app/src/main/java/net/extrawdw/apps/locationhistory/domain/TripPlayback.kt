@@ -7,6 +7,7 @@ data class TimedRoutePoint(
     val timestampMs: Long,
     val coordinate: Wgs84Coordinate,
     val altitudeMeters: Double? = null,
+    val speedMetersPerSecond: Double?,
 )
 
 /** Time-based route lookup. Uneven sampling must not change the rate of the progress slider. */
@@ -18,33 +19,19 @@ class TripPlayback(points: List<TimedRoutePoint>) {
 
     val hasPositions: Boolean get() = points.isNotEmpty()
 
-    /** Missing altitude breaks the profile rather than implying zero or bridging the gap. */
-    val altitudeSegments: List<List<TimedRoutePoint>> = buildList {
-        var segment = mutableListOf<TimedRoutePoint>()
-        for (point in this@TripPlayback.points) {
-            if (point.altitudeMeters?.isFinite() == true) {
-                segment.add(point)
-            } else if (segment.isNotEmpty()) {
-                add(segment)
-                segment = mutableListOf()
-            }
-        }
-        if (segment.isNotEmpty()) add(segment)
-    }
+    private val altitude = MeasurementProfile(this.points) { it.validAltitude() }
+    private val speed = MeasurementProfile(this.points) { it.validSpeed() }
 
-    /** Interpolate only between adjacent altitude readings, never outside the recorded interval. */
-    fun altitudeAt(timestampMs: Long): Double? {
-        val found = points.binarySearchBy(timestampMs) { it.timestampMs }
-        if (found >= 0) return points[found].altitudeMeters?.takeIf { it.isFinite() }
-        val next = -found - 1
-        if (next == 0 || next == points.size) return null
-        val before = points[next - 1]
-        val after = points[next]
-        val start = before.altitudeMeters?.takeIf { it.isFinite() } ?: return null
-        val end = after.altitudeMeters?.takeIf { it.isFinite() } ?: return null
-        val fraction = (timestampMs - before.timestampMs).toDouble() / (after.timestampMs - before.timestampMs)
-        return start + (end - start) * fraction
-    }
+    /** Brief missing readings are interpolated; longer outages remain gaps in each profile. */
+    val altitudeSegments get() = altitude.segments
+    val speedSegments get() = speed.segments
+
+    fun altitudeAt(timestampMs: Long): Double? = altitude.valueAt(timestampMs)
+
+    fun speedAt(timestampMs: Long): Double? = speed.valueAt(timestampMs)
+
+    private fun TimedRoutePoint.validAltitude() = altitudeMeters?.takeIf { it.isFinite() }
+    private fun TimedRoutePoint.validSpeed() = speedMetersPerSecond?.takeIf { it.isFinite() && it >= 0 }
 
     /** Recorded route up to this time, ending at an interpolated point between uneven fixes. */
     fun pathUntil(timestampMs: Long): List<Wgs84Coordinate> {
@@ -75,6 +62,40 @@ class TripPlayback(points: List<TimedRoutePoint>) {
             before.coordinate.latitude + (after.coordinate.latitude - before.coordinate.latitude) * fraction,
             longitude,
         )
+    }
+}
+
+/** Use the same valid neighbors for the drawn line and touch readout, without altering samples. */
+private class MeasurementProfile(points: List<TimedRoutePoint>, private val value: (TimedRoutePoint) -> Double?) {
+    private val readings = points.filter { value(it) != null }
+    val segments: List<List<TimedRoutePoint>> = buildList {
+        var segment = mutableListOf<TimedRoutePoint>()
+        for (point in readings) {
+            if (segment.isNotEmpty() && point.timestampMs - segment.last().timestampMs > MAX_INTERPOLATION_GAP_MS) {
+                add(segment)
+                segment = mutableListOf()
+            }
+            segment.add(point)
+        }
+        if (segment.isNotEmpty()) add(segment)
+    }
+
+    fun valueAt(timestampMs: Long): Double? {
+        val found = readings.binarySearchBy(timestampMs) { it.timestampMs }
+        if (found >= 0) return value(readings[found])
+        val next = -found - 1
+        if (next == 0 || next == readings.size) return null
+        val before = readings[next - 1]
+        val after = readings[next]
+        val elapsed = after.timestampMs - before.timestampMs
+        if (elapsed > MAX_INTERPOLATION_GAP_MS) return null
+        val fraction = (timestampMs - before.timestampMs).toDouble() / elapsed
+        return value(before)!! * (1 - fraction) + value(after)!! * fraction
+    }
+
+    private companion object {
+        // A display estimate for brief sensor dropouts, never a reconstruction of a long outage.
+        const val MAX_INTERPOLATION_GAP_MS = 30_000L
     }
 }
 
