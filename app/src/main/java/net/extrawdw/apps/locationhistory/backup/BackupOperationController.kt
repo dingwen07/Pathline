@@ -75,11 +75,11 @@ class BackupOperationController @Inject constructor(
             context.getString(R.string.backup_op_enable_encryption)
         ) { repo.enablePasswordEncryption(password, it) }
 
-    fun startEnablePasskey(choice: EncryptionChoice.Passkey) =
+    fun startEnableWebAuthn(choice: EncryptionChoice.WebAuthn) =
         launch(
             ManagedKind.BACKUP,
             context.getString(R.string.backup_op_enable_passkey)
-        ) { repo.enablePasskeyEncryption(choice, it) }
+        ) { repo.enableWebAuthnEncryption(choice, it) }
 
     fun startDisableEncryption() =
         launch(
@@ -129,7 +129,7 @@ class BackupOperationController @Inject constructor(
     /** Surface a ceremony/setup failure (e.g. passkey cancelled) in the managed sheet. */
     fun fail(kind: ManagedKind, title: String, message: String) {
         _state.value = ManagedState(
-            kind, title, running = false, progress = 0f, logs = listOf(message),
+            kind, title, running = false, progress = 1f, logs = listOf(message),
             finished = true, success = false, message = message
         )
     }
@@ -179,11 +179,14 @@ class BackupOperationController @Inject constructor(
                     AppLog.w(TAG, "managed operation failed: ${t.message}")
                     BackupResult.Error(t.message ?: "operation failed")
                 }
-                val ok =
-                    result is BackupResult.Backed || result is BackupResult.Restored || result is BackupResult.Exported
+                val ok = when (result) {
+                    is BackupResult.Backed -> result.report.partitionsFailed == 0 && !result.report.cleanupPending
+                    is BackupResult.Restored, is BackupResult.Exported -> true
+                    else -> false
+                }
                 _state.update { s ->
                     s?.copy(
-                        running = false, finished = true, progress = if (ok) 1f else s.progress,
+                        running = false, finished = true, progress = 1f,
                         success = ok, message = describe(result)
                     )
                 }
@@ -202,6 +205,8 @@ class BackupOperationController @Inject constructor(
                     result.report.partitionsWritten,
                     result.report.partitionsFailed
                 )
+            } else if (result.report.cleanupPending) {
+                context.getString(R.string.backup_result_cleanup_pending)
             } else {
                 context.resources.getQuantityString(
                     R.plurals.backup_result_backed,
@@ -216,12 +221,15 @@ class BackupOperationController @Inject constructor(
                 result.report.rowsRestored,
                 result.report.rowsRestored,
             )
-            context.resources.getQuantityString(
+            val summary = context.resources.getQuantityString(
                 R.plurals.backup_result_restored,
                 result.report.partitionsRestored,
                 rows,
                 result.report.partitionsRestored,
             )
+            if (result.report.recoveredEarlierGeneration) {
+                summary + "\n" + context.getString(R.string.backup_result_recovered)
+            } else summary
         }
 
         is BackupResult.Exported -> context.resources.getQuantityString(

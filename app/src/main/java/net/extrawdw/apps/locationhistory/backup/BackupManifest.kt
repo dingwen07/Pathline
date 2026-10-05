@@ -1,10 +1,13 @@
 package net.extrawdw.apps.locationhistory.backup
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import net.extrawdw.apps.locationhistory.security.CryptoHeader
 
 /**
- * The public spine of a backup, written **unencrypted** as `manifest.json`. It exposes only the
+ * The public spine of a backup, written unencrypted as `manifest.<sequence>.json` after its data.
+ * The previous manifest remains until publication succeeds. It exposes only the
  * minimum needed to bootstrap a restore on a fresh device:
  *  - format / schema versions, so an incompatible backup is rejected before anything is read;
  *  - the [crypto] header, whose key slots let the holder of a password/passkey recover the DEK;
@@ -21,6 +24,7 @@ import net.extrawdw.apps.locationhistory.security.CryptoHeader
  * is AES-GCM sealed (a tampered slot fails to open), and the [inventory] is GCM-encrypted with its
  * on-disk hash recorded here, so any tampering downstream of the DEK is caught on restore.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class BackupManifest(
     val formatVersion: Int,
@@ -31,7 +35,13 @@ data class BackupManifest(
     val inventory: InventoryRef,
     /** sha-256 over this manifest serialized with `checksum` blanked; see class doc. */
     val checksum: String = "",
+    /** Omitted for legacy manifests, including when recomputing their original checksum. */
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val generation: BackupGeneration? = null,
 )
+
+@Serializable
+data class BackupGeneration(val sequence: Long)
 
 /** Pointer from the public manifest to the encrypted inventory file. */
 @Serializable

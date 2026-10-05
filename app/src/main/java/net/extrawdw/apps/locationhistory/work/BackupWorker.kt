@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import net.extrawdw.apps.locationhistory.R
 import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
@@ -30,13 +31,20 @@ class BackupWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val shouldNotify = inputData.getBoolean(KEY_NOTIFY_FAILURE, true)
-        val backupResult = backupRepository.runScheduledBackup()
+        val backupResult = runJob { backupRepository.runScheduledBackup() }
         val backup = evaluate("backup", backupResult)
-        val gpx = evaluate("gpx", backupRepository.runScheduledGpxExport())
         if (shouldNotify) {
-            notifyBackupFailure(backupResult)
+            notifyBackupFailure(applicationContext, backupResult)
         }
+        val gpx = evaluate("gpx", runJob { backupRepository.runScheduledGpxExport() })
         return if (backup == Outcome.RETRY || gpx == Outcome.RETRY) Result.retry() else Result.success()
+    }
+
+    private suspend fun runJob(block: suspend () -> BackupResult): BackupResult = try {
+        block()
+    } catch (e: CancellationException) { throw e
+    } catch (e: Exception) {
+        BackupResult.Error(e.message ?: e.javaClass.simpleName)
     }
 
     private enum class Outcome { OK, RETRY }
@@ -47,7 +55,7 @@ class BackupWorker @AssistedInject constructor(
                 TAG,
                 "backup ok: wrote=${result.report.partitionsWritten} failed=${result.report.partitionsFailed}"
             )
-            if (result.report.partitionsFailed > 0) Outcome.RETRY else Outcome.OK
+            if (result.report.partitionsFailed > 0 || result.report.cleanupPending) Outcome.RETRY else Outcome.OK
         }
 
         is BackupResult.Exported -> {
@@ -70,48 +78,56 @@ class BackupWorker @AssistedInject constructor(
         is BackupResult.Restored -> Outcome.OK
     }
 
-    private fun notifyBackupFailure(result: BackupResult) {
-        val ctx = applicationContext
-        val title: String
-        val text: String
-        when (result) {
-            is BackupResult.Backed -> {
-                if (result.report.partitionsFailed <= 0) {
-                    Notifications.cancelBackupFailure(ctx)
-                    return
-                }
-                title = ctx.getString(R.string.backup_notify_incomplete_title)
-                text = ctx.getString(R.string.backup_notify_incomplete_text)
-            }
-
-            BackupResult.NeedsReclaim -> {
-                title = ctx.getString(R.string.backup_notify_needs_attention_title)
-                text = ctx.getString(R.string.backup_notify_needs_reclaim_text)
-            }
-
-            BackupResult.KeyUnavailable -> {
-                title = ctx.getString(R.string.backup_notify_needs_attention_title)
-                text = ctx.getString(R.string.backup_notify_key_unavailable_text)
-            }
-
-            is BackupResult.Error -> {
-                title = ctx.getString(R.string.backup_notify_failed_title)
-                text = ctx.getString(R.string.backup_notify_failed_text, result.message)
-            }
-
-            BackupResult.NoDestination,
-            is BackupResult.Exported,
-            is BackupResult.Restored -> {
-                Notifications.cancelBackupFailure(ctx)
-                return
-            }
-        }
-        Notifications.notifyBackupFailure(ctx, title, text)
-    }
-
     companion object {
         const val KEY_NOTIFY_FAILURE = "notify_failure"
 
         private const val TAG = "BackupWorker"
     }
+}
+
+/** Called as soon as daily backup finishes, independently of the subsequent GPX job. */
+internal fun notifyBackupFailure(ctx: Context, result: BackupResult) {
+    val title: String
+    val text: String
+    when (result) {
+        is BackupResult.Backed -> {
+            when {
+                result.report.partitionsFailed > 0 -> {
+                    title = ctx.getString(R.string.backup_notify_incomplete_title)
+                    text = ctx.getString(R.string.backup_notify_incomplete_text)
+                }
+                result.report.cleanupPending -> {
+                    title = ctx.getString(R.string.backup_notify_needs_attention_title)
+                    text = ctx.getString(R.string.backup_result_cleanup_pending)
+                }
+                else -> {
+                    Notifications.cancelBackupFailure(ctx)
+                    return
+                }
+            }
+        }
+
+        BackupResult.NeedsReclaim -> {
+            title = ctx.getString(R.string.backup_notify_needs_attention_title)
+            text = ctx.getString(R.string.backup_notify_needs_reclaim_text)
+        }
+
+        BackupResult.KeyUnavailable -> {
+            title = ctx.getString(R.string.backup_notify_needs_attention_title)
+            text = ctx.getString(R.string.backup_notify_key_unavailable_text)
+        }
+
+        is BackupResult.Error -> {
+            title = ctx.getString(R.string.backup_notify_failed_title)
+            text = ctx.getString(R.string.backup_notify_failed_text, result.message)
+        }
+
+        BackupResult.NoDestination,
+        is BackupResult.Exported,
+        is BackupResult.Restored -> {
+            Notifications.cancelBackupFailure(ctx)
+            return
+        }
+    }
+    Notifications.notifyBackupFailure(ctx, title, text)
 }

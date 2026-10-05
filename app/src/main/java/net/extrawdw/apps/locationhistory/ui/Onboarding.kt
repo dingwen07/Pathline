@@ -61,7 +61,7 @@ import net.extrawdw.apps.locationhistory.backup.ManagedState
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.SettingsRepository
 import net.extrawdw.apps.locationhistory.security.BackupEncryption
-import net.extrawdw.apps.locationhistory.security.PasskeyManager
+import net.extrawdw.apps.locationhistory.security.WebAuthnManager
 import net.extrawdw.apps.locationhistory.service.RecordingController
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import javax.inject.Inject
@@ -74,7 +74,7 @@ class OnboardingViewModel @Inject constructor(
     private val workScheduler: WorkScheduler,
     private val backupRepository: BackupRepository,
     private val controller: BackupOperationController,
-    private val passkeyManager: PasskeyManager,
+    private val webAuthnManager: WebAuthnManager,
 ) : ViewModel() {
 
     /** null while loading; true once onboarding has been completed or skipped. */
@@ -120,7 +120,15 @@ class OnboardingViewModel @Inject constructor(
 
     /** Inspect the chosen folder, then restore — prompting for password / running passkey as needed. */
     fun beginRestore(uri: Uri, activityContext: Context) = viewModelScope.launch {
-        val info = backupRepository.cryptoInfoAt(uri)
+        val info = try {
+            backupRepository.cryptoInfoAt(uri)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            controller.fail(ManagedKind.RESTORE, appContext.getString(R.string.action_restore),
+                e.message ?: appContext.getString(R.string.restore_no_backup))
+            return@launch
+        }
         if (info == null) {
             controller.fail(
                 ManagedKind.RESTORE,
@@ -135,7 +143,7 @@ class OnboardingViewModel @Inject constructor(
                 pendingRestoreUri = uri; restoreNeedsPassword.value = true
             }
 
-            BackupEncryption.PASSKEY -> {
+            BackupEncryption.WEBAUTHN -> {
                 val salt = info.prfSalt
                 if (salt == null) {
                     controller.fail(
@@ -146,7 +154,7 @@ class OnboardingViewModel @Inject constructor(
                     return@launch
                 }
                 runCatching {
-                    passkeyManager.obtainForRestore(
+                    webAuthnManager.obtainForRestore(
                         activityContext,
                         salt,
                         info.credentialId

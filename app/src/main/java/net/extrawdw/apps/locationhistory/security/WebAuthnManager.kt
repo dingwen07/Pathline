@@ -19,9 +19,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Result of a passkey PRF ceremony: the 32-byte secret plus the salt + credential it came from. */
-data class PasskeyPrf(val secret: ByteArray, val salt: ByteArray, val credentialId: String?)
+data class WebAuthnPrf(val secret: ByteArray, val salt: ByteArray, val credentialId: String?)
 
-class PasskeyException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class WebAuthnException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * Drives WebAuthn passkeys via Credential Manager and reads the **PRF** extension output, which is a
@@ -37,7 +37,7 @@ class PasskeyException(message: String, cause: Throwable? = null) : Exception(me
  * It cannot run on an emulator without that setup. All methods need an Activity [Context].
  */
 @Singleton
-class PasskeyManager @Inject constructor(
+class WebAuthnManager @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
 ) {
     private val urlEnc = Base64.getUrlEncoder().withoutPadding()
@@ -48,7 +48,7 @@ class PasskeyManager @Inject constructor(
      * if the user has one for this RP, otherwise create a new one. Generates a fresh salt to store
      * in the backup's key slot.
      */
-    suspend fun obtainForSetup(activityContext: Context): PasskeyPrf {
+    suspend fun obtainForSetup(activityContext: Context): WebAuthnPrf {
         val salt = BackupCrypto.randomBytes(BackupCrypto.PRF_SALT_BYTES)
         // Reuse an existing passkey if one is *immediately available* (preferImmediatelyAvailable
         // returns NoCredentialException with no UI when none exists, avoiding the confusing
@@ -61,7 +61,7 @@ class PasskeyManager @Inject constructor(
                 preferImmediate = true
             )
         } catch (e: GetCredentialCancellationException) {
-            throw PasskeyException("Passkey setup was cancelled", e)
+            throw WebAuthnException("Passkey setup was cancelled", e)
         } catch (e: NoCredentialException) {
             AppLog.i(TAG, "no reusable passkey; creating one")
         } catch (e: GetCredentialException) {
@@ -79,7 +79,7 @@ class PasskeyManager @Inject constructor(
         activityContext: Context,
         salt: ByteArray,
         credentialId: String? = null
-    ): PasskeyPrf =
+    ): WebAuthnPrf =
         try {
             runAssert(
                 activityContext,
@@ -88,12 +88,12 @@ class PasskeyManager @Inject constructor(
                 preferImmediate = false
             )
         } catch (e: GetCredentialException) {
-            throw PasskeyException("Passkey unlock failed: ${e.message}", e)
+            throw WebAuthnException("Passkey unlock failed: ${e.message}", e)
         }
 
     // -- Create (registration) ----------------------------------------------------------------
 
-    private suspend fun createWithPrf(activityContext: Context, salt: ByteArray): PasskeyPrf {
+    private suspend fun createWithPrf(activityContext: Context, salt: ByteArray): WebAuthnPrf {
         val userId = BackupCrypto.randomBytes(16)
         val options = JSONObject().apply {
             put("challenge", urlEnc.encodeToString(BackupCrypto.randomBytes(32)))
@@ -123,14 +123,14 @@ class PasskeyManager @Inject constructor(
                 CreatePublicKeyCredentialRequest(options.toString()),
             ) as CreatePublicKeyCredentialResponse
         } catch (t: Throwable) {
-            throw PasskeyException("Could not create a passkey: ${t.message}", t)
+            throw WebAuthnException("Could not create a passkey: ${t.message}", t)
         }
         val json = JSONObject(response.registrationResponseJson)
         val credentialId = json.optStringOrNull("id")
         val secret = prfResult(json)
         // Some authenticators don't return PRF results at creation — assert once to get them.
         return if (secret != null) {
-            PasskeyPrf(secret, salt, credentialId)
+            WebAuthnPrf(secret, salt, credentialId)
         } else {
             runAssert(activityContext, salt, requireCredentialId = null, preferImmediate = false)
         }
@@ -149,7 +149,7 @@ class PasskeyManager @Inject constructor(
         salt: ByteArray,
         requireCredentialId: String?,
         preferImmediate: Boolean,
-    ): PasskeyPrf {
+    ): WebAuthnPrf {
         val options = JSONObject().apply {
             put("challenge", urlEnc.encodeToString(BackupCrypto.randomBytes(32)))
             put("rpId", RP_ID)
@@ -172,11 +172,11 @@ class PasskeyManager @Inject constructor(
             .build()
         val response = CredentialManager.create(appContext).getCredential(activityContext, request)
         val credential = response.credential as? PublicKeyCredential
-            ?: throw PasskeyException("Unexpected credential type")
+            ?: throw WebAuthnException("Unexpected credential type")
         val json = JSONObject(credential.authenticationResponseJson)
         val secret = prfResult(json)
-            ?: throw PasskeyException("This passkey did not return a PRF secret (provider may not support PRF)")
-        return PasskeyPrf(secret, salt, json.optStringOrNull("id"))
+            ?: throw WebAuthnException("This passkey did not return a PRF secret (provider may not support PRF)")
+        return WebAuthnPrf(secret, salt, json.optStringOrNull("id"))
     }
 
     private fun JSONObject.optStringOrNull(key: String): String? =
@@ -207,6 +207,6 @@ class PasskeyManager @Inject constructor(
         // password manager; we don't manage it. user.id stays a random opaque handle (below).
         private const val USER_NAME = "pathline-backup"
         private const val USER_DISPLAY = "Pathline Backup"
-        private const val TAG = "PasskeyManager"
+        private const val TAG = "WebAuthnManager"
     }
 }

@@ -36,15 +36,15 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
 
-# 1) Resolve the backup directory (unzip a .zip into a temp dir) and locate manifest.json.
+# 1) Resolve the backup directory and locate a legacy or generation manifest.
 SRCDIR="$SRC"
 if [ -f "$SRC" ]; then
   echo "unzipping $SRC ..."
   unzip -oq "$SRC" -d "$WORK/unz"
   SRCDIR="$WORK/unz"
 fi
-MANIFEST="$(find "$SRCDIR" -maxdepth 4 -name manifest.json | head -1 || true)"
-[ -n "$MANIFEST" ] || { echo "no manifest.json found under $SRCDIR" >&2; exit 1; }
+MANIFEST="$(find "$SRCDIR" -maxdepth 4 -type f \( -name manifest.json -o -name 'manifest.*.json' \) | head -1 || true)"
+[ -n "$MANIFEST" ] || { echo "no backup manifest found under $SRCDIR" >&2; exit 1; }
 DUMP="$(dirname "$MANIFEST")"
 echo "backup: $DUMP"
 

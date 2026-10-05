@@ -283,5 +283,5 @@ object Constants {
     const val BACKUP_DIR = "pathline-backup"
 
     /** Bumped whenever the on-disk backup layout/format changes incompatibly. */
-    const val BACKUP_FORMAT_VERSION = 1
+    const val BACKUP_FORMAT_VERSION = 2
 }

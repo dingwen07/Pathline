@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.outlined.Visibility
@@ -205,20 +204,10 @@ fun PlacesScreen(viewModel: PlacesViewModel = hiltViewModel()) {
                                 .padding(start = 12.dp)
                                 .weight(1f)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    place.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                                if (place.fixed) {
-                                    Icon(
-                                        Icons.Filled.Lock,
-                                        contentDescription = stringResource(R.string.cd_place_locked),
-                                        modifier = Modifier.padding(start = 6.dp),
-                                    )
-                                }
-                            }
+                            Text(
+                                place.name,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                             place.address?.let {
                                 Text(
                                     it,

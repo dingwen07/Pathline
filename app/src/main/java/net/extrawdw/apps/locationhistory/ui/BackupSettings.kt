@@ -26,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -62,13 +63,14 @@ import kotlinx.coroutines.launch
 import net.extrawdw.apps.locationhistory.backup.BackupOperationController
 import net.extrawdw.apps.locationhistory.backup.ManagedKind
 import net.extrawdw.apps.locationhistory.backup.ManagedState
+import net.extrawdw.apps.locationhistory.core.AppLog
 import net.extrawdw.apps.locationhistory.data.repo.BackupConfig
 import net.extrawdw.apps.locationhistory.data.repo.BackupRepository
 import net.extrawdw.apps.locationhistory.data.repo.EncryptionChoice
 import net.extrawdw.apps.locationhistory.data.repo.GpxConfig
 import net.extrawdw.apps.locationhistory.data.repo.GpxRange
 import net.extrawdw.apps.locationhistory.security.BackupEncryption
-import net.extrawdw.apps.locationhistory.security.PasskeyManager
+import net.extrawdw.apps.locationhistory.security.WebAuthnManager
 import net.extrawdw.apps.locationhistory.work.WorkScheduler
 import java.text.DateFormat
 import java.util.Date
@@ -78,7 +80,7 @@ import javax.inject.Inject
 class BackupViewModel @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val controller: BackupOperationController,
-    private val passkeyManager: PasskeyManager,
+    private val webAuthnManager: WebAuthnManager,
     private val backupRepository: BackupRepository,
     private val workScheduler: WorkScheduler,
 ) : ViewModel() {
@@ -101,14 +103,14 @@ class BackupViewModel @Inject constructor(
         workScheduler.schedulePeriodicBackup()
     }
 
-    fun configureWithPasskey(activityContext: Context, uri: Uri, subdir: String?) =
+    fun configureWithWebAuthn(activityContext: Context, uri: Uri, subdir: String?) =
         viewModelScope.launch {
-            runCatching { passkeyManager.obtainForSetup(activityContext) }
+            runCatching { webAuthnManager.obtainForSetup(activityContext) }
                 .onSuccess {
                     controller.startConfigure(
                         uri,
                         subdir,
-                        EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)
+                        EncryptionChoice.WebAuthn(it.secret, it.salt, it.credentialId)
                     )
                     workScheduler.schedulePeriodicBackup()
                 }
@@ -151,11 +153,11 @@ class BackupViewModel @Inject constructor(
     /** One-time GPX export of [range] to a freshly-picked folder, independent of the configured one. */
     fun gpxExport(uri: Uri, range: GpxRange) = controller.startGpxExport(uri, range)
 
-    fun enablePasskey(activityContext: Context) = viewModelScope.launch {
-        runCatching { passkeyManager.obtainForSetup(activityContext) }
+    fun enableWebAuthn(activityContext: Context) = viewModelScope.launch {
+        runCatching { webAuthnManager.obtainForSetup(activityContext) }
             .onSuccess {
-                controller.startEnablePasskey(
-                    EncryptionChoice.Passkey(
+                controller.startEnableWebAuthn(
+                    EncryptionChoice.WebAuthn(
                         it.secret,
                         it.salt,
                         it.credentialId
@@ -174,14 +176,14 @@ class BackupViewModel @Inject constructor(
     fun dump(uri: Uri, subdir: String?, choice: EncryptionChoice) =
         controller.startDump(uri, subdir, choice)
 
-    fun dumpWithPasskey(activityContext: Context, uri: Uri, subdir: String?) =
+    fun dumpWithWebAuthn(activityContext: Context, uri: Uri, subdir: String?) =
         viewModelScope.launch {
-            runCatching { passkeyManager.obtainForSetup(activityContext) }
+            runCatching { webAuthnManager.obtainForSetup(activityContext) }
                 .onSuccess {
                     controller.startDump(
                         uri,
                         subdir,
-                        EncryptionChoice.Passkey(it.secret, it.salt, it.credentialId)
+                        EncryptionChoice.WebAuthn(it.secret, it.salt, it.credentialId)
                     )
                 }
                 .onFailure {
@@ -298,8 +300,8 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                     EncryptionChoice.Password(pw)
                 )
                 },
-                onPasskey = { subdir ->
-                    pendingBackupUri = null; viewModel.configureWithPasskey(
+                onWebAuthn = { subdir ->
+                    pendingBackupUri = null; viewModel.configureWithWebAuthn(
                     activity,
                     uri,
                     subdir
@@ -328,7 +330,7 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
     if (showEncryptionChooser) {
         EncryptionChooserDialog(
             onPassword = { showEncryptionChooser = false; showPasswordDialog = true },
-            onPasskey = { showEncryptionChooser = false; viewModel.enablePasskey(activity) },
+            onWebAuthn = { showEncryptionChooser = false; viewModel.enableWebAuthn(activity) },
             onDismiss = { showEncryptionChooser = false },
         )
     }
@@ -366,8 +368,8 @@ fun BackupCard(viewModel: BackupViewModel = hiltViewModel()) {
                 EncryptionChoice.Password(pw)
             )
             },
-            onPasskey = { subdir ->
-                pendingDumpUri = null; viewModel.dumpWithPasskey(
+            onWebAuthn = { subdir ->
+                pendingDumpUri = null; viewModel.dumpWithWebAuthn(
                 activity,
                 uri,
                 subdir
@@ -564,7 +566,7 @@ private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOf
                 stringResource(
                     when (mode) {
                         BackupEncryption.PASSWORD -> R.string.encrypt_password_on
-                        BackupEncryption.PASSKEY -> R.string.encrypt_passkey_on
+                        BackupEncryption.WEBAUTHN -> R.string.encrypt_passkey_on
                         BackupEncryption.NONE -> R.string.encrypt_off
                     },
                 ),
@@ -581,7 +583,7 @@ private fun EncryptionRow(mode: BackupEncryption, onTurnOn: () -> Unit, onTurnOf
 @Composable
 private fun EncryptionChooserDialog(
     onPassword: () -> Unit,
-    onPasskey: () -> Unit,
+    onWebAuthn: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -593,7 +595,7 @@ private fun EncryptionChooserDialog(
                 style = MaterialTheme.typography.bodySmall,
             )
         },
-        confirmButton = { TextButton(onClick = onPasskey) { Text(stringResource(R.string.action_use_passkey)) } },
+        confirmButton = { TextButton(onClick = onWebAuthn) { Text(stringResource(R.string.action_use_passkey)) } },
         dismissButton = { TextButton(onClick = onPassword) { Text(stringResource(R.string.action_use_password)) } },
     )
 }
@@ -601,7 +603,7 @@ private fun EncryptionChooserDialog(
 /**
  * Shared setup flow for both the recurring backup and the one-time dump: pick a subdirectory, then
  * choose protection (password / passkey / none). The caller supplies its own copy for the encryption
- * prompt and password dialog so the wording fits the context. [onPasskey] hands back the chosen
+ * prompt and password dialog so the wording fits the context. [onWebAuthn] hands back the chosen
  * subdir; the caller runs the passkey ceremony (it needs an Activity).
  */
 @Composable
@@ -615,7 +617,7 @@ private fun EncryptionSetupFlow(
     passwordConfirmLabel: String,
     onNone: (String?) -> Unit,
     onPassword: (String?, CharArray) -> Unit,
-    onPasskey: (String?) -> Unit,
+    onWebAuthn: (String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var subdir by remember(uri) { mutableStateOf<String?>(null) }
@@ -650,7 +652,7 @@ private fun EncryptionSetupFlow(
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { onPasskey(subdir) }) { Text(stringResource(R.string.action_passkey)) }
+                    TextButton(onClick = { onWebAuthn(subdir) }) { Text(stringResource(R.string.action_passkey)) }
                     TextButton(onClick = { onNone(subdir) }) { Text(stringResource(R.string.action_no_encryption)) }
                 }
             },
@@ -661,7 +663,7 @@ private fun EncryptionSetupFlow(
 /**
  * Lets the user decide whether the backup lives in a subdirectory of the chosen folder. Shows
  * "<folder> / [ Pathline ] /" with an editable name; clearing it writes to the folder root. Defaults
- * to empty when the chosen folder already looks like a Pathline folder.
+ * to empty when the chosen folder already contains backup files or looks like a Pathline folder.
  */
 @Composable
 fun SubdirDialog(
@@ -674,12 +676,39 @@ fun SubdirDialog(
     val folderName = treeUri.lastPathSegment?.substringAfterLast('/')
         ?: stringResource(R.string.backup_folder_fallback)
     val defaultSubdir = stringResource(R.string.backup_default_subdir)
-    var subdir by remember(treeUri) { mutableStateOf(if (defaultLooksLikePathline) "" else defaultSubdir) }
+    var defaultInitialized by remember(treeUri) { mutableStateOf(checkExists == null) }
+    var subdir by remember(treeUri) {
+        mutableStateOf(if (checkExists != null || defaultLooksLikePathline) "" else defaultSubdir)
+    }
     var exists by remember(treeUri) { mutableStateOf(false) }
+    var checking by remember(treeUri, subdir) { mutableStateOf(checkExists != null) }
+    var checkFailed by remember(treeUri, subdir) { mutableStateOf(false) }
+    var checkAttempt by remember(treeUri) { mutableStateOf(0) }
 
-    // Check whether the resolved location already holds a backup, to warn about overwriting.
-    LaunchedEffect(subdir, checkExists) {
-        exists = checkExists?.invoke(subdir.ifBlank { null }) ?: false
+    // Check whether the resolved location holds files that the full backup will archive.
+    LaunchedEffect(treeUri, subdir, checkExists, checkAttempt) {
+        checking = true
+        checkFailed = false
+        try {
+            if (!defaultInitialized) {
+                // Filename-only root check comes first, regardless of the selected folder's name.
+                exists = checkExists?.invoke(null) ?: false
+                defaultInitialized = true
+                if (!exists && !defaultLooksLikePathline) {
+                    subdir = defaultSubdir
+                    return@LaunchedEffect // The new subdir triggers its own existence check.
+                }
+            } else {
+                exists = checkExists?.invoke(subdir.ifBlank { null }) ?: false
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.e("BackupSettings", "Backup destination check failed", e)
+            checkFailed = true
+        } finally {
+            checking = false
+        }
     }
 
     AlertDialog(
@@ -697,26 +726,29 @@ fun SubdirDialog(
                 )
                 OutlinedTextField(
                     value = subdir,
-                    onValueChange = { subdir = it },
+                    onValueChange = { defaultInitialized = true; subdir = it },
+                    enabled = defaultInitialized || !checking,
                     label = { Text(stringResource(R.string.backup_subfolder_label)) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
                 )
-                if (exists) {
+                if (checkFailed || exists) {
                     Text(
-                        stringResource(R.string.backup_overwrite_warn),
+                        stringResource(if (checkFailed) R.string.backup_location_unavailable else R.string.backup_archive_notice),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
+                        color = if (checkFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(subdir.ifBlank { null }) }) {
-                Text(stringResource(if (exists) R.string.action_overwrite else R.string.action_use_this))
+            TextButton(enabled = !checking, onClick = {
+                if (checkFailed) checkAttempt++ else onConfirm(subdir.ifBlank { null })
+            }) {
+                Text(stringResource(if (checkFailed) R.string.backup_retry_location else if (exists) R.string.action_archive_and_continue else R.string.action_use_this))
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
@@ -826,12 +858,18 @@ fun ManagedOperationSheet(state: ManagedState, onClose: () -> Unit) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(state.title, style = MaterialTheme.typography.titleMedium)
 
-                if (state.progress < 0f) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                } else {
+                if (state.finished) {
                     LinearProgressIndicator(
-                        progress = { state.progress },
-                        modifier = Modifier.fillMaxWidth()
+                        progress = { 1f },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (state.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    )
+                } else if (state.running && state.progress < 0f) {
+                    LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                } else {
+                    LinearWavyProgressIndicator(
+                        progress = { state.progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
 

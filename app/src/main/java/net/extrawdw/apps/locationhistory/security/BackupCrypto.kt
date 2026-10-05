@@ -15,7 +15,22 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /** How a backup's contents are protected at rest. */
-enum class BackupEncryption { NONE, PASSWORD, PASSKEY }
+@Serializable(with = BackupEncryptionSerializer::class)
+enum class BackupEncryption {
+    NONE, PASSWORD, WEBAUTHN;
+
+    companion object {
+        /** Includes the mode persisted by older app versions. */
+        fun fromStored(value: String): BackupEncryption = if (value == "PASSKEY") WEBAUTHN else valueOf(value)
+    }
+}
+
+object BackupEncryptionSerializer : kotlinx.serialization.KSerializer<BackupEncryption> {
+    override val descriptor = kotlinx.serialization.descriptors.PrimitiveSerialDescriptor(
+        "BackupEncryption", kotlinx.serialization.descriptors.PrimitiveKind.STRING)
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: BackupEncryption) = encoder.encodeString(value.name)
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): BackupEncryption = BackupEncryption.fromStored(decoder.decodeString())
+}
 
 /**
  * Envelope-encryption layer for backups.
@@ -77,15 +92,15 @@ object BackupCrypto {
      * Build a passkey-protected header. [prfSecret] is the 32-byte PRF output the authenticator
      * produced for [prfSalt]; restore must replay the same [prfSalt] to recover the same secret.
      */
-    fun createPasskeyHeader(
+    fun createWebAuthnHeader(
         prfSecret: ByteArray,
         prfSalt: ByteArray,
         credentialId: String?
     ): Pair<CryptoHeader, ByteArray> {
         val dek = randomBytes(DEK_BYTES)
         val header = CryptoHeader(
-            mode = BackupEncryption.PASSKEY,
-            passkey = PasskeySlot(
+            mode = BackupEncryption.WEBAUTHN,
+            webAuthn = WebAuthnSlot(
                 prfSaltB64 = b64(prfSalt),
                 wrappedDekB64 = b64(aesGcmSeal(prfSecret, dek)),
                 credentialId = credentialId,
@@ -117,15 +132,15 @@ object BackupCrypto {
                 )
             }
 
-            BackupEncryption.PASSKEY -> {
-                val slot = header.passkey ?: error("passkey backup is missing its key slot")
+            BackupEncryption.WEBAUTHN -> {
+                val slot = header.webAuthn ?: error("passkey backup is missing its key slot")
                 requireNotNull(prfSecret) { "passkey PRF secret required to open this backup" }
                 aesGcmOpen(prfSecret, unb64(slot.wrappedDekB64))
             }
         }
 
     /** The PRF eval salt a passkey-protected backup expects at restore time. */
-    fun prfSaltOf(header: CryptoHeader): ByteArray? = header.passkey?.let { unb64(it.prfSaltB64) }
+    fun prfSaltOf(header: CryptoHeader): ByteArray? = header.webAuthn?.let { unb64(it.prfSaltB64) }
 
     // PBKDF2 is intentionally slow; @AddTrace surfaces its real per-device cost in Performance
     // Monitoring. Duration-only: no password or salt material is read, named, or uploaded.
@@ -191,12 +206,15 @@ object BackupCrypto {
 }
 
 /** Serializable crypto descriptor stored in the backup manifest. */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Serializable
 data class CryptoHeader(
     val version: Int = 1,
     val mode: BackupEncryption,
     val password: PasswordSlot? = null,
-    val passkey: PasskeySlot? = null,
+    @kotlinx.serialization.SerialName("webauthn")
+    @kotlinx.serialization.json.JsonNames("passkey")
+    val webAuthn: WebAuthnSlot? = null,
 )
 
 @Serializable
@@ -208,7 +226,7 @@ data class PasswordSlot(
 )
 
 @Serializable
-data class PasskeySlot(
+data class WebAuthnSlot(
     /** PRF eval input that must be replayed to the authenticator at restore to reproduce the secret. */
     val prfSaltB64: String,
     val wrappedDekB64: String,

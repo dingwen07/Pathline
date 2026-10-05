@@ -52,7 +52,7 @@ sealed interface EncryptionChoice {
     data class Password(val password: CharArray) : EncryptionChoice
 
     /** A PRF secret already obtained from a passkey (the UI runs the ceremony; it needs an Activity). */
-    data class Passkey(val secret: ByteArray, val salt: ByteArray, val credentialId: String?) :
+    data class WebAuthn(val secret: ByteArray, val salt: ByteArray, val credentialId: String?) :
         EncryptionChoice
 }
 
@@ -79,9 +79,8 @@ class BackupRepository @Inject constructor(
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     /**
-     * One backup/dump/restore at a time, process-wide. Two concurrent engine runs corrupt each
-     * other: pruneOrphans deletes every file outside its own keep-set (including one the other run
-     * just committed), and a worker backup can prune files a managed restore is mid-read on. All
+     * One backup/dump/restore at a time, process-wide, so generation publication and cleanup cannot
+     * race with another writer or a restore reading retained files. All
      * entry points — the periodic worker, the "back up now" worker, and every controller-managed
      * operation — funnel through this repository, so a single Mutex here covers them. The Mutex is
      * NOT reentrant: it is taken only in [performBackup], [oneTimeDump], and [restoreFrom], none of
@@ -119,8 +118,7 @@ class BackupRepository @Inject constructor(
     }
 
     suspend fun disableEncryption(reporter: BackupReporter = BackupReporter.None): BackupResult {
-        applyEncryptionChoice(EncryptionChoice.None)
-        return performBackup(full = true, reporter = reporter) // rewrite everything as plaintext
+        return performBackup(full = true, reporter = reporter, encryptionChange = EncryptionChoice.None)
     }
 
     /** Turn on password encryption: mint a DEK, wrap it for the password + cache both locally. */
@@ -128,17 +126,15 @@ class BackupRepository @Inject constructor(
         password: CharArray,
         reporter: BackupReporter = BackupReporter.None
     ): BackupResult {
-        applyEncryptionChoice(EncryptionChoice.Password(password))
-        return performBackup(full = true, reporter = reporter) // re-encrypt under the new DEK
+        return performBackup(full = true, reporter = reporter, encryptionChange = EncryptionChoice.Password(password))
     }
 
     /** Turn on passkey (PRF) encryption from a secret the UI already obtained via the passkey ceremony. */
-    suspend fun enablePasskeyEncryption(
-        choice: EncryptionChoice.Passkey,
+    suspend fun enableWebAuthnEncryption(
+        choice: EncryptionChoice.WebAuthn,
         reporter: BackupReporter = BackupReporter.None
     ): BackupResult {
-        applyEncryptionChoice(choice)
-        return performBackup(full = true, reporter = reporter)
+        return performBackup(full = true, reporter = reporter, encryptionChange = choice)
     }
 
     /**
@@ -162,8 +158,8 @@ class BackupRepository @Inject constructor(
             )
         }
 
-        is EncryptionChoice.Passkey -> {
-            val (header, dek) = BackupCrypto.createPasskeyHeader(
+        is EncryptionChoice.WebAuthn -> {
+            val (header, dek) = BackupCrypto.createWebAuthnHeader(
                 choice.secret,
                 choice.salt,
                 choice.credentialId
@@ -171,7 +167,7 @@ class BackupRepository @Inject constructor(
             keyVault.store(dek)
             keyVault.clearPasswordOnly()
             settings.setBackupEncryption(
-                BackupEncryption.PASSKEY,
+                BackupEncryption.WEBAUTHN,
                 json.encodeToString(CryptoHeader.serializer(), header)
             )
         }
@@ -185,24 +181,32 @@ class BackupRepository @Inject constructor(
 
     private suspend fun performBackup(
         full: Boolean,
-        reporter: BackupReporter = BackupReporter.None
+        reporter: BackupReporter = BackupReporter.None,
+        encryptionChange: EncryptionChoice? = null,
     ): BackupResult = opMutex.withLock {
         val cfg = settings.backupConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
-        val tree = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
-        val root = rootDir(tree, cfg.subdir)
-        val material = material(cfg) ?: return BackupResult.KeyUnavailable
         return try {
+            val tree = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
+            val root = rootDir(tree, cfg.subdir)
+            if (encryptionChange != null) {
+                // Delete before replacing the cached keys/settings, under the same backup mutex.
+                // A failed deletion must stop here rather than write or archive a replacement.
+                engine.deleteBeforeEncryptionChange(root, reporter)
+                applyEncryptionChoice(encryptionChange)
+            }
+            val currentConfig = if (encryptionChange != null) settings.backupConfig.first() else cfg
+            val material = material(currentConfig) ?: return BackupResult.KeyUnavailable
             val now = System.currentTimeMillis()
             val needsFull = full || engine.readManifest(root) == null
             val report = if (needsFull) {
-                engine.runFull(root, material, now, clearDirtyAfter = true, reporter = reporter)
+                engine.runFull(root, material, now, clearDirtyAfter = true, reporter = reporter,
+                    archiveExisting = encryptionChange == null)
             } else {
                 try {
                     engine.runIncremental(root, material, now, reporter = reporter)
-                } catch (e: BackupEngine.IncrementalInventoryUnavailable) {
-                    AppLog.w(TAG, "incremental inventory unreadable; falling back to full backup")
-                    reporter.log("Existing inventory unreadable — running a full backup")
+                } catch (_: BackupEngine.FullBackupRequired) {
+                    reporter.log("Repairing incomplete backup files with a full backup from local data")
                     engine.runFull(root, material, now, clearDirtyAfter = true, reporter = reporter)
                 }
             }
@@ -241,8 +245,8 @@ class BackupRepository @Inject constructor(
     private suspend fun performGpxExport(reporter: BackupReporter): BackupResult {
         val cfg = settings.gpxConfig.first()
         val treeUri = cfg.treeUri ?: return BackupResult.NoDestination
-        val dir = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
         return try {
+            val dir = safStore.open(treeUri.toUri()) ?: return BackupResult.NeedsReclaim
             val now = System.currentTimeMillis()
             val weeks =
                 if (cfg.lastExportMs <= 0L) null else backupDao.sampleWeeksSince(cfg.lastExportMs)
@@ -268,8 +272,8 @@ class BackupRepository @Inject constructor(
         reporter: BackupReporter
     ): BackupResult {
         persistPermission(treeUri, write = true)
-        val dir = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
         return try {
+            val dir = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
             val weeks = when (range) {
                 GpxRange.All -> null
                 is GpxRange.Days -> backupDao.sampleWeeksInDays(
@@ -299,14 +303,12 @@ class BackupRepository @Inject constructor(
         reporter: BackupReporter
     ): BackupResult = opMutex.withLock {
         persistPermission(treeUri, write = true)
-        val tree = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
-        val root = rootDir(tree, subdir)
         val material = when (choice) {
             EncryptionChoice.None -> BackupEngine.Material(BackupCrypto.plaintextHeader(), null)
             is EncryptionChoice.Password -> BackupCrypto.createPasswordHeader(choice.password)
                 .let { (h, dek) -> BackupEngine.Material(h, dek) }
 
-            is EncryptionChoice.Passkey -> BackupCrypto.createPasskeyHeader(
+            is EncryptionChoice.WebAuthn -> BackupCrypto.createWebAuthnHeader(
                 choice.secret,
                 choice.salt,
                 choice.credentialId
@@ -314,6 +316,8 @@ class BackupRepository @Inject constructor(
                 .let { (h, dek) -> BackupEngine.Material(h, dek) }
         }
         return try {
+            val tree = safStore.open(treeUri) ?: return BackupResult.NeedsReclaim
+            val root = rootDir(tree, subdir)
             BackupResult.Backed(
                 engine.runFull(
                     root,
@@ -331,7 +335,7 @@ class BackupRepository @Inject constructor(
     }
 
     /**
-     * Restore as-is from the backup at [treeUri] (the folder that directly contains manifest.json).
+     * Restore as-is from the backup at [treeUri] (the folder containing the backup manifests).
      * Supply [password] / [prfSecret] matching the backup's encryption; a password backup falls back
      * to the locally-stored password on the same device.
      */
@@ -341,11 +345,11 @@ class BackupRepository @Inject constructor(
         prfSecret: ByteArray?,
         reporter: BackupReporter
     ): BackupResult = opMutex.withLock {
-        persistPermission(treeUri, write = true)
-        val tree =
-            safStore.open(treeUri) ?: return BackupResult.Error("cannot read the selected folder")
+        persistPermission(treeUri, write = false)
         val pwd = password ?: keyVault.localPassword()
         return try {
+            val tree = safStore.open(treeUri, writable = false)
+                ?: return BackupResult.Error("cannot read the selected folder")
             BackupResult.Restored(engine.restore(tree, pwd, prfSecret, reporter))
         } catch (e: CancellationException) {
             throw e
@@ -356,26 +360,26 @@ class BackupRepository @Inject constructor(
     }
 
     suspend fun hasBackupAt(treeUri: Uri): Boolean {
-        val tree = safStore.open(treeUri) ?: return false
+        val tree = safStore.open(treeUri, writable = false) ?: return false
         return engine.readManifest(tree) != null
     }
 
     /**
-     * Whether a backup already exists at [treeUri] resolved through [subdir] (for overwrite warnings).
+     * Whether backup filenames exist at [treeUri]/[subdir] (for the archive notice).
      * Resolves the subdir **read-only** — this runs on every keystroke in the subdir field, so it must
      * never create the folder (otherwise editing the name spawns a directory per intermediate value).
      */
     suspend fun backupExistsAt(treeUri: Uri, subdir: String?): Boolean {
-        val tree = safStore.open(treeUri) ?: return false
+        val tree = safStore.open(treeUri, writable = false) ?: return false
         val root = existingRootDir(tree, subdir) ?: return false
-        return engine.readManifest(root) != null
+        return engine.hasBackupFiles(root)
     }
 
     /** Crypto descriptor of the backup at [treeUri], or null if none. */
     suspend fun cryptoInfoAt(treeUri: Uri): CryptoInfo? {
-        val tree = safStore.open(treeUri) ?: return null
+        val tree = safStore.open(treeUri, writable = false) ?: return null
         val crypto = engine.readManifest(tree)?.crypto ?: return null
-        return CryptoInfo(crypto.mode, BackupCrypto.prfSaltOf(crypto), crypto.passkey?.credentialId)
+        return CryptoInfo(crypto.mode, BackupCrypto.prfSaltOf(crypto), crypto.webAuthn?.credentialId)
     }
 
     /** Whether the chosen folder name hints it's already a Pathline folder (used to default the subdir box). */
@@ -384,12 +388,14 @@ class BackupRepository @Inject constructor(
 
     // --- Helpers -----------------------------------------------------------------------------
 
-    private fun rootDir(tree: SafDir, subdir: String?): SafDir =
+    private suspend fun rootDir(tree: SafDir, subdir: String?): SafDir =
         subdir?.trim()?.takeIf { it.isNotEmpty() }?.let { tree.childDir(it) } ?: tree
 
     /** Like [rootDir] but never creates the subdir — null if it doesn't exist yet. */
-    private fun existingRootDir(tree: SafDir, subdir: String?): SafDir? =
-        subdir?.trim()?.takeIf { it.isNotEmpty() }?.let { tree.childDirOrNull(it) } ?: tree
+    private suspend fun existingRootDir(tree: SafDir, subdir: String?): SafDir? {
+        val name = subdir?.trim()?.takeIf { it.isNotEmpty() } ?: return tree
+        return tree.childDirOrNull(name)
+    }
 
     private fun material(cfg: BackupConfig): BackupEngine.Material? = when (cfg.encryption) {
         BackupEncryption.NONE -> BackupEngine.Material(BackupCrypto.plaintextHeader(), null)
@@ -408,7 +414,7 @@ class BackupRepository @Inject constructor(
             BackupEngine.Material(header, dek)
         }
 
-        BackupEncryption.PASSKEY -> {
+        BackupEncryption.WEBAUTHN -> {
             val header = parseHeader(cfg) ?: return null
             // The background worker can't run a passkey ceremony — it relies on the cached DEK.
             val dek = keyVault.localDek() ?: return null

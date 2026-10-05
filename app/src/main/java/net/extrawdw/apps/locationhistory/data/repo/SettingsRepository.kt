@@ -277,7 +277,7 @@ class SettingsRepository @Inject constructor(
             treeUri = prefs[keyBackupTree],
             subdir = prefs[keyBackupSubdir],
             encryption = prefs[keyBackupEncryption]?.let {
-                runCatching { BackupEncryption.valueOf(it) }.getOrNull()
+                runCatching { BackupEncryption.fromStored(it) }.getOrNull()
             } ?: BackupEncryption.NONE,
             cryptoHeaderJson = prefs[keyBackupHeader],
             lastBackupMs = prefs[keyLastBackup] ?: 0L,

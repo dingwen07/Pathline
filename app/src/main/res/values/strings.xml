@@ -127,7 +127,6 @@
     <string name="places_saved_empty">No saved places yet.</string>
     <string name="places_assign">Assign place</string>
     <string name="cd_place_add">Add place</string>
-    <string name="cd_place_locked">Locked</string>
     <string name="cd_place_delete">Delete place</string>
     <string name="cd_place_edit">Edit place</string>
     <string name="places_empty">Places you visit will appear here once detected.</string>
@@ -304,8 +303,8 @@
     <string name="backup_subfolder_label">Subfolder (leave empty to use the folder itself)</string>
     <string name="backup_folder_fallback">folder</string>
     <string name="backup_default_subdir">Pathline</string>
-    <string name="backup_overwrite_warn">⚠ This location already contains a Pathline backup. Continuing will overwrite it.</string>
-    <string name="action_overwrite">Overwrite</string>
+    <string name="backup_archive_notice">This location already contains Pathline backup files. They will be moved into a new archive subfolder before the new backup starts.</string>
+    <string name="action_archive_and_continue">Archive and continue</string>
     <string name="action_use_this">Use this</string>
     <string name="password_dialog_info">This password protects the backup. On this device it\'s stored securely in the Android Keystore; keep a copy somewhere safe to restore on another device.</string>
     <string name="field_password">Password</string>
@@ -356,6 +355,10 @@
     <string name="backup_group_name">Backups</string>
     <string name="backup_failure_channel_name">Backup alerts</string>
     <string name="backup_failure_channel_desc">Warns when scheduled Pathline backups fail.</string>
+    <string name="backup_result_cleanup_pending">Backup saved. Some old files could not be cleaned up; Pathline will retry.</string>
+    <string name="backup_result_recovered">The newest backup was incomplete. An earlier complete backup was restored automatically.</string>
+    <string name="backup_location_unavailable">The backup folder could not be checked. Try again when it is available.</string>
+    <string name="backup_retry_location">Try again</string>
     <string name="backup_notify_failed_title">Scheduled backup failed</string>
     <string name="backup_notify_incomplete_title">Scheduled backup incomplete</string>
     <string name="backup_notify_needs_attention_title">Backup needs attention</string>
